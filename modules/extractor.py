@@ -5,6 +5,17 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+def get_registrable_domain(url):
+    """Rough registrable domain extraction (good enough without adding a dependency)."""
+    netloc = urlparse(url).netloc
+    parts = netloc.split(".")
+    if len(parts) >= 2:
+        return ".".join(parts[-2:])
+    return netloc
+
+def is_same_scope(url, target_domain):
+    return get_registrable_domain(url) == target_domain
+
 # ---- Patterns ----
 
 # Paths with common API-ish keywords
@@ -61,9 +72,13 @@ def check_source_map(js_url, timeout=8):
     """Many builds leave .js.map files publicly accessible — these leak full source."""
     map_url = js_url + ".map"
     try:
-        resp = requests.head(map_url, timeout=timeout)
+        resp = requests.get(map_url, timeout=timeout)
         if resp.status_code == 200:
-            return map_url
+            content_type = resp.headers.get("Content-Type", "")
+            body_start = resp.text.strip()[:1]
+            # Real source maps are JSON — reject HTML fallback pages
+            if "json" in content_type.lower() or body_start == "{":
+                return map_url
     except requests.RequestException:
         pass
     return None
@@ -75,10 +90,14 @@ def extract_from_text(content, source_label):
     secrets = []
 
     for match in ENDPOINT_PATTERN.findall(content):
+        if match.startswith("//"):
+            continue
         if not is_noise(match):
             endpoints.add(match)
 
     for match in GENERIC_PATH_PATTERN.findall(content):
+        if match.startswith("//"):
+            continue  # protocol-relative URL, not an internal path
         if not is_noise(match) and len(match) > 3:
             endpoints.add(match)
 
@@ -121,11 +140,12 @@ def run_extractor(base_url, threads=6, verbose=True):
         "target": base_url,
         "js_files_scanned": [],
         "inline_scripts_scanned": 0,
-        "endpoints": [],
         "secrets_found": [],
         "source_maps_found": [],
         "errors": []
     }
+
+    target_domain = get_registrable_domain(base_url)
 
     if verbose:
         print(f"[*] Fetching {base_url}")
@@ -172,11 +192,19 @@ def run_extractor(base_url, threads=6, verbose=True):
             if verbose:
                 print(f"    scanned {data['source']} — {len(data['endpoints'])} endpoints found")
 
-    result["endpoints"] = sorted(all_endpoints)
+    result["internal_paths"] = sorted([e for e in all_endpoints if e.startswith("/")])
+    result["in_scope_urls"] = sorted([
+        e for e in all_endpoints if e.startswith("http") and is_same_scope(e, target_domain)
+    ])
+    result["out_of_scope_urls"] = sorted([
+        e for e in all_endpoints if e.startswith("http") and not is_same_scope(e, target_domain)
+    ])
     result["secrets_found"] = all_secrets
 
-    if verbose:
-        print(f"\n[+] Total unique endpoints: {len(result['endpoints'])}")
+    if verbose:    
+        print(f"\n[+] Internal paths found: {len(result['internal_paths'])}")
+        print(f"[+] In-scope external URLs: {len(result['in_scope_urls'])}")
+        print(f"[+] Out-of-scope URLs (informational only): {len(result['out_of_scope_urls'])}")
         if all_secrets:
             print(f"[!] {len(all_secrets)} potential secret(s) found — review manually!")
         if result["source_maps_found"]:
@@ -189,4 +217,3 @@ def save_report(result, filename="surfacesweep_report.json"):
     with open(filename, "w") as f:
         json.dump(result, f, indent=2)
     print(f"[+] Report saved to {filename}")
-    
