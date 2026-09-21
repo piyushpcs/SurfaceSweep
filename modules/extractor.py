@@ -46,13 +46,18 @@ SECRET_PATTERNS = {
     "Slack Token":        re.compile(r'xox[baprs]-[0-9a-zA-Z]{10,48}'),
     "Firebase URL":       re.compile(r'[a-zA-Z0-9-]+\.firebaseio\.com'),
     "Generic Secret":     re.compile(r'["\'](secret|token|apikey)["\']\s*[:=]\s*["\']([a-zA-Z0-9_\-]{10,})["\']', re.IGNORECASE),
-    # NEW patterns
     "GitHub Token":       re.compile(r'gh[po]_[a-zA-Z0-9]{36,}'),
     "GitLab Token":       re.compile(r'glpat-[a-zA-Z0-9_\-]{20}'),
     "Stripe Live Key":    re.compile(r'[sp]k_live_[a-zA-Z0-9]{24,}'),
     "Heroku API Key":     re.compile(r'["\']heroku[_-]?api[_-]?key["\']\s*[:=]\s*["\']([a-zA-Z0-9\-]{20,})["\']', re.IGNORECASE),
     "NPM Token":          re.compile(r'npm_[a-zA-Z0-9]{36}'),
     "Exposed Env Var":    re.compile(r'(NEXT_PUBLIC_[A-Z0-9_]+|REACT_APP_[A-Z0-9_]+|VITE_[A-Z0-9_]+)\s*[:=]\s*["\']([^"\']{4,100})["\']'),
+    "Private Key":        re.compile(r'-----BEGIN\s+(RSA|DSA|EC|OPENSSH|PGP)?\s*PRIVATE KEY-----'),
+    "JWT Secret":         re.compile(r'["\'](?:jwt[_-]?secret|signing[_-]?key|hmac[_-]?key|jwt[_-]?key)["\']\s*[:=]\s*["\']([a-zA-Z0-9_\-\.\/+=]{10,})["\']', re.IGNORECASE),
+    "Database URL":       re.compile(r'(mysql|postgres|postgresql|mongodb|redis|amqp|mssql):\/\/[^\s"\'<>]{10,}', re.IGNORECASE),
+    "SMTP Credentials":   re.compile(r'["\'](?:smtp[_-]?pass|mail[_-]?password|email[_-]?password)["\']\s*[:=]\s*["\']([^\s"\']{6,})["\']', re.IGNORECASE),
+    "Basic Auth":         re.compile(r'Authorization:\s*Basic\s+[A-Za-z0-9+/=]{20,}'),
+    "Generic Password":   re.compile(r'["\'](password|passwd|pwd|pass)["\']\s*[:=]\s*["\']([^\s"\']{6,})["\']', re.IGNORECASE),
 }
 
 NOISE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".svg", ".gif", ".css", ".woff", ".woff2", ".ttf", ".ico")
