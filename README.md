@@ -5,7 +5,8 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 ## Status
 
 ### ✅ Phase 1: JS Endpoint Extractor (complete)
-- Scans external and inline `<script>` sources
+- **Static mode** — regex-based extraction from HTML and JS files
+- **Browser mode** — headless Chromium captures runtime API calls, lazy-loaded chunks, and dynamic endpoints
 - Detects likely API endpoints and full URLs via regex
 - Extracts endpoints from `fetch()`, `axios.*()`, `$.ajax()`, `$.get/post()` calls
 - Flags leaked secrets/API keys (AWS, GitHub, GitLab, Stripe, Firebase, npm, Bearer tokens, env vars)
@@ -16,6 +17,7 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - Secret deduplication — same key across multiple files shown once with all sources
 - Risk scoring summary per scan
 - JSON and HTML report output
+- Domain scope filtering with `--scope`
 
 ### 🚧 Phase 2: CORS Misconfiguration Scanner (in progress)
 - Sends spoofed `Origin` headers to discovered endpoints
@@ -29,12 +31,17 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 
 ```bash
 pip install -r requirements.txt
+python -m playwright install chromium
 ```
 
 ## Usage
 
 ```bash
+# Static mode (fast, no browser)
 python main.py https://target.com
+
+# Browser mode (captures runtime endpoints)
+python main.py https://target.com --browser
 ```
 
 ### Options
@@ -44,6 +51,9 @@ python main.py https://target.com
 | `-o, --output` | Output JSON file (default: `reports/surfacesweep_report.json`) |
 | `-t, --threads` | Concurrent fetch threads (default: 6) |
 | `-d, --depth` | Recursive JS depth: 0=HTML only, 1=JS from HTML, 2=JS from JS, ... (default: 1) |
+| `-b, --browser` | Use headless browser mode (captures runtime API calls) |
+| `--timeout` | Browser page load timeout in seconds (default: 30) |
+| `--scope` | Limit results to this domain (e.g. `*.target.com`) |
 | `--html` | Also generate an HTML report |
 | `--html-only` | Generate HTML report only (skip JSON) |
 | `-q, --quiet` | Suppress progress output |
@@ -51,14 +61,17 @@ python main.py https://target.com
 ### Examples
 
 ```bash
-# Basic scan
+# Static scan
 python main.py https://target.com
 
-# Deep scan (follow JS references 2 levels deep) with HTML report
-python main.py https://target.com -d 2 --html
+# Browser mode — catches runtime endpoints
+python main.py https://target.com --browser --html
 
-# Quiet mode, custom output
-python main.py https://target.com -q -o my_report.json --html
+# Deep static scan with scope filter
+python main.py https://target.com -d 2 --scope "*.target.com" --html
+
+# Browser scan with custom timeout
+python main.py https://target.com -b --timeout 60 --html
 ```
 
 ## Test results (Phase 1)
@@ -84,10 +97,7 @@ Fixed by validating the response is actually JSON (checking both
 flagging a source map as exposed.
 
 ## Roadmap
-- Headless browser mode (Playwright) to capture runtime API calls and solve
-  the static-regex concatenation limitation. Attempted, but currently
-  blocked by the Chromium binary failing to download on this network —
-  revisiting later.
+- ~~Headless browser mode (Playwright)~~ ✅ Done
 - JSON/CSV export options for pipeline integration
 - Diff mode to compare two scans of the same target over time
 
