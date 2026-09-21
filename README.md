@@ -42,6 +42,9 @@ python main.py https://target.com
 
 # Browser mode (captures runtime endpoints)
 python main.py https://target.com --browser
+
+# Full scan — both modes combined (best coverage)
+python main.py https://target.com --full --html
 ```
 
 ### Options
@@ -52,6 +55,7 @@ python main.py https://target.com --browser
 | `-t, --threads` | Concurrent fetch threads (default: 6) |
 | `-d, --depth` | Recursive JS depth: 0=HTML only, 1=JS from HTML, 2=JS from JS, ... (default: 1) |
 | `-b, --browser` | Use headless browser mode (captures runtime API calls) |
+| `-f, --full` | Run both static + browser and merge results (best coverage) |
 | `--timeout` | Browser page load timeout in seconds (default: 30) |
 | `--scope` | Limit results to this domain (e.g. `*.target.com`) |
 | `--html` | Also generate an HTML report |
@@ -66,6 +70,9 @@ python main.py https://target.com
 
 # Browser mode — catches runtime endpoints
 python main.py https://target.com --browser --html
+
+# Full scan — best coverage, combines both modes
+python main.py https://target.com -f --html
 
 # Deep static scan with scope filter
 python main.py https://target.com -d 2 --scope "*.target.com" --html

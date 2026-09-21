@@ -494,3 +494,76 @@ def save_html_report(result, filename="reports/surfacesweep_report.html"):
 
 if __name__ == "__main__":
     print("This module is meant to be imported, not run directly. Use main.py instead.")
+
+
+def merge_results(static_result, browser_result):
+    """
+    Combine results from static scan and browser scan into a single unified report.
+    Deduplicates endpoints, secrets, and source maps across both modes.
+    """
+    merged = {
+        "target": static_result.get("target", browser_result.get("target")),
+        "scan_mode": "full",
+        "js_files_scanned": [],
+        "inline_scripts_scanned": 0,
+        "secrets_found": [],
+        "source_maps_found": [],
+        "network_requests": [],
+        "intercepted_endpoints": [],
+        "errors": [],
+        "scan_depth": static_result.get("scan_depth", 0)
+    }
+
+    seen_js = set()
+    for js in static_result.get("js_files_scanned", []) + browser_result.get("js_files_scanned", []):
+        if js not in seen_js:
+            merged["js_files_scanned"].append(js)
+            seen_js.add(js)
+
+    merged["inline_scripts_scanned"] = (
+        static_result.get("inline_scripts_scanned", 0) +
+        browser_result.get("inline_scripts_scanned", 0)
+    )
+
+    seen_maps = set()
+    for m in static_result.get("source_maps_found", []) + browser_result.get("source_maps_found", []):
+        if m not in seen_maps:
+            merged["source_maps_found"].append(m)
+            seen_maps.add(m)
+
+    merged["network_requests"] = browser_result.get("network_requests", [])
+    merged["intercepted_endpoints"] = browser_result.get("intercepted_endpoints", [])
+
+    all_endpoints = set()
+    all_endpoints.update(static_result.get("internal_paths", []))
+    all_endpoints.update(static_result.get("in_scope_urls", []))
+    all_endpoints.update(static_result.get("out_of_scope_urls", []))
+    all_endpoints.update(browser_result.get("internal_paths", []))
+    all_endpoints.update(browser_result.get("in_scope_urls", []))
+    all_endpoints.update(browser_result.get("out_of_scope_urls", []))
+
+    target_domain = get_registrable_domain(merged["target"])
+    merged["internal_paths"] = sorted([e for e in all_endpoints if e.startswith("/") and not e.startswith("//")])
+    merged["in_scope_urls"] = sorted([
+        e for e in all_endpoints if e.startswith("http") and is_same_scope(e, target_domain)
+    ])
+    merged["out_of_scope_urls"] = sorted([
+        e for e in all_endpoints if e.startswith("http") and not is_same_scope(e, target_domain)
+    ])
+
+    all_secrets = []
+    all_secrets.extend(static_result.get("secrets_found", []))
+    all_secrets.extend(browser_result.get("secrets_found", []))
+    flat_secrets = []
+    for s in all_secrets:
+        for src in s.get("sources", [s.get("source", "unknown")]):
+            flat_secrets.append({"type": s["type"], "match": s["match"], "source": src})
+    merged["secrets_found"] = deduplicate_secrets(flat_secrets)
+
+    merged["errors"] = list(set(
+        static_result.get("errors", []) + browser_result.get("errors", [])
+    ))
+
+    merged["risk_summary"] = calculate_risk_summary(merged)
+
+    return merged
