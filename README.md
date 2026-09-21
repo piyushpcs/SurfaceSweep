@@ -7,10 +7,15 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 ### ✅ Phase 1: JS Endpoint Extractor (complete)
 - Scans external and inline `<script>` sources
 - Detects likely API endpoints and full URLs via regex
-- Flags leaked secrets/API keys in JS (AWS keys, bearer tokens, generic secrets)
+- Extracts endpoints from `fetch()`, `axios.*()`, `$.ajax()`, `$.get/post()` calls
+- Flags leaked secrets/API keys (AWS, GitHub, GitLab, Stripe, Firebase, npm, Bearer tokens, env vars)
 - Detects publicly exposed `.js.map` source map files
+- Recursive JS chunk discovery — follows references to other JS files (webpack chunks, dynamic imports)
 - Scopes results into internal paths, in-scope URLs, and out-of-scope URLs
-- Concurrent fetching, JSON output
+- Rate limiting, retry with backoff, robots.txt-aware politeness
+- Secret deduplication — same key across multiple files shown once with all sources
+- Risk scoring summary per scan
+- JSON and HTML report output
 
 ### 🚧 Phase 2: CORS Misconfiguration Scanner (in progress)
 - Sends spoofed `Origin` headers to discovered endpoints
@@ -30,6 +35,30 @@ pip install -r requirements.txt
 
 ```bash
 python main.py https://target.com
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-o, --output` | Output JSON file (default: `reports/surfacesweep_report.json`) |
+| `-t, --threads` | Concurrent fetch threads (default: 6) |
+| `-d, --depth` | Recursive JS depth: 0=HTML only, 1=JS from HTML, 2=JS from JS, ... (default: 1) |
+| `--html` | Also generate an HTML report |
+| `--html-only` | Generate HTML report only (skip JSON) |
+| `-q, --quiet` | Suppress progress output |
+
+### Examples
+
+```bash
+# Basic scan
+python main.py https://target.com
+
+# Deep scan (follow JS references 2 levels deep) with HTML report
+python main.py https://target.com -d 2 --html
+
+# Quiet mode, custom output
+python main.py https://target.com -q -o my_report.json --html
 ```
 
 ## Test results (Phase 1)
