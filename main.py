@@ -1,7 +1,11 @@
 import argparse
+from urllib.parse import urlparse
 from modules.extractor import run_extractor, save_report, save_html_report, merge_results
 from modules.browser_extractor import run_browser_scan
 from modules.validator import validate_endpoints, get_live_endpoints
+from modules.export import export_burp_csv, export_zap_csv
+from modules.wayback import get_wayback_endpoints
+from modules.waf import detect_waf, get_scan_adjustments
 
 
 def main():
@@ -19,6 +23,10 @@ def main():
     parser.add_argument("--scope", default=None, help="Limit results to this domain (e.g. '*.target.com')")
     parser.add_argument("--cookie", default=None, help="Cookie header for authenticated scans (e.g. 'session=abc123')")
     parser.add_argument("--header", action="append", default=[], help="Custom header (can repeat: -H 'X-Api-Key: value')")
+    parser.add_argument("--burp", action="store_true", help="Export endpoints as Burp Suite CSV")
+    parser.add_argument("--zap", action="store_true", help="Export endpoints as OWASP ZAP CSV")
+    parser.add_argument("--wayback", action="store_true", help="Include historical JS files from Wayback Machine")
+    parser.add_argument("--waf", action="store_true", help="Detect WAF and adjust scan speed")
     parser.add_argument("--html", action="store_true", help="Also generate an HTML report")
     parser.add_argument("--html-only", action="store_true", help="Generate HTML report only (skip JSON)")
     parser.add_argument("--no-deobf", action="store_true", help="Skip JS deobfuscation")
@@ -35,6 +43,26 @@ def main():
             key, value = h.split(":", 1)
             custom_headers[key.strip()] = value.strip()
 
+    # WAF Detection (before scan)
+    if args.waf:
+        if verbose:
+            print("[*] --- WAF Detection ---")
+        waf_info = detect_waf(args.target, verbose=verbose)
+        result_waf = {"waf": waf_info}
+        adjustments = get_scan_adjustments(waf_info)
+        if verbose and waf_info.get("detected"):
+            print(f"[*] Scan adjustments: {adjustments['recommendation']}")
+
+    # Wayback Machine integration
+    if args.wayback:
+        if verbose:
+            print(f"\n[*] --- Wayback Machine ---")
+        target_domain = urlparse(args.target).netloc
+        wayback_result = get_wayback_endpoints(target_domain, limit=30, verbose=verbose)
+    else:
+        wayback_result = None
+
+    # Main scan
     if args.full:
         if verbose:
             print("[*] === FULL SCAN: Static + Browser mode ===\n")
@@ -69,6 +97,24 @@ def main():
         result = run_extractor(args.target, threads=args.threads, verbose=verbose, max_depth=args.depth, deobfuscate=not args.no_deobf)
         result["scan_mode"] = "static"
 
+    # Merge Wayback results
+    if wayback_result and wayback_result.get("endpoints"):
+        if verbose:
+            print(f"\n[*] Merging Wayback results...")
+        before = len(result.get("internal_paths", []))
+        new_paths = [e for e in wayback_result["endpoints"] if e.startswith("/") and e not in result.get("internal_paths", [])]
+        result["internal_paths"] = sorted(set(result.get("internal_paths", []) + new_paths))
+        result["wayback_js_files"] = wayback_result.get("js_files", [])
+        for s in wayback_result.get("secrets", []):
+            result.setdefault("secrets_found", []).append(s)
+        if verbose:
+            print(f"[+] Added {len(result['internal_paths']) - before} endpoint(s) from Wayback")
+
+    # WAF info into result
+    if args.waf:
+        result["waf"] = result_waf.get("waf", {})
+
+    # Validation
     if args.validate:
         if verbose:
             print(f"\n[*] --- Endpoint Validation ---")
@@ -89,11 +135,15 @@ def main():
                 headers=custom_headers if custom_headers else None
             )
             result["validation"] = validation
-            result["internal_paths"] = [
-                r["url"].replace(args.target, "").rstrip("/")
+
+            # Filter to only live/restricted endpoints
+            from urllib.parse import urlparse
+            target_base = f"{urlparse(args.target).scheme}://{urlparse(args.target).netloc}"
+            result["internal_paths"] = sorted(set(
+                r["url"].replace(target_base, "").rstrip("/") or "/"
                 for r in get_live_endpoints(validation)
-                if r["url"].startswith(args.target)
-            ]
+                if r["url"].startswith(target_base)
+            ))
 
             if verbose:
                 dead = len(validation.get("dead", []))
@@ -102,6 +152,15 @@ def main():
         else:
             if verbose:
                 print("[*] No endpoints to validate")
+
+    # Exports
+    if args.burp:
+        base = args.output.replace(".json", "") if args.output.endswith(".json") else args.output
+        export_burp_csv(result, f"{base}_burp.csv")
+
+    if args.zap:
+        base = args.output.replace(".json", "") if args.output.endswith(".json") else args.output
+        export_zap_csv(result, f"{base}_zap.csv")
 
     if not args.html_only:
         save_report(result, args.output)

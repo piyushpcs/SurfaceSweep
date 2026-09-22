@@ -1,23 +1,29 @@
 # SurfaceSweep
 
-A recon tool that extracts API endpoints and secrets from a target's JavaScript files, and checks discovered endpoints for CORS misconfigurations. Built while learning offensive web security.
+A recon tool that extracts API endpoints and secrets from a target's JavaScript files, validates discovered endpoints, and exports results for Burp Suite/ZAP. Built while learning offensive web security.
 
 ## Status
 
 ### ✅ Phase 1: JS Endpoint Extractor (complete)
 - **Static mode** — regex-based extraction from HTML and JS files
 - **Browser mode** — headless Chromium captures runtime API calls, lazy-loaded chunks, and dynamic endpoints
+- **Full scan** — runs both modes and merges results for best coverage
 - Detects likely API endpoints and full URLs via regex
 - Extracts endpoints from `fetch()`, `axios.*()`, `$.ajax()`, `$.get/post()` calls
-- Flags leaked secrets/API keys (AWS, GitHub, GitLab, Stripe, Firebase, npm, Bearer tokens, env vars)
+- Flags leaked secrets/API keys (AWS, GitHub, GitLab, Stripe, Firebase, npm, Bearer tokens, env vars, private keys, JWT secrets, database URLs, SMTP credentials, passwords)
 - Detects publicly exposed `.js.map` source map files
 - Recursive JS chunk discovery — follows references to other JS files (webpack chunks, dynamic imports)
+- **JS Deobfuscation** — decodes Base64, hex, unicode, eval(), String.fromCharCode()
+- **Endpoint Validation** — confirms endpoints are live, filters false positives (404s, soft-404s)
+- **WAF Detection** — identifies Cloudflare, Akamai, AWS WAF, Imperva, etc.
+- **Wayback Machine** — finds historical JS files no longer linked
+- **Burp/ZAP Export** — CSV output for import into proxy tools
 - Scopes results into internal paths, in-scope URLs, and out-of-scope URLs
-- Rate limiting, retry with backoff, robots.txt-aware politeness
+- Rate limiting, retry with backoff
 - Secret deduplication — same key across multiple files shown once with all sources
 - Risk scoring summary per scan
 - JSON and HTML report output
-- Domain scope filtering with `--scope`
+- Custom headers/cookies for authenticated scans
 
 ### 🚧 Phase 2: CORS Misconfiguration Scanner (in progress)
 - Sends spoofed `Origin` headers to discovered endpoints
@@ -45,6 +51,9 @@ python main.py https://target.com --browser
 
 # Full scan — both modes combined (best coverage)
 python main.py https://target.com --full --html
+
+# Full scan with all features
+python main.py https://target.com -f --validate --burp --zap --waf --html
 ```
 
 ### Options
@@ -56,59 +65,94 @@ python main.py https://target.com --full --html
 | `-d, --depth` | Recursive JS depth: 0=HTML only, 1=JS from HTML, 2=JS from JS, ... (default: 1) |
 | `-b, --browser` | Use headless browser mode (captures runtime API calls) |
 | `-f, --full` | Run both static + browser and merge results (best coverage) |
+| `--validate` | Validate discovered endpoints to filter false positives |
+| `--vt` | Validation threads (default: 10) |
+| `--vtimeout` | Validation timeout in seconds (default: 5) |
+| `--burp` | Export endpoints as Burp Suite CSV |
+| `--zap` | Export endpoints as OWASP ZAP CSV |
+| `--wayback` | Include historical JS files from Wayback Machine |
+| `--waf` | Detect WAF and adjust scan speed |
+| `--cookie` | Cookie header for authenticated scans |
+| `--header` | Custom header (repeatable: `-H 'X-Api-Key: value'`) |
 | `--timeout` | Browser page load timeout in seconds (default: 30) |
 | `--scope` | Limit results to this domain (e.g. `*.target.com`) |
 | `--html` | Also generate an HTML report |
 | `--html-only` | Generate HTML report only (skip JSON) |
+| `--no-deobf` | Skip JS deobfuscation |
 | `-q, --quiet` | Suppress progress output |
 
 ### Examples
 
 ```bash
-# Static scan
+# Basic static scan
 python main.py https://target.com
 
 # Browser mode — catches runtime endpoints
 python main.py https://target.com --browser --html
 
-# Full scan — best coverage, combines both modes
-python main.py https://target.com -f --html
+# Full scan with validation (filters false positives)
+python main.py https://target.com -f --validate --html
 
-# Deep static scan with scope filter
-python main.py https://target.com -d 2 --scope "*.target.com" --html
+# Export for Burp Suite
+python main.py https://target.com -f --burp --zap
 
-# Browser scan with custom timeout
-python main.py https://target.com -b --timeout 60 --html
+# Authenticated scan
+python main.py https://target.com --cookie "session=abc123" --header "X-Api-Key: value"
+
+# Full recon with all features
+python main.py https://target.com -f --validate --burp --zap --waf --wayback --html
 ```
 
-## Test results (Phase 1)
+## Project Structure
 
-Tested against OWASP Juice Shop (local Docker instance):
-- Found 3 JS files + 1 inline script
-- Extracted 27 unique endpoint/URL references
-- 0 internal API paths detected — see limitation below
+```
+SurfaceSweep/
+├── main.py                  # CLI entry point
+├── modules/
+│   ├── __init__.py
+│   ├── extractor.py         # Static extraction logic
+│   ├── browser_extractor.py # Browser-based extraction (Playwright)
+│   ├── deobfuscator.py      # JS deobfuscation
+│   ├── validator.py         # Endpoint validation
+│   ├── report.py            # HTML/JSON report generation
+│   ├── export.py            # Burp/ZAP CSV export
+│   ├── wayback.py           # Wayback Machine integration
+│   └── waf.py               # WAF detection
+├── testbed/
+│   └── vuln_api.py          # Test Flask app
+└── reports/                 # Generated reports
+```
 
-### Known limitation: static regex misses concatenated endpoints
-Angular (and other SPA frameworks) frequently build API URLs via string
-concatenation, e.g. `environment.hostServer + '/rest/products'`. Static
-regex over raw JS text cannot see across this split, so real API paths
-built this way are missed. Confirmed on Juice Shop, which has a REST API
-that produced zero matches despite clearly existing.
+## Test Results
 
-### Fixed bug: false-positive source map detection
-Initial detection relied on HTTP status code alone. Servers using SPA
-fallback routing return `200 + index.html` for *any* unmatched path,
-including `/whatever.js.map` — producing false positives on every scan.
-Fixed by validating the response is actually JSON (checking both
-`Content-Type` and the first character of the response body) before
-flagging a source map as exposed.
+Tested against `https://kickbacks.ai/security-policy` (real target):
+
+| Feature | Result |
+|---------|--------|
+| Static scan | 53 endpoints from 8 JS files |
+| Browser scan | 31 endpoints, 2 XHR/fetch intercepted |
+| Combined | 66 endpoints |
+| Validation | 37 live, 3 restricted, 36 dead filtered |
+| Burp/ZAP CSV | 33 endpoints exported |
+| WAF | No WAF detected |
+
+### Fixed bugs
+- **False-positive source map detection** — now validates JSON content before flagging
+- **Validation URL filtering** — now uses base domain instead of full target URL
+- **Missing risk_summary in browser mode** — now calculates risk score
 
 ## Roadmap
 - ~~Headless browser mode (Playwright)~~ ✅ Done
-- JSON/CSV export options for pipeline integration
+- ~~JS Deobfuscation~~ ✅ Done
+- ~~Endpoint Validation~~ ✅ Done
+- ~~Burp/ZAP Export~~ ✅ Done
+- ~~WAF Detection~~ ✅ Done
+- ~~Wayback Machine Integration~~ ✅ Done
 - Diff mode to compare two scans of the same target over time
+- AST-based extraction (parse JS syntax tree instead of regex)
+- Crawl SPA routes (follow React/Vue router links)
 
 ## Responsible use
 Built and tested only against intentionally vulnerable/legal test targets
-(OWASP Juice Shop, local Flask testbed). Do not run against systems you
-don't own or don't have authorization to test.
+(OWASP Juice Shop, local Flask testbed, kickbacks.ai with permission).
+Do not run against systems you don't own or don't have authorization to test.

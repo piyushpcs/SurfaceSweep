@@ -204,4 +204,10 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         if result["deobfuscation_findings"]:
             print(f"[!] {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
 
+    from modules.extractor import calculate_risk_summary
+    result["risk_summary"] = calculate_risk_summary(result)
+
+    if verbose:
+        print(f"[+] Risk level: {result['risk_summary']['level']} (score: {result['risk_summary']['score']})")
+
     return result
