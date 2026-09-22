@@ -301,13 +301,16 @@ def render_cors(cors):
     for f in cors.get("findings", []):
         if f.get("severity") in ("INFO", "ERROR") and not f.get("acao"):
             continue
+        evidence = f.get("evidence") or ""
         rows.append(
             f'<tr><td>{sev_badge.get(f.get("severity", ""), f.get("severity", ""))}</td>'
             f'<td><code>{f.get("url", "")}</code></td>'
             f'<td><code>{f.get("origin", "")}</code></td>'
             f'<td><code>{f.get("acao", "")}</code></td>'
             f'<td>{f.get("acac", "") or "—"}</td>'
-            f'<td class="muted">{f.get("detail", "")}</td></tr>'
+            f'<td>{f.get("method", "") or "—"}</td>'
+            f'<td class="muted">{f.get("detail", "")}</td>'
+            f'<td class="muted">{evidence or "—"}</td></tr>'
         )
     if not rows:
         return ""
@@ -315,7 +318,8 @@ def render_cors(cors):
     return (
         f'<h2>CORS Misconfigurations ({len(rows)} findings / {tested} tested)</h2>'
         '<table><thead><tr><th>Severity</th><th>URL</th><th>Origin</th>'
-        '<th>ACAO</th><th>ACAC</th><th>Detail</th></tr></thead>'
+        '<th>ACAO</th><th>ACAC</th><th>Method</th><th>Detail</th>'
+        '<th>Evidence</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table>'
     )
 

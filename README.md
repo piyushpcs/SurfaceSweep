@@ -32,14 +32,18 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - Custom headers/cookies for authenticated scans
 
 ### ✅ Phase 2: CORS Misconfiguration Scanner (complete)
-- Sends spoofed `Origin` headers to discovered endpoints (real preflight: `Access-Control-Request-Method`/`Headers` + GET fallback)
-- Tests evil.com, null, subdomain, lookalike, scheme/port variants, and custom origins
+- Sends spoofed `Origin` headers to discovered endpoints (real preflight: `Access-Control-Request-Method`/`Headers` + GET/POST fallback)
+- Origin matrix: evil/null, path-bearing Origins, scheme/port flips on target host, subdomain/lookalike domains, custom origin
 - Normalized origin comparison (case, default ports, trailing slash) + registrable-domain awareness
+- Multi-value ACAO parsing — flags non-singleton (comma-separated) lists as MEDIUM
+- Evidence on each finding: `Vary`, `Allow-Methods/Headers`, `Max-Age`
+- POST fallback for API-like paths when OPTIONS/GET return no ACAO
 - Severity: CRITICAL (arbitrary reflected + credentials / null + credentials) → HIGH → MEDIUM → LOW → INFO
 - Legitimate target origin reflection reported as INFO (not a finding)
 - Rate-limited probes (`--cors-rps`, default 5/sec)
+- Follows redirects and reads ACAO on the final response (apex → www etc.)
 - Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per finding
-- HTML report section with ACAO/ACAC columns
+- HTML report: severity, method, detail, evidence columns
 
 ### ✅ Phase 3: JWT Security Analyzer (complete)
 - Extracts compact JWTs (`header.payload.sig`) from JS/HTML scan results
@@ -220,14 +224,39 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 
 ### SPA route discovery (kickbacks.ai)
 - Found 20 routes: 9 DOM, 7 BFS crawl, 2 common probe, 2 static
-- New finds not in HTML: `/partners`, `/surface-pricing`, `/api/advertiser/claude.md`, `/info`, `/logout`
+- New finds not in HTML: `/partners`, `/surface-pricing`, `/api/advertiser/v1/claude.md`, `/info`, `/logout`
 - All validated: `/partners` (200), `/info` (200), `/logout` (405), `/api/advertiser/v1/status` (200)
+
+### CORS Step 2 (mintlify.com)
+Target: `https://mintlify.com` (apex 307-redirects to `https://www.mintlify.com`)
+
+| Check | Result |
+|-------|--------|
+| Endpoints probed | `/`, `/pricing`, `/login`, `/security-policy`, `/docs`, `/api/auth/session` |
+| Origin matrix sample | `evil.com`, path-bearing `evil.com/path`, `null`, `mintlify.com.evil.com`, `evil.mintlify.com` |
+| Findings | 20× **MEDIUM** — `Access-Control-Allow-Origin: *` (no credentials) |
+| Flagged URLs | `/`, `/pricing` (OPTIONS); `/login`, `/security-policy` (GET fallback) |
+| Not flagged | `/docs`, `/api/auth/session` (no ACAO) |
+| Final responses | All on `https://www.mintlify.com/...` after redirect |
+| Evidence captured | `Methods: OPTIONS, GET, HEAD` / `Vary: accept-encoding` |
+| Risk boost | 160 (20 × MEDIUM weight) |
+| Reportable? | **No** — wildcard without credentials on public pages; not a vuln |
+
+Redirect handling fix verified on this target: probes without following redirects saw only `307` + empty ACAO (false negative).
+
+### Local testbed (Flask :5555)
+- CRITICAL: arbitrary origin reflected + credentials, `null` + credentials
+- HIGH: related/same-site reflect + credentials; wildcard + credentials (invalid combo)
+- MEDIUM: wildcard `*`, non-singleton (comma-separated) ACAO lists
+- INFO: legitimate target origin (not reported as a finding)
+- POST-only CORS path exercised via API-like POST fallback
 
 ### Fixed bugs
 - **False-positive source map detection** — now validates JSON content before flagging
 - **Validation URL filtering** — now uses base domain instead of full target URL
 - **Missing risk_summary in browser mode** — now calculates risk score
 - **Protocol-relative URL leak** — `//` URLs no longer leak into internal_paths
+- **CORS redirect false negatives** — probes follow redirects; ACAO read from final response
 
 ## Roadmap
 - ~~Headless browser mode (Playwright)~~ ✅ Done

@@ -33,7 +33,12 @@ def normalize_origin(origin):
     if not scheme or not host:
         return origin.strip()
 
-    port = parsed.port
+    try:
+        port = parsed.port
+    except ValueError:
+        # Malformed port (e.g. "5555, https:" from a multi-value ACAO)
+        return value.rstrip("/") if "://" in value else value
+
     netloc = host
     if port and port != DEFAULT_PORTS.get(scheme):
         netloc = f"{host}:{port}"
@@ -97,11 +102,23 @@ def is_host_suffix_match(origin_host_a, origin_host_b):
     return a.endswith("." + b) or b.endswith("." + a)
 
 
+def _dedupe(origins):
+    seen = set()
+    ordered = []
+    for o in origins:
+        if o and o not in seen:
+            seen.add(o)
+            ordered.append(o)
+    return ordered
+
+
 def build_test_origins(target_url, custom_origin=None):
     """
     Build list of Origin values to probe.
 
-    For IP / localhost targets, skips domain-derived lookalikes
+    Matrix covers: attacker hosts, null, path-bearing Origins (naive
+    substring matchers), same host with scheme/port flips, and domain
+    lookalikes. IP / localhost targets skip domain-derived lookalikes
     (they produce nonsense like sub.0.1).
     """
     parsed = urlparse(target_url)
@@ -109,17 +126,40 @@ def build_test_origins(target_url, custom_origin=None):
     scheme = parsed.scheme or "https"
     port = parsed.port
 
-    origins = ["https://evil.com", "https://attacker.example", "null"]
+    origins = [
+        "https://evil.com",
+        "https://attacker.example",
+        # Path-bearing Origin — browsers never send this; catches contains()/regex FPs
+        "https://evil.com/path",
+        "https://evil.com.evil",
+        "null",
+    ]
+
+    # Scheme + port flips on the real target host
+    if port and port not in (80, 443):
+        origins.extend([
+            f"{scheme}://{host}:{port}",
+            f"http://{host}:{port}",
+            f"https://{host}:{port}",
+            f"http://{host}",
+            f"https://{host}",
+            f"{scheme}://{host}",
+        ])
+    else:
+        origins.extend([
+            f"https://{host}",
+            f"http://{host}",
+        ])
+        # Explicit non-default port probe (scheme-relative style)
+        if scheme == "https":
+            origins.append(f"http://{host}:8080")
+        else:
+            origins.append(f"https://{host}:8443")
 
     if is_ip_host(host) or host == "localhost":
-        # Same host, different scheme / port — useful against local testbeds
-        origins.extend([
-            f"http://{host}" + (f":{port}" if port and scheme == "https" else ""),
-            f"https://{host}" + (f":{port}" if port and scheme == "http" else ""),
-            f"https://{host}:9999" if not (port == 9999) else f"https://{host}",
-        ])
         if port and port not in (80, 443):
-            origins.append(f"{scheme}://{host}:{port}")
+            origins.append(f"https://{host}:9999")
+        origins.append(f"{scheme}://{host}/path")  # path-bearing on target host
     else:
         parts = host.split(".")
         registrable = ".".join(parts[-2:]) if len(parts) >= 2 else host
@@ -128,6 +168,8 @@ def build_test_origins(target_url, custom_origin=None):
             f"https://{registrable}.evil.com",
             f"https://{registrable}",
             f"http://{registrable}",
+            f"https://{registrable}/path",
+            f"https://evil.{registrable}",
         ])
         if port and port not in (80, 443):
             origins.append(f"https://{registrable}:{port}")
@@ -135,10 +177,4 @@ def build_test_origins(target_url, custom_origin=None):
     if custom_origin:
         origins.insert(0, custom_origin)
 
-    seen = set()
-    ordered = []
-    for o in origins:
-        if o not in seen:
-            seen.add(o)
-            ordered.append(o)
-    return ordered
+    return _dedupe(origins)

@@ -17,6 +17,18 @@ STATIC_EXTENSIONS = (
     ".xml", ".pdf", ".zip",
 )
 
+# Paths where a simple GET may not surface CORS — worth a POST fallback
+API_PATH_HINTS = (
+    "/api/", "/api", "/v1/", "/v2/", "/v3/", "/graphql", "/rest/",
+    "/auth/", "/oauth/", "/webhook", "/rpc/", "/json/", "/post-only",
+)
+
+
+def is_api_like_path(url):
+    """True when the path looks like an API endpoint (POST fallback candidate)."""
+    path = url.split("?")[0].split("#")[0].lower()
+    return any(hint in path for hint in API_PATH_HINTS)
+
 
 def resolve_endpoints(endpoints, base_url, max_endpoints=50):
     """Resolve paths/URLs to absolute URLs, drop static assets, cap count."""
@@ -47,7 +59,7 @@ def scan_cors(
     custom_origin=None,
     max_endpoints=50,
     threads=6,
-    timeout=8,
+    timeout=5,
     verbose=True,
     headers=None,
     rate_limit=5,
@@ -88,32 +100,37 @@ def scan_cors(
 
     findings = []
 
-    def _scan_one(url):
-        opt_results = probe_endpoint(
+    def _probe(url, method, request_method="GET"):
+        return probe_endpoint(
             url,
             origins,
             timeout=timeout,
-            method="OPTIONS",
+            method=method,
             headers=headers,
             limiter=limiter,
             target_origin=target_origin,
             registrable_domain=registrable_domain,
+            request_method=request_method,
         )
-        if not any(r["acao"] for r in opt_results):
-            get_results = probe_endpoint(
-                url,
-                origins,
-                timeout=timeout,
-                method="GET",
-                headers=headers,
-                limiter=limiter,
-                target_origin=target_origin,
-                registrable_domain=registrable_domain,
-                request_method="GET",
-            )
-            if any(r["acao"] for r in get_results):
-                return url, get_results
-        return url, opt_results
+
+    def _scan_one(url):
+        opt_results = _probe(url, "OPTIONS")
+        if any(r["acao"] for r in opt_results):
+            return url, opt_results
+
+        get_results = _probe(url, "GET")
+        if any(r["acao"] for r in get_results):
+            return url, get_results
+
+        # API-like paths often only expose CORS on non-simple requests
+        if is_api_like_path(url):
+            post_results = _probe(url, "POST", request_method="POST")
+            if any(r["acao"] for r in post_results):
+                return url, post_results
+            # Merge POST errors into GET noise only if GET had nothing
+            return url, get_results
+
+        return url, get_results
 
     with ThreadPoolExecutor(max_workers=threads) as pool:
         futures = {pool.submit(_scan_one, url): url for url in resolved}

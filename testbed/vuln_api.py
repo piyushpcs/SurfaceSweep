@@ -18,6 +18,9 @@ def index():
     fetch("/api/v1/public");
     fetch("/api/v2/null-cred");
     fetch("/api/v2/legit");
+    fetch("/api/v2/multi-acao");
+    fetch("/api/v2/path-origin");
+    fetch("/rpc/post-only");
     </script>
     </body>
     </html>
@@ -147,6 +150,52 @@ def api_legit():
         resp.headers["Access-Control-Allow-Credentials"] = "true"
     elif request.method == "OPTIONS":
         resp.status_code = 204
+    return resp
+
+
+@app.route("/api/v2/multi-acao", methods=["GET", "POST", "OPTIONS"])
+def api_multi_acao():
+    # Invalid multi-value ACAO (spec allows one origin or *)
+    origin = request.headers.get("Origin") or "https://evil.com"
+    resp = jsonify({"status": "ok", "path": "multi-acao"})
+    resp.headers["Access-Control-Allow-Origin"] = f"{origin}, https://cdn.example.com"
+    resp.headers["Access-Control-Allow-Credentials"] = "true"
+    resp.headers["Vary"] = "Origin"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    if request.method == "OPTIONS":
+        resp.status_code = 204
+    return resp
+
+
+@app.route("/api/v2/path-origin", methods=["GET", "OPTIONS"])
+def api_path_origin():
+    # Naive substring matcher: ACAO set if Origin contains host string
+    origin = request.headers.get("Origin") or ""
+    resp = jsonify({"status": "ok", "path": "path-origin"})
+    if "evil.com" in origin:
+        # Path-bearing Origin https://evil.com/path wrongly accepted
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+    elif request.method == "OPTIONS":
+        resp.status_code = 204
+    return resp
+
+
+@app.route("/rpc/post-only", methods=["POST", "OPTIONS"])
+def api_post_only():
+    # CORS headers only on POST — GET/OPTIONS return no ACAO (POST fallback)
+    # Outside /api/v2/* so the catch-all does not answer GET for this path.
+    origin = request.headers.get("Origin")
+    resp = jsonify({"status": "ok", "path": "post-only"})
+    if origin and request.method == "POST":
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+    elif request.method == "OPTIONS":
+        resp.status_code = 204
+    else:
+        # GET not allowed on this route — 405 without CORS headers
+        resp.status_code = 405
     return resp
 
 
