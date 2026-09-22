@@ -62,6 +62,18 @@ def app_js():
 
     // Generic password
     var mail_config = { password: "smtp_secret_pass_123" };
+
+    // Dangerous sinks for testing
+    document.getElementById("out").innerHTML = userInput;
+    setTimeout("doSomething()", 100);
+    var url = "https://" + location.hash.substring(1);
+    window.location.href = url;
+
+    // Internal / private host references
+    var devApi = "http://localhost:3000/api";
+    var stage = "https://staging.testapp.local/admin";
+    var backup = "https://192.168.1.50:8443/backup";
+    var grafana = "http://grafana.internal.corp:3000/d/abc";
     '''
 
 @app.route("/static/chunk-abc123.js")

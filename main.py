@@ -119,6 +119,19 @@ def main():
         result["wayback_js_files"] = wayback_result.get("js_files", [])
         for s in wayback_result.get("secrets", []):
             result.setdefault("secrets_found", []).append(s)
+
+        # Merge wayback sinks and internal hosts
+        from modules.extraction import deduplicate_sinks
+        for s in wayback_result.get("sinks", []):
+            result.setdefault("sinks_found", []).append(s)
+        if result.get("sinks_found"):
+            result["sinks_found"] = deduplicate_sinks(result["sinks_found"])
+        seen_wb_host = {h.get("match") for h in result.get("internal_hosts_found", [])}
+        for h in wayback_result.get("internal_hosts", []):
+            if h.get("match") not in seen_wb_host:
+                seen_wb_host.add(h.get("match"))
+                result.setdefault("internal_hosts_found", []).append(h)
+
         # Recalculate risk after adding Wayback endpoints
         result["risk_summary"] = calculate_risk_summary(result)
         if verbose:

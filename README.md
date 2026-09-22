@@ -11,7 +11,9 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **Full scan** — runs both modes and merges results for best coverage
 - Detects likely API endpoints and full URLs via regex
 - Extracts endpoints from `fetch()`, `axios.*()`, `$.ajax()`, `$.get/post()` calls
-- Flags leaked secrets/API keys (AWS, GitHub, GitLab, Stripe, Firebase, npm, Bearer tokens, env vars, private keys, JWT secrets, database URLs, SMTP credentials, passwords)
+- Flags leaked secrets/API keys (60+ patterns: AWS, OpenAI, Anthropic, Twilio, SendGrid, Discord/Slack webhooks, Postman, Shopify, Cloudinary, Mapbox, GitHub, GitLab, Stripe, PayPal, Firebase, npm, PyPI, Bearer/JWT tokens, env vars, private keys, database URLs, SMTP credentials, passwords, OAuth secrets)
+- Detects dangerous JS sinks (innerHTML, eval, document.write, dangerouslySetInnerHTML, v-html, jQuery HTML, open redirect patterns) with severity ratings
+- Detects internal/private host references (localhost, private IPs 10/172/192.168, *.internal/*.corp hostnames, dev/staging subdomains)
 - Detects publicly exposed `.js.map` source map files
 - Recursive JS chunk discovery — follows references to other JS files (webpack chunks, dynamic imports)
 - **JS Deobfuscation** — decodes Base64, hex, unicode, eval(), String.fromCharCode()
@@ -146,7 +148,8 @@ SurfaceSweep/
 │   ├── analysis/                 # Analyze findings
 │   │   ├── __init__.py
 │   │   ├── validator.py          # Endpoint validation
-│   │   └── libraries.py          # Library version + CVE detection
+│   │   ├── libraries.py          # Library version + CVE detection
+│   │   └── sinks.py              # Dangerous JS sink detection (XSS/open-redirect patterns)
 │   ├── recon/                    # Target reconnaissance
 │   │   ├── __init__.py
 │   │   └── waf.py                # WAF detection

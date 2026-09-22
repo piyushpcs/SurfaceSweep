@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from modules.extraction.patterns import (
     ENDPOINT_PATTERN, GENERIC_PATH_PATTERN, FULL_URL_PATTERN, CALL_PATTERN,
     JS_REFERENCE_PATTERN, WEBPACK_CHUNK_PATTERN,
-    is_noise, is_static_asset
+    is_noise, is_static_asset, find_internal_hosts
 )
 from modules.extraction.secrets import extract_secrets, deduplicate_secrets
 from modules.extraction.http import RateLimiter, fetch_with_retry, get_page
@@ -20,6 +20,7 @@ from modules.extraction.scope import get_registrable_domain, is_same_scope
 from modules.extraction.risk import calculate_risk_summary
 from modules.extraction.deobfuscator import deobfuscate
 from modules.extraction.ast import extract_endpoints_ast, ast_is_available
+from modules.analysis.sinks import detect_sinks, deduplicate_sinks
 
 
 def get_js_sources(base_url, html):
@@ -110,23 +111,30 @@ def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
             endpoints.add(match)
 
     secrets = extract_secrets(content, source_label)
+    sinks = detect_sinks(content, source_label)
+    internal = find_internal_hosts(content)
+    for h in internal:
+        h["source"] = source_label
 
     # Filter noise from combined AST + regex results
     endpoints = {e for e in endpoints if not is_noise(e) and not e.startswith("//")}
 
-    return endpoints, secrets, deobf_findings
+    return endpoints, secrets, deobf_findings, sinks, internal
 
 
 def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
-    """Fetch a JS file and extract endpoints/secrets from it."""
+    """Fetch a JS file and extract endpoints/secrets/sinks from it."""
     try:
         resp = fetch_with_retry(js_url, timeout=timeout, limiter=limiter)
         if resp is None:
-            return {"source": js_url, "error": "Failed after retries", "endpoints": set(), "secrets": [], "linked_js": set()}
+            return {"source": js_url, "error": "Failed after retries", "endpoints": set(), "secrets": [], "linked_js": set(), "sinks": [], "internal_hosts": []}
 
         content_type = resp.headers.get("Content-Type", "")
         text = resp.text if "json" not in content_type.lower() else ""
-        endpoints, secrets, deobf = extract_from_text(text, js_url, use_ast=use_ast) if text else (set(), [], [])
+        if text:
+            endpoints, secrets, deobf, sinks, internal = extract_from_text(text, js_url, use_ast=use_ast)
+        else:
+            endpoints, secrets, deobf, sinks, internal = set(), [], [], [], []
         source_map = check_source_map(js_url, limiter=limiter)
         linked_js = discover_js_chunks(text, js_url) if text else set()
 
@@ -136,10 +144,12 @@ def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
             "secrets": secrets,
             "source_map_found": source_map,
             "linked_js": linked_js,
-            "deobfuscation_findings": deobf
+            "deobfuscation_findings": deobf,
+            "sinks": sinks,
+            "internal_hosts": internal,
         }
     except requests.RequestException as e:
-        return {"source": js_url, "error": str(e), "endpoints": set(), "secrets": [], "linked_js": set(), "deobfuscation_findings": []}
+        return {"source": js_url, "error": str(e), "endpoints": set(), "secrets": [], "linked_js": set(), "deobfuscation_findings": [], "sinks": [], "internal_hosts": []}
 
 
 def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=True, use_ast=True):
@@ -158,6 +168,8 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         "secrets_found": [],
         "source_maps_found": [],
         "deobfuscation_findings": [],
+        "sinks_found": [],
+        "internal_hosts_found": [],
         "errors": [],
         "scan_depth": max_depth
     }
@@ -180,18 +192,22 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
 
     all_endpoints = set()
     all_secrets = []
+    all_sinks = []
+    all_internal = []
 
     for i, content in enumerate(inline_js):
-        eps, secs, deobf = extract_from_text(content, f"inline_script_{i}", do_deobfuscate=deobfuscate, use_ast=use_ast)
+        eps, secs, deobf, snks, intr = extract_from_text(content, f"inline_script_{i}", do_deobfuscate=deobfuscate, use_ast=use_ast)
         all_endpoints.update(eps)
         all_secrets.extend(secs)
+        all_sinks.extend(snks)
+        all_internal.extend(intr)
         result["deobfuscation_findings"].extend(deobf)
     result["inline_scripts_scanned"] = len(inline_js)
 
     visited_js = set()
 
     def scan_js_urls(js_urls, depth):
-        nonlocal all_endpoints, all_secrets
+        nonlocal all_endpoints, all_secrets, all_sinks, all_internal
         if not js_urls or depth > max_depth:
             return
 
@@ -216,6 +232,8 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
                 result["js_files_scanned"].append(data["source"])
                 all_endpoints.update(data["endpoints"])
                 all_secrets.extend(data["secrets"])
+                all_sinks.extend(data.get("sinks", []))
+                all_internal.extend(data.get("internal_hosts", []))
                 result["deobfuscation_findings"].extend(data.get("deobfuscation_findings", []))
 
                 if data["source_map_found"]:
@@ -244,6 +262,14 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         e for e in all_endpoints if e.startswith("http") and not is_same_scope(e, target_domain) and not is_static_asset(e)
     ])
     result["secrets_found"] = deduplicate_secrets(all_secrets)
+    result["sinks_found"] = deduplicate_sinks(all_sinks)
+    seen_host = set()
+    for h in all_internal:
+        key = h["match"]
+        if key in seen_host:
+            continue
+        seen_host.add(key)
+        result["internal_hosts_found"].append(h)
     result["risk_summary"] = calculate_risk_summary(result)
 
     if verbose:
@@ -260,6 +286,10 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
             print(f"[!] {len(result['source_maps_found'])} exposed source map(s)")
         if result["deobfuscation_findings"]:
             print(f"[!] {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
+        if result["sinks_found"]:
+            print(f"[!] {len(result['sinks_found'])} dangerous sink pattern(s) found")
+        if result["internal_hosts_found"]:
+            print(f"[!] {len(result['internal_hosts_found'])} internal/private host reference(s) found")
         print(f"[+] Risk level: {result['risk_summary']['level']} (score: {result['risk_summary']['score']})")
 
     return result
@@ -278,6 +308,8 @@ def merge_results(static_result, browser_result):
         "secrets_found": [],
         "source_maps_found": [],
         "deobfuscation_findings": [],
+        "sinks_found": [],
+        "internal_hosts_found": [],
         "network_requests": [],
         "intercepted_endpoints": [],
         "errors": [],
@@ -339,6 +371,22 @@ def merge_results(static_result, browser_result):
         for src in s.get("sources", [s.get("source", "unknown")]):
             flat_secrets.append({"type": s["type"], "match": s["match"], "source": src})
     merged["secrets_found"] = deduplicate_secrets(flat_secrets)
+
+    # Merge sinks and internal hosts
+    all_sinks = []
+    for s in static_result.get("sinks_found", []) + browser_result.get("sinks_found", []):
+        for src in s.get("sources", [s.get("source", "unknown")]):
+            all_sinks.append({"sink": s.get("sink", ""), "severity": s.get("severity", ""),
+                              "description": s.get("description", ""), "count": s.get("count", 1),
+                              "source": src})
+    merged["sinks_found"] = deduplicate_sinks(all_sinks)
+
+    seen_host = set()
+    for h in static_result.get("internal_hosts_found", []) + browser_result.get("internal_hosts_found", []):
+        key = h.get("match")
+        if key and key not in seen_host:
+            seen_host.add(key)
+            merged["internal_hosts_found"].append(h)
 
     merged["errors"] = list(set(
         static_result.get("errors", []) + browser_result.get("errors", [])

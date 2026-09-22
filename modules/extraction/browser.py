@@ -69,6 +69,8 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         "network_requests": [],
         "intercepted_endpoints": [],
         "deobfuscation_findings": [],
+        "sinks_found": [],
+        "internal_hosts_found": [],
         "errors": []
     }
 
@@ -174,8 +176,12 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
             eps = extract_endpoints_from_text(deobfed_content, js_url)
             endpoint_urls.update(eps)
             from modules.extraction.engine import extract_from_text
-            _, secrets, _ = extract_from_text(deobfed_content, js_url)
+            _, secrets, _, sinks, internal = extract_from_text(deobfed_content, js_url)
             result["secrets_found"].extend(secrets)
+            result["sinks_found"].extend(sinks)
+            for h in internal:
+                h["source"] = js_url
+            result["internal_hosts_found"].extend(internal)
             result["deobfuscation_findings"].extend(deobf_findings)
             result["js_files_scanned"].append(js_url)
         except Exception:
@@ -185,11 +191,23 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     inline_eps = extract_endpoints_from_text(deobfed_dom, "browser_dom")
     endpoint_urls.update(inline_eps)
 
-    from modules.extraction.engine import extract_from_text, deduplicate_secrets
-    _, dom_secrets, _ = extract_from_text(deobfed_dom, "browser_dom")
+    from modules.extraction.engine import extract_from_text, deduplicate_secrets, deduplicate_sinks
+    _, dom_secrets, _, dom_sinks, dom_internal = extract_from_text(deobfed_dom, "browser_dom")
     result["secrets_found"].extend(dom_secrets)
+    result["sinks_found"].extend(dom_sinks)
+    for h in dom_internal:
+        h["source"] = "browser_dom"
+    result["internal_hosts_found"].extend(dom_internal)
     result["deobfuscation_findings"].extend(dom_deobf)
     result["secrets_found"] = deduplicate_secrets(result["secrets_found"])
+    result["sinks_found"] = deduplicate_sinks(result["sinks_found"])
+    seen_host = set()
+    unique_hosts = []
+    for h in result["internal_hosts_found"]:
+        if h.get("match") not in seen_host:
+            seen_host.add(h.get("match"))
+            unique_hosts.append(h)
+    result["internal_hosts_found"] = unique_hosts
 
     result["internal_paths"] = sorted([
         e for e in endpoint_urls if e.startswith("/") and not e.startswith("//") and not is_static_asset(e)
@@ -211,6 +229,10 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
             print(f"[!] {len(result['secrets_found'])} unique secret(s) found")
         if result["deobfuscation_findings"]:
             print(f"[!] {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
+        if result["sinks_found"]:
+            print(f"[!] {len(result['sinks_found'])} dangerous sink pattern(s) found")
+        if result["internal_hosts_found"]:
+            print(f"[!] {len(result['internal_hosts_found'])} internal/private host reference(s) found")
 
     from modules.extraction.engine import calculate_risk_summary
     result["risk_summary"] = calculate_risk_summary(result)

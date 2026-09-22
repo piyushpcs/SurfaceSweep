@@ -236,6 +236,56 @@ def render_spa_routes(routes, routes_from=None):
     )
 
 
+def render_sinks(sinks):
+    """Render dangerous sink findings section."""
+    if not sinks:
+        return ""
+    sev_badge = {
+        "HIGH": '<span class="badge badge-high">HIGH</span>',
+        "MEDIUM": '<span class="badge badge-restricted">MEDIUM</span>',
+        "LOW": '<span class="badge badge-live">LOW</span>',
+    }
+    rows = []
+    for s in sinks:
+        sources = ", ".join(s.get("sources", [s.get("source", "unknown")]))
+        rows.append(
+            f'<tr><td>{sev_badge.get(s.get("severity", ""), s.get("severity", ""))}</td>'
+            f'<td><code>{s.get("sink", "")}</code></td>'
+            f'<td>{s.get("description", "")}</td>'
+            f'<td>{s.get("count", 1)}</td>'
+            f'<td class="muted">{sources}</td></tr>'
+        )
+    return (
+        f'<h2>Dangerous Sinks ({len(sinks)})</h2>'
+        '<table><thead><tr><th>Severity</th><th>Sink</th><th>Description</th><th>Hits</th><th>Sources</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
+def render_internal_hosts(hosts):
+    """Render internal/private host findings section."""
+    if not hosts:
+        return ""
+    kind_badge = {
+        "internal_url": '<span class="badge badge-high">internal URL</span>',
+        "internal_name": '<span class="badge badge-high">internal name</span>',
+        "private_ip": '<span class="badge badge-restricted">private IP</span>',
+        "internal_subdomain": '<span class="badge badge-restricted">internal subdomain</span>',
+    }
+    rows = []
+    for h in hosts:
+        rows.append(
+            f'<tr><td>{kind_badge.get(h.get("kind", ""), h.get("kind", ""))}</td>'
+            f'<td><code>{h.get("match", "")}</code></td>'
+            f'<td class="muted">{h.get("source", "unknown")}</td></tr>'
+        )
+    return (
+        f'<h2>Internal / Private Hosts ({len(hosts)})</h2>'
+        '<table><thead><tr><th>Kind</th><th>Match</th><th>Source</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
 def build_html(result):
     """Build the full HTML report from scan results."""
     risk = result.get("risk_summary", {})
@@ -270,6 +320,8 @@ def build_html(result):
   <div class="stat"><div class="num">{len(result.get('source_maps_found', []))}</div><div class="label">Exposed Source Maps</div></div>
   <div class="stat"><div class="num">{len(result.get('library_vulnerabilities', []))}</div><div class="label">Library CVEs</div></div>
   <div class="stat"><div class="num">{len(result.get('spa_routes', []))}</div><div class="label">SPA Routes</div></div>
+  <div class="stat"><div class="num">{len(result.get('sinks_found', []))}</div><div class="label">Dangerous Sinks</div></div>
+  <div class="stat"><div class="num">{len(result.get('internal_hosts_found', []))}</div><div class="label">Internal Hosts</div></div>
 </div>
 
 <h2>Internal Paths</h2>
@@ -283,6 +335,10 @@ def build_html(result):
 
 <h2>Secrets / Leaked Keys</h2>
 {render_secrets(result.get('secrets_found', []))}
+
+{render_sinks(result.get('sinks_found', []))}
+
+{render_internal_hosts(result.get('internal_hosts_found', []))}
 
 <h2>Exposed Source Maps</h2>
 {render_list(result.get('source_maps_found', []), 'None found')}
