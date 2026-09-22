@@ -11,6 +11,7 @@ Captures all network requests made during page load, including:
 import re
 from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright
+from modules.deobfuscator import deobfuscate
 
 
 JS_REFERENCE_PATTERN = re.compile(
@@ -67,6 +68,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         "source_maps_found": [],
         "network_requests": [],
         "intercepted_endpoints": [],
+        "deobfuscation_findings": [],
         "errors": []
     }
 
@@ -160,21 +162,25 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         try:
             import requests
             resp = requests.get(js_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})
-            eps = extract_endpoints_from_text(resp.text, js_url)
+            deobfed_content, deobf_findings = deobfuscate(resp.text)
+            eps = extract_endpoints_from_text(deobfed_content, js_url)
             endpoint_urls.update(eps)
-            from modules.extractor import extract_from_text, check_source_map
-            _, secrets = extract_from_text(resp.text, js_url)
+            from modules.extractor import extract_from_text
+            _, secrets, _ = extract_from_text(deobfed_content, js_url)
             result["secrets_found"].extend(secrets)
+            result["deobfuscation_findings"].extend(deobf_findings)
             result["js_files_scanned"].append(js_url)
         except Exception:
             pass
 
-    inline_eps = extract_endpoints_from_text(dom_content, "browser_dom")
+    deobfed_dom, dom_deobf = deobfuscate(dom_content)
+    inline_eps = extract_endpoints_from_text(deobfed_dom, "browser_dom")
     endpoint_urls.update(inline_eps)
 
     from modules.extractor import extract_from_text, deduplicate_secrets
-    _, dom_secrets = extract_from_text(dom_content, "browser_dom")
+    _, dom_secrets, _ = extract_from_text(deobfed_dom, "browser_dom")
     result["secrets_found"].extend(dom_secrets)
+    result["deobfuscation_findings"].extend(dom_deobf)
     result["secrets_found"] = deduplicate_secrets(result["secrets_found"])
 
     result["internal_paths"] = sorted([
@@ -195,5 +201,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         print(f"[+] Intercepted XHR/fetch: {len(result['intercepted_endpoints'])}")
         if result["secrets_found"]:
             print(f"[!] {len(result['secrets_found'])} unique secret(s) found")
+        if result["deobfuscation_findings"]:
+            print(f"[!] {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
 
     return result

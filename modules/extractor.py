@@ -6,6 +6,7 @@ import tldextract
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from modules.deobfuscator import deobfuscate
 
 
 def get_registrable_domain(url):
@@ -183,8 +184,12 @@ def discover_js_chunks(js_content, base_js_url):
     return resolved
 
 
-def extract_from_text(content, source_label):
+def extract_from_text(content, source_label, do_deobfuscate=True):
     """Run all regex passes over a blob of JS text. Returns structured findings."""
+    deobf_findings = []
+    if do_deobfuscate:
+        content, deobf_findings = deobfuscate(content)
+
     endpoints = set()
     secrets = []
 
@@ -223,8 +228,7 @@ def extract_from_text(content, source_label):
                 "source": source_label
             })
 
-    return endpoints, secrets
-
+    return endpoints, secrets, deobf_findings
 
 def deduplicate_secrets(all_secrets):
     """
@@ -249,7 +253,7 @@ def fetch_and_extract(js_url, timeout=10, limiter=None):
 
         content_type = resp.headers.get("Content-Type", "")
         text = resp.text if "json" not in content_type.lower() else ""
-        endpoints, secrets = extract_from_text(text, js_url) if text else (set(), [])
+        endpoints, secrets, deobf = extract_from_text(text, js_url) if text else (set(), [], [])
         source_map = check_source_map(js_url, limiter=limiter)
         linked_js = discover_js_chunks(text, js_url) if text else set()
 
@@ -258,10 +262,11 @@ def fetch_and_extract(js_url, timeout=10, limiter=None):
             "endpoints": endpoints,
             "secrets": secrets,
             "source_map_found": source_map,
-            "linked_js": linked_js
+            "linked_js": linked_js,
+            "deobfuscation_findings": deobf
         }
     except requests.RequestException as e:
-        return {"source": js_url, "error": str(e), "endpoints": set(), "secrets": [], "linked_js": set()}
+        return {"source": js_url, "error": str(e), "endpoints": set(), "secrets": [], "linked_js": set(), "deobfuscation_findings": []}
 
 
 def calculate_risk_summary(result):
@@ -269,6 +274,7 @@ def calculate_risk_summary(result):
     score = 0
     score += len(result.get("secrets_found", [])) * 10
     score += len(result.get("source_maps_found", [])) * 5
+    score += len(result.get("deobfuscation_findings", [])) * 3
     score += len(result.get("internal_paths", [])) * 1
 
     if score >= 30:
@@ -283,7 +289,7 @@ def calculate_risk_summary(result):
     return {"score": score, "level": level}
 
 
-def run_extractor(base_url, threads=6, verbose=True, max_depth=1):
+def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=True):
     """
     Main entry point. Returns a structured dict — ready for JSON export
     or feeding straight into a dashboard later.
@@ -297,6 +303,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1):
         "inline_scripts_scanned": 0,
         "secrets_found": [],
         "source_maps_found": [],
+        "deobfuscation_findings": [],
         "errors": [],
         "scan_depth": max_depth
     }
@@ -321,9 +328,10 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1):
     all_secrets = []
 
     for i, content in enumerate(inline_js):
-        eps, secs = extract_from_text(content, f"inline_script_{i}")
+        eps, secs, deobf = extract_from_text(content, f"inline_script_{i}", do_deobfuscate=deobfuscate)
         all_endpoints.update(eps)
         all_secrets.extend(secs)
+        result["deobfuscation_findings"].extend(deobf)
     result["inline_scripts_scanned"] = len(inline_js)
 
     visited_js = set()
@@ -354,6 +362,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1):
                 result["js_files_scanned"].append(data["source"])
                 all_endpoints.update(data["endpoints"])
                 all_secrets.extend(data["secrets"])
+                result["deobfuscation_findings"].extend(data.get("deobfuscation_findings", []))
 
                 if data["source_map_found"]:
                     result["source_maps_found"].append(data["source_map_found"])
@@ -388,6 +397,8 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1):
             print(f"[!] {len(result['secrets_found'])} unique potential secret(s) found — review manually!")
         if result["source_maps_found"]:
             print(f"[!] {len(result['source_maps_found'])} exposed source map(s)")
+        if result["deobfuscation_findings"]:
+            print(f"[!] {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
         print(f"[+] Risk level: {result['risk_summary']['level']} (score: {result['risk_summary']['score']})")
 
     return result
@@ -513,6 +524,7 @@ def merge_results(static_result, browser_result):
         "inline_scripts_scanned": 0,
         "secrets_found": [],
         "source_maps_found": [],
+        "deobfuscation_findings": [],
         "network_requests": [],
         "intercepted_endpoints": [],
         "errors": [],
@@ -559,6 +571,13 @@ def merge_results(static_result, browser_result):
     all_secrets = []
     all_secrets.extend(static_result.get("secrets_found", []))
     all_secrets.extend(browser_result.get("secrets_found", []))
+
+    seen_deobf = set()
+    for d in static_result.get("deobfuscation_findings", []) + browser_result.get("deobfuscation_findings", []):
+        key = (d.get("type"), d.get("decoded"))
+        if key not in seen_deobf:
+            merged["deobfuscation_findings"].append(d)
+            seen_deobf.add(key)
     flat_secrets = []
     for s in all_secrets:
         for src in s.get("sources", [s.get("source", "unknown")]):
