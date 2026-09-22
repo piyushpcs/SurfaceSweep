@@ -89,9 +89,37 @@ def vendor_js():
     fetch("/api/v2/vendor-endpoint");
     '''
 
-@app.route("/api/v2/<path:path>", methods=["GET", "POST"])
+@app.route("/api/v2/<path:path>", methods=["GET", "POST", "OPTIONS"])
 def api_catchall(path):
+    # Intentionally vulnerable CORS for testing (reflects Origin + credentials)
+    origin = request.headers.get("Origin")
+    if origin:
+        resp = jsonify({"status": "ok", "path": path})
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return resp
     return jsonify({"status": "ok", "path": path})
+
+
+@app.route("/api/v1/public", methods=["GET", "OPTIONS"])
+def api_public():
+    # Wildcard CORS (medium severity)
+    resp = jsonify({"status": "ok"})
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+@app.after_request
+def add_cors(resp):
+    # Permissive CORS on static assets too (for OPTIONS preflight tests)
+    if request.method == "OPTIONS":
+        resp.status_code = 204
+        resp.headers["Access-Control-Allow-Origin"] = request.headers.get("Origin", "*")
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return resp
+
 
 if __name__ == "__main__":
     app.run(port=5555, debug=True)

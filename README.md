@@ -31,10 +31,13 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - JSON and HTML report output
 - Custom headers/cookies for authenticated scans
 
-### 🚧 Phase 2: CORS Misconfiguration Scanner (in progress)
-- Sends spoofed `Origin` headers to discovered endpoints
+### ✅ Phase 2: CORS Misconfiguration Scanner (complete)
+- Sends spoofed `Origin` headers to discovered endpoints (OPTIONS + GET)
+- Tests evil.com, null, subdomain, lookalike, and custom origins
 - Flags wildcard and reflected-origin misconfigurations
-- Distinguishes severity based on whether credentials are also allowed
+- Severity: CRITICAL (reflected + credentials) → HIGH → MEDIUM → LOW → INFO
+- Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per finding
+- HTML report section with ACAO/ACAC columns
 
 ### ⏳ Phase 3: JWT Security Analyzer (planned)
 ### ⏳ Phase 4: Combined pipeline + reporting (planned)
@@ -93,6 +96,9 @@ python main.py https://target.com -f --validate --burp --zap --waf --html
 | `--html-only` | Generate HTML report only (skip JSON) |
 | `--no-deobf` | Skip JS deobfuscation |
 | `--regex-only` | Disable AST extraction, use regex only |
+| `--cors` | Scan discovered endpoints for CORS misconfigurations |
+| `--cors-origin` | Custom Origin header to test (default: built-in test set) |
+| `--cors-max` | Max endpoints to CORS-test (default: 50) |
 | `-q, --quiet` | Suppress progress output |
 
 ### Examples
@@ -121,6 +127,9 @@ python main.py https://target.com --cve --osv --html
 
 # SPA route discovery only
 python main.py https://target.com --spa --validate --html
+
+# CORS misconfiguration scan
+python main.py https://target.com --cors --cors-origin https://evil.com --html
 ```
 
 ## Project Structure
@@ -157,7 +166,7 @@ SurfaceSweep/
 │   │   ├── __init__.py
 │   │   ├── html.py               # HTML/JSON report generation
 │   │   └── export.py             # Burp/ZAP CSV export
-│   ├── cors_scanner.py           # Phase 2: CORS scanner (planned)
+│   ├── cors_scanner.py           # Phase 2: CORS misconfiguration scanner
 │   └── jwt_analyzer.py           # Phase 3: JWT analyzer (planned)
 ├── testbed/
 │   └── vuln_api.py               # Test Flask app
@@ -208,8 +217,9 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 - ~~AST-based extraction~~ ✅ Done
 - ~~Library version + CVE detection~~ ✅ Done
 - ~~SPA route crawling~~ ✅ Done
+- ~~Phase 2: CORS misconfiguration scanner~~ ✅ Done
 - Diff mode to compare two scans of the same target over time
-- Phase 2: CORS misconfiguration scanner (in progress)
+- Phase 3: JWT security analyzer
 
 ## Responsible use
 Built and tested only against intentionally vulnerable/legal test targets

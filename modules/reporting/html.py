@@ -286,6 +286,40 @@ def render_internal_hosts(hosts):
     )
 
 
+def render_cors(cors):
+    """Render CORS misconfiguration findings section."""
+    if not cors or not cors.get("findings"):
+        return ""
+    sev_badge = {
+        "CRITICAL": '<span class="badge badge-high">CRITICAL</span>',
+        "HIGH": '<span class="badge badge-high">HIGH</span>',
+        "MEDIUM": '<span class="badge badge-restricted">MEDIUM</span>',
+        "LOW": '<span class="badge badge-live">LOW</span>',
+        "INFO": '<span class="badge badge-error">INFO</span>',
+    }
+    rows = []
+    for f in cors.get("findings", []):
+        if f.get("severity") in ("INFO", "ERROR") and not f.get("acao"):
+            continue
+        rows.append(
+            f'<tr><td>{sev_badge.get(f.get("severity", ""), f.get("severity", ""))}</td>'
+            f'<td><code>{f.get("url", "")}</code></td>'
+            f'<td><code>{f.get("origin", "")}</code></td>'
+            f'<td><code>{f.get("acao", "")}</code></td>'
+            f'<td>{f.get("acac", "") or "—"}</td>'
+            f'<td class="muted">{f.get("detail", "")}</td></tr>'
+        )
+    if not rows:
+        return ""
+    tested = cors.get("endpoints_tested", 0)
+    return (
+        f'<h2>CORS Misconfigurations ({len(rows)} findings / {tested} tested)</h2>'
+        '<table><thead><tr><th>Severity</th><th>URL</th><th>Origin</th>'
+        '<th>ACAO</th><th>ACAC</th><th>Detail</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
 def build_html(result):
     """Build the full HTML report from scan results."""
     risk = result.get("risk_summary", {})
@@ -322,6 +356,7 @@ def build_html(result):
   <div class="stat"><div class="num">{len(result.get('spa_routes', []))}</div><div class="label">SPA Routes</div></div>
   <div class="stat"><div class="num">{len(result.get('sinks_found', []))}</div><div class="label">Dangerous Sinks</div></div>
   <div class="stat"><div class="num">{len(result.get('internal_hosts_found', []))}</div><div class="label">Internal Hosts</div></div>
+  <div class="stat"><div class="num">{len((result.get('cors') or {}).get('findings', []))}</div><div class="label">CORS Findings</div></div>
 </div>
 
 <h2>Internal Paths</h2>
@@ -339,6 +374,8 @@ def build_html(result):
 {render_sinks(result.get('sinks_found', []))}
 
 {render_internal_hosts(result.get('internal_hosts_found', []))}
+
+{render_cors(result.get('cors', {}))}
 
 <h2>Exposed Source Maps</h2>
 {render_list(result.get('source_maps_found', []), 'None found')}
