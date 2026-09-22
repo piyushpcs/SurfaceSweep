@@ -65,6 +65,14 @@ SECRET_PATTERNS = {
 
 NOISE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".svg", ".gif", ".css", ".woff", ".woff2", ".ttf", ".ico")
 
+# Extensions that are static assets — not API endpoints (filtered from final reports only)
+# Note: .js is intentionally NOT here for discovery purposes (we follow JS references),
+# but IS filtered from reported endpoint lists.
+STATIC_ASSET_EXTENSIONS = NOISE_EXTENSIONS + (
+    ".js", ".mjs", ".cjs", ".map", ".html", ".htm", ".xml", ".json", ".txt",
+    ".pdf", ".zip", ".tar", ".gz", ".mp3", ".mp4", ".webp", ".bmp",
+)
+
 COMMON_FALSE_POSITIVES = {"loading", "null", "undefined", "true", "false", "none", "test", "example", "placeholder"}
 
 # Patterns to discover other JS files referenced inside JS code (webpack chunks, dynamic imports, etc.)
@@ -120,6 +128,13 @@ def fetch_with_retry(url, timeout=10, max_retries=3, limiter=None, headers=None)
 
 def is_noise(path):
     return any(path.lower().endswith(ext) for ext in NOISE_EXTENSIONS)
+
+
+def is_static_asset(path):
+    """True for paths that are static assets (JS, images, etc.) — not API endpoints."""
+    # Strip query string and fragment before checking extension
+    clean = path.split("?")[0].split("#")[0]
+    return any(clean.lower().endswith(ext) for ext in STATIC_ASSET_EXTENSIONS)
 
 
 def is_likely_real_secret(value):
@@ -390,12 +405,15 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
 
     scan_js_urls(external_js, depth=0)
 
-    result["internal_paths"] = sorted([e for e in all_endpoints if e.startswith("/") and not e.startswith("//")])
+    result["internal_paths"] = sorted([
+        e for e in all_endpoints
+        if e.startswith("/") and not e.startswith("//") and not is_static_asset(e)
+    ])
     result["in_scope_urls"] = sorted([
-        e for e in all_endpoints if e.startswith("http") and is_same_scope(e, target_domain)
+        e for e in all_endpoints if e.startswith("http") and is_same_scope(e, target_domain) and not is_static_asset(e)
     ])
     result["out_of_scope_urls"] = sorted([
-        e for e in all_endpoints if e.startswith("http") and not is_same_scope(e, target_domain)
+        e for e in all_endpoints if e.startswith("http") and not is_same_scope(e, target_domain) and not is_static_asset(e)
     ])
     result["secrets_found"] = deduplicate_secrets(all_secrets)
     result["risk_summary"] = calculate_risk_summary(result)
@@ -471,12 +489,15 @@ def merge_results(static_result, browser_result):
     all_endpoints.update(browser_result.get("out_of_scope_urls", []))
 
     target_domain = get_registrable_domain(merged["target"])
-    merged["internal_paths"] = sorted([e for e in all_endpoints if e.startswith("/") and not e.startswith("//")])
+    merged["internal_paths"] = sorted([
+        e for e in all_endpoints
+        if e.startswith("/") and not e.startswith("//") and not is_static_asset(e)
+    ])
     merged["in_scope_urls"] = sorted([
-        e for e in all_endpoints if e.startswith("http") and is_same_scope(e, target_domain)
+        e for e in all_endpoints if e.startswith("http") and is_same_scope(e, target_domain) and not is_static_asset(e)
     ])
     merged["out_of_scope_urls"] = sorted([
-        e for e in all_endpoints if e.startswith("http") and not is_same_scope(e, target_domain)
+        e for e in all_endpoints if e.startswith("http") and not is_same_scope(e, target_domain) and not is_static_asset(e)
     ])
 
     all_secrets = []

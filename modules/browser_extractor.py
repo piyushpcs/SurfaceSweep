@@ -81,7 +81,8 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            ignore_https_errors=True
         )
         page = context.new_page()
 
@@ -122,12 +123,18 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
             if verbose:
                 print(f"    [!] Navigation error: {e}")
 
-        dom_content = page.content()
+        try:
+            dom_content = page.content()
+        except Exception:
+            dom_content = ""
 
-        for script in page.query_selector_all("script"):
-            inner = script.inner_text()
-            if inner.strip():
-                result["inline_scripts_scanned"] += 1
+        try:
+            for script in page.query_selector_all("script"):
+                inner = script.inner_text()
+                if inner.strip():
+                    result["inline_scripts_scanned"] += 1
+        except Exception:
+            pass
 
         page.close()
         browser.close()
@@ -137,11 +144,12 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         print(f"[+] Found {len(js_files_found)} JS files via browser")
 
     endpoint_urls = set()
+    from modules.extractor import is_static_asset
     for req in intercepted_requests:
         url = req["url"]
         parsed = urlparse(url)
         path = parsed.path
-        if path and path != "/" and not any(path.lower().endswith(ext) for ext in (".png", ".jpg", ".svg", ".gif", ".css", ".woff", ".ico", ".ttf")):
+        if path and path != "/" and not is_static_asset(path):
             if scope_filter is None or is_same_scope(url, scope_filter):
                 endpoint_urls.add(url)
 
@@ -184,15 +192,15 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     result["secrets_found"] = deduplicate_secrets(result["secrets_found"])
 
     result["internal_paths"] = sorted([
-        e for e in endpoint_urls if e.startswith("/") and not e.startswith("//")
+        e for e in endpoint_urls if e.startswith("/") and not e.startswith("//") and not is_static_asset(e)
     ])
     result["in_scope_urls"] = sorted([
         e for e in endpoint_urls
-        if e.startswith("http") and is_same_scope(e, target_domain)
+        if e.startswith("http") and is_same_scope(e, target_domain) and not is_static_asset(e)
     ])
     result["out_of_scope_urls"] = sorted([
         e for e in endpoint_urls
-        if e.startswith("http") and not is_same_scope(e, target_domain)
+        if e.startswith("http") and not is_same_scope(e, target_domain) and not is_static_asset(e)
     ])
 
     if verbose:

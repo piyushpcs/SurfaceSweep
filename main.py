@@ -1,6 +1,6 @@
 import argparse
 from urllib.parse import urlparse
-from modules.extractor import run_extractor, save_report, save_html_report, merge_results
+from modules.extractor import run_extractor, save_report, save_html_report, merge_results, calculate_risk_summary, is_static_asset
 from modules.browser_extractor import run_browser_scan
 from modules.validator import validate_endpoints, get_live_endpoints
 from modules.export import export_burp_csv, export_zap_csv
@@ -103,11 +103,16 @@ def main():
         if verbose:
             print(f"\n[*] Merging Wayback results...")
         before = len(result.get("internal_paths", []))
-        new_paths = [e for e in wayback_result["endpoints"] if e.startswith("/") and e not in result.get("internal_paths", [])]
+        new_paths = [
+            e for e in wayback_result["endpoints"]
+            if e.startswith("/") and e not in result.get("internal_paths", []) and not is_static_asset(e)
+        ]
         result["internal_paths"] = sorted(set(result.get("internal_paths", []) + new_paths))
         result["wayback_js_files"] = wayback_result.get("js_files", [])
         for s in wayback_result.get("secrets", []):
             result.setdefault("secrets_found", []).append(s)
+        # Recalculate risk after adding Wayback endpoints
+        result["risk_summary"] = calculate_risk_summary(result)
         if verbose:
             print(f"[+] Added {len(result['internal_paths']) - before} endpoint(s) from Wayback")
 
@@ -138,13 +143,15 @@ def main():
             result["validation"] = validation
 
             # Filter to only live/restricted endpoints
-            from urllib.parse import urlparse
             target_base = f"{urlparse(args.target).scheme}://{urlparse(args.target).netloc}"
             result["internal_paths"] = sorted(set(
                 r["url"].replace(target_base, "").rstrip("/") or "/"
                 for r in get_live_endpoints(validation)
-                if r["url"].startswith(target_base)
+                if r["url"].startswith(target_base) and not is_static_asset(r["url"])
             ))
+
+            # Recalculate risk after validation filtering
+            result["risk_summary"] = calculate_risk_summary(result)
 
             if verbose:
                 dead = len(validation.get("dead", []))

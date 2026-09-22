@@ -68,13 +68,17 @@ def get_wayback_js_urls(target_domain, limit=50, verbose=True):
 def fetch_wayback_js(js_url, timeout=15, verbose=False):
     """Fetch a JS file from Wayback Machine."""
     # Use the most recent snapshot
-    wayback_url = f"http://archive.org/wayback/available?url={js_url}"
+    wayback_url = f"https://archive.org/wayback/available?url={js_url}"
     try:
         resp = requests.get(wayback_url, timeout=timeout, headers={"User-Agent": "SurfaceSweep/1.0"})
         data = resp.json()
         snapshot_url = data.get("archived_snapshots", {}).get("closest", {}).get("url", "")
         if not snapshot_url:
             return None
+
+        # Force HTTPS — archive.org snapshots may return http:// URLs that are refused on port 80
+        if snapshot_url.startswith("http://"):
+            snapshot_url = "https://" + snapshot_url[len("http://"):]
 
         js_resp = requests.get(snapshot_url, timeout=timeout, headers={"User-Agent": "SurfaceSweep/1.0"})
         js_resp.raise_for_status()
