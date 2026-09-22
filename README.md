@@ -125,23 +125,40 @@ python main.py https://target.com --spa --validate --html
 
 ```
 SurfaceSweep/
-├── main.py                  # CLI entry point
+├── main.py                       # CLI entry point
 ├── modules/
-│   ├── __init__.py
-│   ├── extractor.py         # Static extraction logic (regex + AST orchestration)
-│   ├── ast_extractor.py     # AST-based extraction (tree-sitter)
-│   ├── browser_extractor.py # Browser-based extraction (Playwright)
-│   ├── deobfuscator.py      # JS deobfuscation
-│   ├── validator.py         # Endpoint validation
-│   ├── report.py            # HTML/JSON report generation
-│   ├── export.py            # Burp/ZAP CSV export
-│   ├── wayback.py           # Wayback Machine integration
-│   ├── waf.py               # WAF detection
-│   ├── library_detector.py  # Library version + CVE detection
-│   └── spa_crawler.py       # SPA route discovery
+│   ├── __init__.py               # Package overview
+│   ├── extraction/               # Core JS content extraction (Phase 1)
+│   │   ├── __init__.py           # Public API re-exports
+│   │   ├── engine.py             # Main orchestration (run_extractor, merge_results)
+│   │   ├── patterns.py           # Regex patterns, noise/static-asset filters
+│   │   ├── secrets.py            # Secret detection + deduplication
+│   │   ├── http.py               # Rate limiter, retry, fetching
+│   │   ├── scope.py              # Domain/scope utilities
+│   │   ├── risk.py               # Risk scoring
+│   │   ├── ast.py                # AST extraction (tree-sitter)
+│   │   ├── browser.py            # Browser extraction (Playwright)
+│   │   └── deobfuscator.py       # JS deobfuscation
+│   ├── discovery/                # Expand attack surface
+│   │   ├── __init__.py
+│   │   ├── spa.py                # SPA route discovery
+│   │   └── wayback.py            # Wayback Machine integration
+│   ├── analysis/                 # Analyze findings
+│   │   ├── __init__.py
+│   │   ├── validator.py          # Endpoint validation
+│   │   └── libraries.py          # Library version + CVE detection
+│   ├── recon/                    # Target reconnaissance
+│   │   ├── __init__.py
+│   │   └── waf.py                # WAF detection
+│   ├── reporting/                # Output generation
+│   │   ├── __init__.py
+│   │   ├── html.py               # HTML/JSON report generation
+│   │   └── export.py             # Burp/ZAP CSV export
+│   ├── cors_scanner.py           # Phase 2: CORS scanner (planned)
+│   └── jwt_analyzer.py           # Phase 3: JWT analyzer (planned)
 ├── testbed/
-│   └── vuln_api.py          # Test Flask app
-└── reports/                 # Generated reports
+│   └── vuln_api.py               # Test Flask app
+└── reports/                      # Generated reports
 ```
 
 ## Test Results

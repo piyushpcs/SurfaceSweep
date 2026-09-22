@@ -1,158 +1,29 @@
+"""
+Main extraction engine — orchestrates static + AST extraction.
+"""
+
 import re
-import json
 import time
 import requests
-import tldextract
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from modules.deobfuscator import deobfuscate
-from modules.report import save_report, save_html_report
-from modules.ast_extractor import extract_endpoints_ast, ast_is_available
 
-
-def get_registrable_domain(url):
-    """Extract the registered domain (e.g. 'example.com' from 'sub.example.com')."""
-    ext = tldextract.extract(url)
-    if ext.domain and ext.suffix:
-        return f"{ext.domain}.{ext.suffix}"
-    return ext.domain or urlparse(url).netloc
-
-
-def is_same_scope(url, target_domain):
-    return get_registrable_domain(url) == target_domain
-
-# ---- Patterns ----
-
-ENDPOINT_PATTERN = re.compile(
-    r'["\'](/[a-zA-Z0-9_\-./]*(?:api|v[0-9]|admin|auth|graphql|internal|user|account|token)[a-zA-Z0-9_\-./]*)["\']',
-    re.IGNORECASE
+from modules.extraction.patterns import (
+    ENDPOINT_PATTERN, GENERIC_PATH_PATTERN, FULL_URL_PATTERN, CALL_PATTERN,
+    JS_REFERENCE_PATTERN, WEBPACK_CHUNK_PATTERN,
+    is_noise, is_static_asset
 )
-
-GENERIC_PATH_PATTERN = re.compile(r'["\'](/[a-zA-Z0-9_\-./]{2,80})["\']')
-
-FULL_URL_PATTERN = re.compile(r'https?://[a-zA-Z0-9.\-]+(?:/[a-zA-Z0-9_\-./%?=&]*)?')
-
-# NEW: catches URLs passed as arguments to common HTTP call patterns —
-# fetch("/api/x"), axios.get('/path'), $.ajax({url: "..."}), $.post("/x"), http.request("/x")
-CALL_PATTERN = re.compile(
-    r'(?:fetch|axios\.(?:get|post|put|delete|patch)|\$\.(?:ajax|get|post)|http\.request)\s*\(\s*'
-    r'(?:\{[^}]*url\s*:\s*)?["\']([^"\']{2,150})["\']',
-    re.IGNORECASE
-)
-
-SECRET_PATTERNS = {
-    "AWS Access Key":     re.compile(r'AKIA[0-9A-Z]{16}'),
-    "Generic API Key":    re.compile(r'["\']api[_-]?key["\']\s*[:=]\s*["\']([a-zA-Z0-9_\-]{16,45})["\']', re.IGNORECASE),
-    "Bearer Token":       re.compile(r'Bearer\s+[a-zA-Z0-9_\-\.]{20,}'),
-    "Google API Key":     re.compile(r'AIza[0-9A-Za-z_\-]{35}'),
-    "Slack Token":        re.compile(r'xox[baprs]-[0-9a-zA-Z]{10,48}'),
-    "Firebase URL":       re.compile(r'[a-zA-Z0-9-]+\.firebaseio\.com'),
-    "Generic Secret":     re.compile(r'["\'](secret|token|apikey)["\']\s*[:=]\s*["\']([a-zA-Z0-9_\-]{10,})["\']', re.IGNORECASE),
-    "GitHub Token":       re.compile(r'gh[po]_[a-zA-Z0-9]{36,}'),
-    "GitLab Token":       re.compile(r'glpat-[a-zA-Z0-9_\-]{20}'),
-    "Stripe Live Key":    re.compile(r'[sp]k_live_[a-zA-Z0-9]{24,}'),
-    "Heroku API Key":     re.compile(r'["\']heroku[_-]?api[_-]?key["\']\s*[:=]\s*["\']([a-zA-Z0-9\-]{20,})["\']', re.IGNORECASE),
-    "NPM Token":          re.compile(r'npm_[a-zA-Z0-9]{36}'),
-    "Exposed Env Var":    re.compile(r'(NEXT_PUBLIC_[A-Z0-9_]+|REACT_APP_[A-Z0-9_]+|VITE_[A-Z0-9_]+)\s*[:=]\s*["\']([^"\']{4,100})["\']'),
-    "Private Key":        re.compile(r'-----BEGIN\s+(RSA|DSA|EC|OPENSSH|PGP)?\s*PRIVATE KEY-----'),
-    "JWT Secret":         re.compile(r'["\'](?:jwt[_-]?secret|signing[_-]?key|hmac[_-]?key|jwt[_-]?key)["\']\s*[:=]\s*["\']([a-zA-Z0-9_\-\.\/+=]{10,})["\']', re.IGNORECASE),
-    "Database URL":       re.compile(r'(mysql|postgres|postgresql|mongodb|redis|amqp|mssql):\/\/[^\s"\'<>]{10,}', re.IGNORECASE),
-    "SMTP Credentials":   re.compile(r'["\'](?:smtp[_-]?pass|mail[_-]?password|email[_-]?password)["\']\s*[:=]\s*["\']([^\s"\']{6,})["\']', re.IGNORECASE),
-    "Basic Auth":         re.compile(r'Authorization:\s*Basic\s+[A-Za-z0-9+/=]{20,}'),
-    "Generic Password":   re.compile(r'["\'](password|passwd|pwd|pass)["\']\s*[:=]\s*["\']([^\s"\']{6,})["\']', re.IGNORECASE),
-}
-
-NOISE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".svg", ".gif", ".css", ".woff", ".woff2", ".ttf", ".ico")
-
-# Extensions that are static assets — not API endpoints (filtered from final reports only)
-# Note: .js is intentionally NOT here for discovery purposes (we follow JS references),
-# but IS filtered from reported endpoint lists.
-STATIC_ASSET_EXTENSIONS = NOISE_EXTENSIONS + (
-    ".js", ".mjs", ".cjs", ".map", ".html", ".htm", ".xml", ".json", ".txt",
-    ".pdf", ".zip", ".tar", ".gz", ".mp3", ".mp4", ".webp", ".bmp",
-)
-
-COMMON_FALSE_POSITIVES = {"loading", "null", "undefined", "true", "false", "none", "test", "example", "placeholder"}
-
-# Patterns to discover other JS files referenced inside JS code (webpack chunks, dynamic imports, etc.)
-JS_REFERENCE_PATTERN = re.compile(
-    r'''(?:src|import|require|from|chunk|loadScript|importScripts)\s*(?:\(|[=:]?\s*)['"]([^'"]+\.js(?:\?[^'"]*)?)['"]''',
-    re.IGNORECASE
-)
-WEBPACK_CHUNK_PATTERN = re.compile(r'''['"]([^'"]*(?:chunk|vendor|main|app|bundle)[^'"]*\.js)['"]''', re.IGNORECASE)
-
-
-class RateLimiter:
-    """Simple token-bucket rate limiter."""
-    def __init__(self, requests_per_second=5):
-        self.min_interval = 1.0 / requests_per_second
-        self._last = 0.0
-        self._lock = __import__("threading").Lock()
-
-    def wait(self):
-        with self._lock:
-            now = time.monotonic()
-            elapsed = now - self._last
-            if elapsed < self.min_interval:
-                time.sleep(self.min_interval - elapsed)
-            self._last = time.monotonic()
-
-
-def fetch_with_retry(url, timeout=10, max_retries=3, limiter=None, headers=None):
-    """Fetch a URL with exponential backoff on 429/5xx errors."""
-    if headers is None:
-        headers = {"User-Agent": "SurfaceSweep/1.0"}
-
-    for attempt in range(max_retries):
-        if limiter:
-            limiter.wait()
-        try:
-            resp = requests.get(url, timeout=timeout, headers=headers)
-            if resp.status_code == 429:
-                retry_after = int(resp.headers.get("Retry-After", 2 ** (attempt + 1)))
-                time.sleep(retry_after)
-                continue
-            if resp.status_code >= 500 and attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-                continue
-            resp.raise_for_status()
-            return resp
-        except requests.ConnectionError:
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-            else:
-                raise
-    return None
-
-
-def is_noise(path):
-    return any(path.lower().endswith(ext) for ext in NOISE_EXTENSIONS)
-
-
-def is_static_asset(path):
-    """True for paths that are static assets (JS, images, etc.) — not API endpoints."""
-    # Strip query string and fragment before checking extension
-    clean = path.split("?")[0].split("#")[0]
-    return any(clean.lower().endswith(ext) for ext in STATIC_ASSET_EXTENSIONS)
-
-
-def is_likely_real_secret(value):
-    if value.lower() in COMMON_FALSE_POSITIVES:
-        return False
-    if len(value) < 10:
-        return False
-    return True
-
-
-def get_page(base_url, timeout=10, limiter=None):
-    resp = fetch_with_retry(base_url, timeout=timeout, limiter=limiter)
-    if resp is None:
-        raise requests.ConnectionError(f"Failed to fetch {base_url} after retries")
-    return resp.text
+from modules.extraction.secrets import extract_secrets, deduplicate_secrets
+from modules.extraction.http import RateLimiter, fetch_with_retry, get_page
+from modules.extraction.scope import get_registrable_domain, is_same_scope
+from modules.extraction.risk import calculate_risk_summary
+from modules.extraction.deobfuscator import deobfuscate
+from modules.extraction.ast import extract_endpoints_ast, ast_is_available
 
 
 def get_js_sources(base_url, html):
+    """Extract external and inline JS sources from HTML."""
     soup = BeautifulSoup(html, "html.parser")
     external, inline = [], []
 
@@ -166,6 +37,7 @@ def get_js_sources(base_url, html):
 
 
 def check_source_map(js_url, timeout=8, limiter=None):
+    """Check if a source map exists for a JS file."""
     map_url = js_url + ".map"
     try:
         resp = fetch_with_retry(map_url, timeout=timeout, limiter=limiter)
@@ -208,13 +80,12 @@ def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
         content, deobf_findings = deobfuscate(content)
 
     endpoints = set()
-    secrets = []
 
-    # ---- AST extraction (tree-sitter) ----
+    # AST extraction (tree-sitter)
     if use_ast and ast_is_available():
         endpoints |= extract_endpoints_ast(content, source_label)
 
-    # ---- Regex extraction (complements AST) ----
+    # Regex extraction (complements AST)
     for match in ENDPOINT_PATTERN.findall(content):
         if match.startswith("//"):
             continue
@@ -231,46 +102,23 @@ def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
         if not is_noise(match):
             endpoints.add(match)
 
-    # function-call based extraction — catches fetch()/axios()/$.ajax() etc.
+    # Function-call based extraction — catches fetch()/axios()/$.ajax() etc.
     for match in CALL_PATTERN.findall(content):
         if match.startswith("//"):
             continue
         if not is_noise(match) and len(match) > 1:
             endpoints.add(match)
 
-    for label, pattern in SECRET_PATTERNS.items():
-        for m in pattern.finditer(content):
-            # for patterns with capture groups, use the group; else use full match
-            value = m.group(1) if m.groups() else m.group(0)
-            if not is_likely_real_secret(value):
-                continue
-            secrets.append({
-                "type": label,
-                "match": m.group(0)[:80],
-                "source": source_label
-            })
+    secrets = extract_secrets(content, source_label)
 
     # Filter noise from combined AST + regex results
     endpoints = {e for e in endpoints if not is_noise(e) and not e.startswith("//")}
 
     return endpoints, secrets, deobf_findings
 
-def deduplicate_secrets(all_secrets):
-    """
-    Same secret appearing in multiple files should be one entry with
-    a list of sources, not N duplicate entries.
-    """
-    dedup = {}
-    for s in all_secrets:
-        key = (s["type"], s["match"])
-        if key not in dedup:
-            dedup[key] = {"type": s["type"], "match": s["match"], "sources": []}
-        if s["source"] not in dedup[key]["sources"]:
-            dedup[key]["sources"].append(s["source"])
-    return list(dedup.values())
-
 
 def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
+    """Fetch a JS file and extract endpoints/secrets from it."""
     try:
         resp = fetch_with_retry(js_url, timeout=timeout, limiter=limiter)
         if resp is None:
@@ -292,26 +140,6 @@ def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
         }
     except requests.RequestException as e:
         return {"source": js_url, "error": str(e), "endpoints": set(), "secrets": [], "linked_js": set(), "deobfuscation_findings": []}
-
-
-def calculate_risk_summary(result):
-    """Simple scoring so the report isn't just a flat data dump."""
-    score = 0
-    score += len(result.get("secrets_found", [])) * 10
-    score += len(result.get("source_maps_found", [])) * 5
-    score += len(result.get("deobfuscation_findings", [])) * 3
-    score += len(result.get("internal_paths", [])) * 1
-
-    if score >= 30:
-        level = "HIGH"
-    elif score >= 10:
-        level = "MEDIUM"
-    elif score > 0:
-        level = "LOW"
-    else:
-        level = "INFO"
-
-    return {"score": score, "level": level}
 
 
 def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=True, use_ast=True):
@@ -435,10 +263,6 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         print(f"[+] Risk level: {result['risk_summary']['level']} (score: {result['risk_summary']['score']})")
 
     return result
-
-
-if __name__ == "__main__":
-    print("This module is meant to be imported, not run directly. Use main.py instead.")
 
 
 def merge_results(static_result, browser_result):

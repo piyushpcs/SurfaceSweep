@@ -1,13 +1,14 @@
 import argparse
 from urllib.parse import urlparse
-from modules.extractor import run_extractor, save_report, save_html_report, merge_results, calculate_risk_summary, is_static_asset
-from modules.browser_extractor import run_browser_scan
-from modules.validator import validate_endpoints, get_live_endpoints
-from modules.export import export_burp_csv, export_zap_csv
-from modules.wayback import get_wayback_endpoints
-from modules.waf import detect_waf, get_scan_adjustments
-from modules.library_detector import scan_for_libraries
-from modules.spa_crawler import crawl_spa_routes
+from modules.extraction import (
+    run_extractor, merge_results, calculate_risk_summary,
+    is_static_asset, save_report, save_html_report
+)
+from modules.extraction.browser import run_browser_scan
+from modules.analysis import validate_endpoints, get_live_endpoints, scan_for_libraries
+from modules.reporting import export_burp_csv, export_zap_csv
+from modules.discovery import get_wayback_endpoints, crawl_spa_routes
+from modules.recon import detect_waf, get_scan_adjustments
 
 
 def main():
@@ -131,8 +132,6 @@ def main():
     if args.cve or args.osv:
         if verbose:
             print(f"\n[*] --- Library Version & CVE Detection ---")
-        # We need JS file contents — refetch or use what we have
-        # For simplicity, detect from URLs we already scanned
         js_files = result.get("js_files_scanned", [])
         if js_files:
             # Fetch contents for content-based detection

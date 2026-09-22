@@ -11,7 +11,7 @@ Captures all network requests made during page load, including:
 import re
 from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright
-from modules.deobfuscator import deobfuscate
+from modules.extraction.deobfuscator import deobfuscate
 
 
 JS_REFERENCE_PATTERN = re.compile(
@@ -29,7 +29,7 @@ def is_same_scope(url, target_domain):
 
 def extract_endpoints_from_text(content, source_label):
     """Quick extraction from JS text — reuses patterns from extractor module."""
-    from modules.extractor import ENDPOINT_PATTERN, GENERIC_PATH_PATTERN, FULL_URL_PATTERN, CALL_PATTERN, is_noise
+    from modules.extraction.engine import ENDPOINT_PATTERN, GENERIC_PATH_PATTERN, FULL_URL_PATTERN, CALL_PATTERN, is_noise
 
     endpoints = set()
     for pattern in [ENDPOINT_PATTERN, GENERIC_PATH_PATTERN, FULL_URL_PATTERN, CALL_PATTERN]:
@@ -144,7 +144,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         print(f"[+] Found {len(js_files_found)} JS files via browser")
 
     endpoint_urls = set()
-    from modules.extractor import is_static_asset
+    from modules.extraction.engine import is_static_asset
     for req in intercepted_requests:
         url = req["url"]
         parsed = urlparse(url)
@@ -173,7 +173,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
             deobfed_content, deobf_findings = deobfuscate(resp.text)
             eps = extract_endpoints_from_text(deobfed_content, js_url)
             endpoint_urls.update(eps)
-            from modules.extractor import extract_from_text
+            from modules.extraction.engine import extract_from_text
             _, secrets, _ = extract_from_text(deobfed_content, js_url)
             result["secrets_found"].extend(secrets)
             result["deobfuscation_findings"].extend(deobf_findings)
@@ -185,7 +185,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     inline_eps = extract_endpoints_from_text(deobfed_dom, "browser_dom")
     endpoint_urls.update(inline_eps)
 
-    from modules.extractor import extract_from_text, deduplicate_secrets
+    from modules.extraction.engine import extract_from_text, deduplicate_secrets
     _, dom_secrets, _ = extract_from_text(deobfed_dom, "browser_dom")
     result["secrets_found"].extend(dom_secrets)
     result["deobfuscation_findings"].extend(dom_deobf)
@@ -212,7 +212,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         if result["deobfuscation_findings"]:
             print(f"[!] {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
 
-    from modules.extractor import calculate_risk_summary
+    from modules.extraction.engine import calculate_risk_summary
     result["risk_summary"] = calculate_risk_summary(result)
 
     if verbose:

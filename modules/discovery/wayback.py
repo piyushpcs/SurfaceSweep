@@ -106,7 +106,7 @@ def get_wayback_endpoints(target_domain, limit=50, threads=5, verbose=True):
 
     results = {"js_files": [], "endpoints": set(), "secrets": [], "errors": []}
 
-    from modules.extractor import extract_from_text
+    from modules.extraction.engine import extract_from_text
 
     with ThreadPoolExecutor(max_workers=threads) as pool:
         futures = {pool.submit(fetch_wayback_js, url): url for url in js_urls}

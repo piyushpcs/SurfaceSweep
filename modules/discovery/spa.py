@@ -125,7 +125,7 @@ def _is_valid_route(route):
     if route.startswith("//") or route.startswith("/http") or route.startswith("/data:"):
         return False
     # Skip static assets
-    from modules.extractor import is_static_asset
+    from modules.extraction.engine import is_static_asset
     if is_static_asset(route):
         return False
     # Skip routes with template placeholders (we'll instantiate them separately)
@@ -356,7 +356,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
       - api_endpoints: API endpoints discovered during crawl
       - errors: list of errors
     """
-    from modules.extractor import get_registrable_domain, is_static_asset, is_same_scope
+    from modules.extraction.engine import get_registrable_domain, is_static_asset, is_same_scope
 
     target_domain = get_registrable_domain(base_url)
     parsed_base = urlparse(base_url)
