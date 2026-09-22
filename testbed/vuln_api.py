@@ -12,9 +12,12 @@ def index():
     <body>
     <script src="/static/app.js"></script>
     <script>
-        fetch("/api/v2/users");
-        fetch("/api/v2/admin/settings");
-        axios.get("/api/v2/products");
+    fetch("/api/v2/users");
+    fetch("/api/v2/admin/settings");
+    axios.get("/api/v2/products");
+    fetch("/api/v1/public");
+    fetch("/api/v2/null-cred");
+    fetch("/api/v2/legit");
     </script>
     </body>
     </html>
@@ -119,12 +122,40 @@ def api_public():
     return resp
 
 
+@app.route("/api/v2/null-cred", methods=["GET", "OPTIONS"])
+def api_null_cred():
+    # Null origin + credentials (critical) — sandboxed iframe attack
+    resp = jsonify({"status": "ok", "path": "null-cred"})
+    origin = request.headers.get("Origin")
+    if origin == "null":
+        resp.headers["Access-Control-Allow-Origin"] = "null"
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+    elif request.method == "OPTIONS":
+        # Preflight for non-null origins: no ACAO (not allowed)
+        resp.status_code = 204
+    return resp
+
+
+@app.route("/api/v2/legit", methods=["GET", "OPTIONS"])
+def api_legit():
+    # Reflect only the exact legitimate origin (scheme + host + port) — INFO
+    origin = request.headers.get("Origin")
+    expected = request.url_root.rstrip("/")  # e.g. http://127.0.0.1:5555
+    resp = jsonify({"status": "ok"})
+    if origin and origin.rstrip("/") == expected:
+        resp.headers["Access-Control-Allow-Origin"] = origin
+        resp.headers["Access-Control-Allow-Credentials"] = "true"
+    elif request.method == "OPTIONS":
+        resp.status_code = 204
+    return resp
+
+
 @app.after_request
 def add_cors(resp):
-    # Permissive CORS on static assets too (for OPTIONS preflight tests)
-    if request.method == "OPTIONS":
+    # OPTIONS preflight shell only — do NOT inject ACAO (routes own CORS policy).
+    # Generic reflection lives on /api/v2/<path> catch-all; wildcard on /api/v1/public.
+    if request.method == "OPTIONS" and "Access-Control-Allow-Origin" not in resp.headers:
         resp.status_code = 204
-        resp.headers["Access-Control-Allow-Origin"] = request.headers.get("Origin", "*")
         resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
     return resp
 

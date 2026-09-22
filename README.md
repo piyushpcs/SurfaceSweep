@@ -32,10 +32,12 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - Custom headers/cookies for authenticated scans
 
 ### ✅ Phase 2: CORS Misconfiguration Scanner (complete)
-- Sends spoofed `Origin` headers to discovered endpoints (OPTIONS + GET)
-- Tests evil.com, null, subdomain, lookalike, and custom origins
-- Flags wildcard and reflected-origin misconfigurations
-- Severity: CRITICAL (reflected + credentials) → HIGH → MEDIUM → LOW → INFO
+- Sends spoofed `Origin` headers to discovered endpoints (real preflight: `Access-Control-Request-Method`/`Headers` + GET fallback)
+- Tests evil.com, null, subdomain, lookalike, scheme/port variants, and custom origins
+- Normalized origin comparison (case, default ports, trailing slash) + registrable-domain awareness
+- Severity: CRITICAL (arbitrary reflected + credentials / null + credentials) → HIGH → MEDIUM → LOW → INFO
+- Legitimate target origin reflection reported as INFO (not a finding)
+- Rate-limited probes (`--cors-rps`, default 5/sec)
 - Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per finding
 - HTML report section with ACAO/ACAC columns
 
@@ -107,6 +109,7 @@ python main.py https://target.com -f --validate --burp --zap --waf --html
 | `--cors` | Scan discovered endpoints for CORS misconfigurations |
 | `--cors-origin` | Custom Origin header to test (default: built-in test set) |
 | `--cors-max` | Max endpoints to CORS-test (default: 50) |
+| `--cors-rps` | CORS probe rate limit req/s (default: 5, 0=unlimited) |
 | `--jwt` | Analyze JWTs found in scanned content (alg/none, weak HMAC, exp, claims) |
 | `-q, --quiet` | Suppress progress output |
 
@@ -178,8 +181,15 @@ SurfaceSweep/
 │   │   ├── __init__.py
 │   │   ├── html.py               # HTML/JSON report generation
 │   │   └── export.py             # Burp/ZAP CSV export
-│   ├── cors_scanner.py           # Phase 2: CORS misconfiguration scanner
+│   ├── cors/                     # Phase 2: CORS misconfiguration scanner
+│   │   ├── __init__.py           # Public API re-exports
+│   │   ├── origins.py            # Origin build/normalize/compare
+│   │   ├── classifier.py         # Severity classification
+│   │   ├── probe.py              # Preflight + GET probing
+│   │   └── scanner.py            # Orchestration, rate limit, risk boost
 │   └── jwt_analyzer.py           # Phase 3: JWT security analyzer
+├── tests/                        # Unit tests (stdlib unittest)
+│   └── test_cors.py
 ├── testbed/
 │   └── vuln_api.py               # Test Flask app
 └── reports/                      # Generated reports
