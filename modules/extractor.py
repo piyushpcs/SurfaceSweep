@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from modules.deobfuscator import deobfuscate
+from modules.report import save_report, save_html_report
 
 
 def get_registrable_domain(url):
@@ -402,110 +403,6 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         print(f"[+] Risk level: {result['risk_summary']['level']} (score: {result['risk_summary']['score']})")
 
     return result
-
-
-def save_report(result, filename="reports/surfacesweep_report.json"):
-    try:
-        with open(filename, "w") as f:
-            json.dump(result, f, indent=2)
-        print(f"[+] Report saved to {filename}")
-    except OSError as e:
-        print(f"[!] Failed to save report to {filename}: {e}")
-
-
-def save_html_report(result, filename="reports/surfacesweep_report.html"):
-    """Generate a self-contained HTML report for easy viewing and sharing."""
-    risk = result.get("risk_summary", {})
-    risk_color = {"HIGH": "#e74c3c", "MEDIUM": "#f39c12", "LOW": "#27ae60", "INFO": "#3498db"}.get(risk.get("level", ""), "#999")
-
-    def render_list(items, empty_msg="None found"):
-        if not items:
-            return f'<p class="muted">{empty_msg}</p>'
-        return "<ul>" + "".join(f"<li><code>{item}</code></li>" for item in items) + "</ul>"
-
-    def render_secrets(secrets):
-        if not secrets:
-            return '<p class="muted">No secrets detected</p>'
-        rows = []
-        for s in secrets:
-            sources = ", ".join(s.get("sources", [s.get("source", "unknown")]))
-            rows.append(f'<tr><td><span class="badge badge-high">{s["type"]}</span></td>'
-                        f'<td><code>{s["match"]}</code></td>'
-                        f'<td class="muted">{sources}</td></tr>')
-        return '<table><thead><tr><th>Type</th><th>Match</th><th>Sources</th></tr></thead><tbody>' + "".join(rows) + '</tbody></table>'
-
-    html = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SurfaceSweep Report — {result.get('target', 'unknown')}</title>
-<style>
-  * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-  body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 2rem; line-height: 1.6; }}
-  h1 {{ font-size: 1.5rem; margin-bottom: 0.25rem; }}
-  h2 {{ font-size: 1.15rem; margin: 1.5rem 0 0.5rem; color: #58a6ff; border-bottom: 1px solid #21262d; padding-bottom: 0.3rem; }}
-  .target {{ color: #8b949e; font-size: 0.9rem; margin-bottom: 1.5rem; }}
-  .risk {{ display: inline-block; padding: 0.25rem 0.75rem; border-radius: 4px; font-weight: 600; color: #fff; background: {risk_color}; font-size: 0.9rem; }}
-  .stats {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin: 1rem 0; }}
-  .stat {{ background: #161b22; border: 1px solid #21262d; border-radius: 6px; padding: 1rem; text-align: center; }}
-  .stat .num {{ font-size: 1.8rem; font-weight: 700; color: #58a6ff; }}
-  .stat .label {{ font-size: 0.8rem; color: #8b949e; margin-top: 0.25rem; }}
-  ul {{ list-style: none; padding: 0; }}
-  li {{ padding: 0.25rem 0; }}
-  code {{ background: #161b22; padding: 0.15rem 0.4rem; border-radius: 3px; font-size: 0.85rem; word-break: break-all; }}
-  table {{ width: 100%; border-collapse: collapse; margin-top: 0.5rem; }}
-  th {{ text-align: left; padding: 0.5rem; border-bottom: 2px solid #21262d; color: #8b949e; font-size: 0.8rem; text-transform: uppercase; }}
-  td {{ padding: 0.5rem; border-bottom: 1px solid #21262d; font-size: 0.85rem; }}
-  .badge {{ display: inline-block; padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.75rem; font-weight: 600; }}
-  .badge-high {{ background: #e74c3c22; color: #e74c3c; border: 1px solid #e74c3c44; }}
-  .muted {{ color: #8b949e; }}
-  .errors {{ background: #e74c3c11; border: 1px solid #e74c3c33; border-radius: 6px; padding: 1rem; margin-top: 1rem; }}
-  .footer {{ margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #21262d; color: #484f58; font-size: 0.8rem; text-align: center; }}
-</style>
-</head>
-<body>
-<h1>SurfaceSweep — Attack Surface Report</h1>
-<p class="target">Target: {result.get('target', 'N/A')} | Scan depth: {result.get('scan_depth', 0)} | Risk: <span class="risk">{risk.get('level', 'N/A')}</span> (score: {risk.get('score', 0)})</p>
-
-<div class="stats">
-  <div class="stat"><div class="num">{len(result.get('js_files_scanned', []))}</div><div class="label">JS Files Scanned</div></div>
-  <div class="stat"><div class="num">{result.get('inline_scripts_scanned', 0)}</div><div class="label">Inline Scripts</div></div>
-  <div class="stat"><div class="num">{len(result.get('internal_paths', []))}</div><div class="label">Internal Paths</div></div>
-  <div class="stat"><div class="num">{len(result.get('secrets_found', []))}</div><div class="label">Secrets Found</div></div>
-  <div class="stat"><div class="num">{len(result.get('source_maps_found', []))}</div><div class="label">Exposed Source Maps</div></div>
-</div>
-
-<h2>Internal Paths</h2>
-{render_list(result.get('internal_paths', []), 'No internal paths discovered')}
-
-<h2>In-Scope URLs</h2>
-{render_list(result.get('in_scope_urls', []), 'No in-scope URLs found')}
-
-<h2>Out-of-Scope URLs (informational)</h2>
-{render_list(result.get('out_of_scope_urls', []), 'None')}
-
-<h2>Secrets / Leaked Keys</h2>
-{render_secrets(result.get('secrets_found', []))}
-
-<h2>Exposed Source Maps</h2>
-{render_list(result.get('source_maps_found', []), 'None found')}
-
-<h2>JS Files Scanned</h2>
-{render_list(result.get('js_files_scanned', []))}
-
-{"<h2>Errors</h2><div class='errors'>" + "".join(f"<p>" + e + "</p>" for e in result.get('errors', [])) + "</div>" if result.get('errors') else ""}
-
-<div class="footer">Generated by SurfaceSweep</div>
-</body>
-</html>"""
-
-    try:
-        with open(filename, "w") as f:
-            f.write(html)
-        print(f"[+] HTML report saved to {filename}")
-    except OSError as e:
-        print(f"[!] Failed to save HTML report to {filename}: {e}")
 
 
 if __name__ == "__main__":

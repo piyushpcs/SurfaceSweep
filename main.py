@@ -1,6 +1,7 @@
 import argparse
 from modules.extractor import run_extractor, save_report, save_html_report, merge_results
 from modules.browser_extractor import run_browser_scan
+from modules.validator import validate_endpoints, get_live_endpoints
 
 
 def main():
@@ -11,8 +12,13 @@ def main():
     parser.add_argument("-d", "--depth", type=int, default=1, help="Recursive JS depth (0=HTML only, 1=JS from HTML, 2=JS from JS, ...)")
     parser.add_argument("-b", "--browser", action="store_true", help="Use headless browser mode (captures runtime API calls)")
     parser.add_argument("-f", "--full", action="store_true", help="Run both static + browser and merge results (best coverage)")
+    parser.add_argument("--validate", action="store_true", help="Validate discovered endpoints to filter false positives")
+    parser.add_argument("--vt", "--validate-threads", type=int, default=10, help="Concurrent validation threads (default: 10)")
+    parser.add_argument("--vtimeout", type=int, default=5, help="Validation request timeout in seconds (default: 5)")
     parser.add_argument("--timeout", type=int, default=30, help="Browser page load timeout in seconds (default: 30)")
     parser.add_argument("--scope", default=None, help="Limit results to this domain (e.g. '*.target.com')")
+    parser.add_argument("--cookie", default=None, help="Cookie header for authenticated scans (e.g. 'session=abc123')")
+    parser.add_argument("--header", action="append", default=[], help="Custom header (can repeat: -H 'X-Api-Key: value')")
     parser.add_argument("--html", action="store_true", help="Also generate an HTML report")
     parser.add_argument("--html-only", action="store_true", help="Generate HTML report only (skip JSON)")
     parser.add_argument("--no-deobf", action="store_true", help="Skip JS deobfuscation")
@@ -20,6 +26,14 @@ def main():
     args = parser.parse_args()
 
     verbose = not args.quiet
+
+    custom_headers = {}
+    if args.cookie:
+        custom_headers["Cookie"] = args.cookie
+    for h in args.header:
+        if ":" in h:
+            key, value = h.split(":", 1)
+            custom_headers[key.strip()] = value.strip()
 
     if args.full:
         if verbose:
@@ -54,6 +68,40 @@ def main():
     else:
         result = run_extractor(args.target, threads=args.threads, verbose=verbose, max_depth=args.depth, deobfuscate=not args.no_deobf)
         result["scan_mode"] = "static"
+
+    if args.validate:
+        if verbose:
+            print(f"\n[*] --- Endpoint Validation ---")
+
+        all_endpoints = list(set(
+            result.get("internal_paths", []) +
+            result.get("in_scope_urls", []) +
+            [e.get("url") for e in result.get("intercepted_endpoints", []) if e.get("url")]
+        ))
+
+        if all_endpoints:
+            validation = validate_endpoints(
+                all_endpoints,
+                args.target,
+                threads=args.vt,
+                timeout=args.vtimeout,
+                verbose=verbose,
+                headers=custom_headers if custom_headers else None
+            )
+            result["validation"] = validation
+            result["internal_paths"] = [
+                r["url"].replace(args.target, "").rstrip("/")
+                for r in get_live_endpoints(validation)
+                if r["url"].startswith(args.target)
+            ]
+
+            if verbose:
+                dead = len(validation.get("dead", []))
+                if dead:
+                    print(f"[+] Filtered out {dead} false positive(s)")
+        else:
+            if verbose:
+                print("[*] No endpoints to validate")
 
     if not args.html_only:
         save_report(result, args.output)
