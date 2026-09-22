@@ -320,6 +320,50 @@ def render_cors(cors):
     )
 
 
+def render_jwt(jwt_result):
+    """Render JWT security analysis section."""
+    if not jwt_result or not jwt_result.get("findings"):
+        return ""
+    sev_badge = {
+        "CRITICAL": '<span class="badge badge-high">CRITICAL</span>',
+        "HIGH": '<span class="badge badge-high">HIGH</span>',
+        "MEDIUM": '<span class="badge badge-restricted">MEDIUM</span>',
+        "LOW": '<span class="badge badge-live">LOW</span>',
+        "INFO": '<span class="badge badge-error">INFO</span>',
+    }
+    rows = []
+    for a in jwt_result.get("findings", []):
+        issues = a.get("findings", [])
+        if not issues:
+            continue
+        issue_html = "<br>".join(
+            f'{sev_badge.get(f.get("severity", ""), f.get("severity", ""))} '
+            f'<code>{f.get("issue", "")}</code> {f.get("detail", "")}'
+            for f in issues
+        )
+        claims = ", ".join(f"{k}={v}" for k, v in (a.get("payload_summary") or {}).items())
+        cracked = (
+            f'<br><span class="badge badge-high">secret: {a.get("cracked_secret", "")}</span>'
+            if a.get("cracked_secret") else ""
+        )
+        rows.append(
+            f'<tr><td>{sev_badge.get(a.get("severity", ""), a.get("severity", ""))}</td>'
+            f'<td><code>{a.get("alg") or "?"}</code></td>'
+            f'<td>{issue_html}{cracked}</td>'
+            f'<td class="muted">{claims[:200]}</td>'
+            f'<td class="muted">{a.get("source", "")}</td></tr>'
+        )
+    if not rows:
+        return ""
+    n = jwt_result.get("tokens_analyzed", len(rows))
+    return (
+        f'<h2>JWT Analysis ({n} token(s))</h2>'
+        '<table><thead><tr><th>Severity</th><th>Alg</th><th>Findings</th>'
+        '<th>Claims</th><th>Source</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
 def build_html(result):
     """Build the full HTML report from scan results."""
     risk = result.get("risk_summary", {})
@@ -357,6 +401,7 @@ def build_html(result):
   <div class="stat"><div class="num">{len(result.get('sinks_found', []))}</div><div class="label">Dangerous Sinks</div></div>
   <div class="stat"><div class="num">{len(result.get('internal_hosts_found', []))}</div><div class="label">Internal Hosts</div></div>
   <div class="stat"><div class="num">{len((result.get('cors') or {}).get('findings', []))}</div><div class="label">CORS Findings</div></div>
+  <div class="stat"><div class="num">{(result.get('jwt') or {}).get('tokens_analyzed', 0)}</div><div class="label">JWTs Analyzed</div></div>
 </div>
 
 <h2>Internal Paths</h2>
@@ -376,6 +421,8 @@ def build_html(result):
 {render_internal_hosts(result.get('internal_hosts_found', []))}
 
 {render_cors(result.get('cors', {}))}
+
+{render_jwt(result.get('jwt'))}
 
 <h2>Exposed Source Maps</h2>
 {render_list(result.get('source_maps_found', []), 'None found')}

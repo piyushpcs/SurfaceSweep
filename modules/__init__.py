@@ -8,5 +8,5 @@ Architecture:
     recon/        — Target reconnaissance (WAF detection)
     reporting/    — Output generation (JSON, HTML, Burp/ZAP CSV)
     cors_scanner.py — Phase 2: CORS misconfiguration scanner
-    jwt_analyzer.py — Phase 3: JWT security analyzer (planned)
+    jwt_analyzer.py — Phase 3: JWT security analyzer (complete)
 """

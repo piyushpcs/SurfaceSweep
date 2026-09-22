@@ -74,6 +74,14 @@ def app_js():
     var stage = "https://staging.testapp.local/admin";
     var backup = "https://192.168.1.50:8443/backup";
     var grafana = "http://grafana.internal.corp:3000/d/abc";
+
+    // JWT samples for Phase 3 analyzer (fake keys only)
+    // alg=none (unsigned) — CRITICAL
+    var jwtNone = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJhZG1pbiIsImlhdCI6MTcwMDAwMDAwMH0.";
+    // HS256 with weak secret "secret" — CRITICAL when cracked; kid path traversal
+    var jwtWeak = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6Ii4uLy4uL2V0Yy9wYXNzd2QifQ.eyJzdWIiOiJ1c2VyMSIsInJvbGUiOiJhZG1pbiIsImV4cCI6NDEwMjQ0NDgwMH0.37v4b22djkCt_PFJq-b2KgRj-bTLlT_X5vcxZ85rVPE";
+    // RS256 missing exp — MEDIUM
+    var jwtNoExp = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0Iiwic2NvcGUiOiJhZG1pbiB3cml0ZSJ9.c2lnbmF0dXJl";
     '''
 
 @app.route("/static/chunk-abc123.js")

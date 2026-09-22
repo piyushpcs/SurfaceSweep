@@ -64,7 +64,7 @@ SECRET_PATTERNS = {
     # ---- Auth / session / crypto ----
     "Bearer Token":         re.compile(r'Bearer\s+[a-zA-Z0-9_\-\.]{20,}'),
     "Basic Auth":           re.compile(r'Authorization:\s*Basic\s+[A-Za-z0-9+/=]{20,}'),
-    "JWT":                  re.compile(r'eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}'),
+    "JWT":                  re.compile(r'eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}(?:\.[A-Za-z0-9_\-]*)?'),
     "JWT Secret":           re.compile(r'(?i)["\'](?:jwt[_-]?secret|signing[_-]?key|hmac[_-]?key|jwt[_-]?key)["\']\s*[:=]\s*["\']([a-zA-Z0-9_\-\.\/+=]{10,})["\']'),
     "Session Cookie":       re.compile(r'(?i)(?:sessionid|jsessionid|phpsessid|asp\.net_sessionid)\s*=\s*[a-zA-Z0-9_\-]{16,}'),
     "Private Key":          re.compile(r'-----BEGIN\s+(RSA|DSA|EC|OPENSSH|PGP|PGP)?\s*PRIVATE KEY-----'),
@@ -105,9 +105,13 @@ def extract_secrets(content, source_label):
             value = m.group(1) if m.groups() else m.group(0)
             if not is_likely_real_secret(value):
                 continue
+            match_text = m.group(0)
+            # JWTs must stay intact for offline analysis (header.payload.sig)
+            if label != "JWT":
+                match_text = match_text[:80]
             secrets.append({
                 "type": label,
-                "match": m.group(0)[:80],
+                "match": match_text,
                 "source": source_label
             })
     return secrets

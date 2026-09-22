@@ -39,7 +39,15 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per finding
 - HTML report section with ACAO/ACAC columns
 
-### ⏳ Phase 3: JWT Security Analyzer (planned)
+### ✅ Phase 3: JWT Security Analyzer (complete)
+- Extracts compact JWTs (`header.payload.sig`) from JS/HTML scan results
+- Decodes header/payload offline (stdlib base64/json — no network, no PyJWT)
+- Flags: `alg=none`, weak/`kid` path traversal, `jku`/`x5u` URL injection, missing/long-lived `exp`, privileged claims
+- Offline HS256/384/512 crack attempt against a built-in weak wordlist + secrets found in the same scan
+- Severity: CRITICAL (alg none / cracked HMAC) → HIGH → MEDIUM → LOW → INFO
+- Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per finding
+- HTML report section with alg, findings, and claims columns
+
 ### ⏳ Phase 4: Combined pipeline + reporting (planned)
 
 ## Setup
@@ -99,6 +107,7 @@ python main.py https://target.com -f --validate --burp --zap --waf --html
 | `--cors` | Scan discovered endpoints for CORS misconfigurations |
 | `--cors-origin` | Custom Origin header to test (default: built-in test set) |
 | `--cors-max` | Max endpoints to CORS-test (default: 50) |
+| `--jwt` | Analyze JWTs found in scanned content (alg/none, weak HMAC, exp, claims) |
 | `-q, --quiet` | Suppress progress output |
 
 ### Examples
@@ -130,6 +139,9 @@ python main.py https://target.com --spa --validate --html
 
 # CORS misconfiguration scan
 python main.py https://target.com --cors --cors-origin https://evil.com --html
+
+# JWT security analysis
+python main.py https://target.com --jwt --html
 ```
 
 ## Project Structure
@@ -167,7 +179,7 @@ SurfaceSweep/
 │   │   ├── html.py               # HTML/JSON report generation
 │   │   └── export.py             # Burp/ZAP CSV export
 │   ├── cors_scanner.py           # Phase 2: CORS misconfiguration scanner
-│   └── jwt_analyzer.py           # Phase 3: JWT analyzer (planned)
+│   └── jwt_analyzer.py           # Phase 3: JWT security analyzer
 ├── testbed/
 │   └── vuln_api.py               # Test Flask app
 └── reports/                      # Generated reports
@@ -218,8 +230,8 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 - ~~Library version + CVE detection~~ ✅ Done
 - ~~SPA route crawling~~ ✅ Done
 - ~~Phase 2: CORS misconfiguration scanner~~ ✅ Done
+- ~~Phase 3: JWT security analyzer~~ ✅ Done
 - Diff mode to compare two scans of the same target over time
-- Phase 3: JWT security analyzer
 
 ## Responsible use
 Built and tested only against intentionally vulnerable/legal test targets
