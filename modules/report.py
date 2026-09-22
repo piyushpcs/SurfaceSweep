@@ -138,6 +138,76 @@ def render_errors(errors):
     )
 
 
+def render_libraries(libraries, vulnerabilities, osv_results=None):
+    """Render detected libraries and their vulnerabilities."""
+    if not libraries and not vulnerabilities:
+        return ""
+
+    parts = []
+
+    # Libraries table
+    if libraries:
+        rows = []
+        for lib in libraries:
+            rows.append(
+                f'<tr><td><code>{lib["library"]}</code></td>'
+                f'<td><code>{lib["version"]}</code></td>'
+                f'<td class="muted">{lib["source"]}</td>'
+                f'<td class="muted">{lib.get("file", "")[:60]}</td></tr>'
+            )
+        parts.append(
+            '<h2>Detected JavaScript Libraries</h2>'
+            '<table><thead><tr><th>Library</th><th>Version</th><th>Detected From</th><th>Source File</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>'
+        )
+
+    # Vulnerabilities table
+    if vulnerabilities:
+        sev_badge = {
+            "CRITICAL": '<span class="badge badge-high">CRITICAL</span>',
+            "HIGH": '<span class="badge badge-high">HIGH</span>',
+            "MEDIUM": '<span class="badge badge-restricted">MEDIUM</span>',
+            "LOW": '<span class="badge badge-live">LOW</span>',
+        }
+        rows = []
+        for v in vulnerabilities:
+            cve_str = ", ".join(f'<a href="https://nvd.nist.gov/vuln/detail/{cve}" style="color:#58a6ff">{cve}</a>' for cve in v["cves"])
+            cvss = f' ({v["cvss"]})' if v.get("cvss") else ""
+            rows.append(
+                f'<tr><td>{sev_badge.get(v["severity"], v["severity"])}</td>'
+                f'<td><code>{v["library"]} {v["version"]}</code></td>'
+                f'<td>{cve_str}{cvss}</td>'
+                f'<td>{v["description"]}</td>'
+                f'<td><code>{v["fixed_in"]}</code></td></tr>'
+            )
+        parts.append(
+            '<h2>Library Vulnerabilities (CVE)</h2>'
+            '<table><thead><tr><th>Severity</th><th>Library</th><th>CVE</th><th>Description</th><th>Fixed In</th></tr></thead>'
+            f'<tbody>{"".join(rows)}</tbody></table>'
+        )
+
+    # OSV results
+    if osv_results:
+        rows = []
+        for lib_name, data in osv_results.items():
+            for vuln in data.get("vulns", []):
+                vid = vuln.get("id", "")
+                vid_link = f'<a href="https://osv.dev/vulnerability/{vid}" style="color:#58a6ff">{vid}</a>'
+                rows.append(
+                    f'<tr><td><code>{lib_name} {data["version"]}</code></td>'
+                    f'<td>{vid_link}</td>'
+                    f'<td>{vuln.get("summary", "")[:150]}</td></tr>'
+                )
+        if rows:
+            parts.append(
+                '<h2>OSV.dev Additional Findings</h2>'
+                '<table><thead><tr><th>Library</th><th>OSV ID</th><th>Summary</th></tr></thead>'
+                f'<tbody>{"".join(rows)}</tbody></table>'
+            )
+
+    return "\n".join(parts) if parts else ""
+
+
 def build_html(result):
     """Build the full HTML report from scan results."""
     risk = result.get("risk_summary", {})
@@ -170,6 +240,7 @@ def build_html(result):
   <div class="stat"><div class="num">{len(result.get('internal_paths', []))}</div><div class="label">Internal Paths</div></div>
   <div class="stat"><div class="num">{len(result.get('secrets_found', []))}</div><div class="label">Secrets Found</div></div>
   <div class="stat"><div class="num">{len(result.get('source_maps_found', []))}</div><div class="label">Exposed Source Maps</div></div>
+  <div class="stat"><div class="num">{len(result.get('library_vulnerabilities', []))}</div><div class="label">Library CVEs</div></div>
 </div>
 
 <h2>Internal Paths</h2>
@@ -189,6 +260,8 @@ def build_html(result):
 
 <h2>JS Files Scanned</h2>
 {render_list(result.get('js_files_scanned', []))}
+
+{render_libraries(result.get('libraries', []), result.get('library_vulnerabilities', []), result.get('osv_results'))}
 
 {render_validation(result.get('validation', {}))}
 

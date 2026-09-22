@@ -6,6 +6,7 @@ from modules.validator import validate_endpoints, get_live_endpoints
 from modules.export import export_burp_csv, export_zap_csv
 from modules.wayback import get_wayback_endpoints
 from modules.waf import detect_waf, get_scan_adjustments
+from modules.library_detector import scan_for_libraries
 
 
 def main():
@@ -27,6 +28,8 @@ def main():
     parser.add_argument("--zap", action="store_true", help="Export endpoints as OWASP ZAP CSV")
     parser.add_argument("--wayback", action="store_true", help="Include historical JS files from Wayback Machine")
     parser.add_argument("--waf", action="store_true", help="Detect WAF and adjust scan speed")
+    parser.add_argument("--cve", action="store_true", help="Detect JS library versions and check local CVE database")
+    parser.add_argument("--osv", action="store_true", help="Query OSV.dev for additional CVEs (requires network)")
     parser.add_argument("--html", action="store_true", help="Also generate an HTML report")
     parser.add_argument("--html-only", action="store_true", help="Generate HTML report only (skip JSON)")
     parser.add_argument("--no-deobf", action="store_true", help="Skip JS deobfuscation")
@@ -119,6 +122,55 @@ def main():
     # WAF info into result
     if args.waf:
         result["waf"] = result_waf.get("waf", {})
+
+    # Library version detection and CVE check
+    if args.cve or args.osv:
+        if verbose:
+            print(f"\n[*] --- Library Version & CVE Detection ---")
+        # We need JS file contents — refetch or use what we have
+        # For simplicity, detect from URLs we already scanned
+        js_files = result.get("js_files_scanned", [])
+        if js_files:
+            # Fetch contents for content-based detection
+            import requests as _requests
+            content_map = {}
+            for js_url in js_files:
+                try:
+                    resp = _requests.get(js_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})
+                    content_map[js_url] = resp.text
+                except _requests.RequestException:
+                    pass
+
+            lib_result = scan_for_libraries(
+                js_files,
+                content_map=content_map,
+                use_osv=args.osv,
+                verbose=verbose,
+            )
+            result["libraries"] = lib_result["libraries"]
+            result["library_vulnerabilities"] = lib_result["vulnerabilities"]
+            if lib_result["osv_results"]:
+                result["osv_results"] = lib_result["osv_results"]
+
+            # Boost risk score for vulnerabilities found
+            if lib_result["vulnerabilities"]:
+                vuln_score = sum(
+                    {"CRITICAL": 25, "HIGH": 15, "MEDIUM": 8, "LOW": 3}.get(v["severity"], 5)
+                    for v in lib_result["vulnerabilities"]
+                )
+                result["risk_summary"]["score"] += vuln_score
+                # Recompute level
+                score = result["risk_summary"]["score"]
+                if score >= 30:
+                    result["risk_summary"]["level"] = "HIGH"
+                elif score >= 10:
+                    result["risk_summary"]["level"] = "MEDIUM"
+                elif score > 0:
+                    result["risk_summary"]["level"] = "LOW"
+                if verbose:
+                    print(f"[+] Risk boosted by {vuln_score} points from CVE findings")
+        elif verbose:
+            print("[*] No JS files to scan for libraries")
 
     # Validation
     if args.validate:

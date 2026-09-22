@@ -19,6 +19,8 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **WAF Detection** — identifies Cloudflare, Akamai, AWS WAF, Imperva, etc.
 - **Wayback Machine** — finds historical JS files no longer linked
 - **Burp/ZAP Export** — CSV output for import into proxy tools
+- **Library Version Detection** — identifies JS library versions (jQuery, Bootstrap, Lodash, etc.) from content and filenames
+- **CVE Lookup** — checks detected libraries against local vulnerability database and OSV.dev API
 - Scopes results into internal paths, in-scope URLs, and out-of-scope URLs
 - Rate limiting, retry with backoff
 - Secret deduplication — same key across multiple files shown once with all sources
@@ -75,6 +77,8 @@ python main.py https://target.com -f --validate --burp --zap --waf --html
 | `--zap` | Export endpoints as OWASP ZAP CSV |
 | `--wayback` | Include historical JS files from Wayback Machine |
 | `--waf` | Detect WAF and adjust scan speed |
+| `--cve` | Detect JS library versions and check local CVE database |
+| `--osv` | Query OSV.dev for additional CVEs (requires network) |
 | `--cookie` | Cookie header for authenticated scans |
 | `--header` | Custom header (repeatable: `-H 'X-Api-Key: value'`) |
 | `--timeout` | Browser page load timeout in seconds (default: 30) |
@@ -104,7 +108,10 @@ python main.py https://target.com -f --burp --zap
 python main.py https://target.com --cookie "session=abc123" --header "X-Api-Key: value"
 
 # Full recon with all features
-python main.py https://target.com -f --validate --burp --zap --waf --wayback --html
+python main.py https://target.com -f --validate --burp --zap --waf --wayback --cve --html
+
+# CVE check only (fast, no browser)
+python main.py https://target.com --cve --osv --html
 ```
 
 ## Project Structure
@@ -122,7 +129,8 @@ SurfaceSweep/
 │   ├── report.py            # HTML/JSON report generation
 │   ├── export.py            # Burp/ZAP CSV export
 │   ├── wayback.py           # Wayback Machine integration
-│   └── waf.py               # WAF detection
+│   ├── waf.py               # WAF detection
+│   └── library_detector.py  # Library version + CVE detection
 ├── testbed/
 │   └── vuln_api.py          # Test Flask app
 └── reports/                 # Generated reports
@@ -146,6 +154,11 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 - AST + regex: 62 endpoints (+17%)
 - AST-only finds included `/login?next=...`, `/me`, `/debug/bootstrap?id=`, `/me#partner-sharing`
 
+### CVE detection (gtec.ac.in)
+- Detected: jQuery 1.11.0, Vue.js 2.1.5, FancyBox 2.1.5
+- Found 4 CVEs: CVE-2020-11022/11023 (jQuery XSS), CVE-2019-11358 (jQuery prototype pollution), CVE-2024-6783 (Vue XSS), CVE-2024-5020 (FancyBox XSS)
+- Risk boosted from INFO(0) to HIGH(32)
+
 ### Fixed bugs
 - **False-positive source map detection** — now validates JSON content before flagging
 - **Validation URL filtering** — now uses base domain instead of full target URL
@@ -160,6 +173,7 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 - ~~WAF Detection~~ ✅ Done
 - ~~Wayback Machine Integration~~ ✅ Done
 - ~~AST-based extraction~~ ✅ Done
+- ~~Library version + CVE detection~~ ✅ Done
 - Diff mode to compare two scans of the same target over time
 - SPA route crawling (follow React/Vue router links)
 
