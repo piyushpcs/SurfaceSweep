@@ -2,3 +2,5 @@ requests
 beautifulsoup4
 tldextract
 playwright
+tree-sitter
+tree-sitter-javascript

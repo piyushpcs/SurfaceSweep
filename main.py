@@ -30,6 +30,7 @@ def main():
     parser.add_argument("--html", action="store_true", help="Also generate an HTML report")
     parser.add_argument("--html-only", action="store_true", help="Generate HTML report only (skip JSON)")
     parser.add_argument("--no-deobf", action="store_true", help="Skip JS deobfuscation")
+    parser.add_argument("--regex-only", action="store_true", help="Disable AST extraction, use regex only")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
     args = parser.parse_args()
 
@@ -69,7 +70,7 @@ def main():
 
         if verbose:
             print("[*] --- Phase 1: Static scan ---")
-        static_result = run_extractor(args.target, threads=args.threads, verbose=verbose, max_depth=args.depth, deobfuscate=not args.no_deobf)
+        static_result = run_extractor(args.target, threads=args.threads, verbose=verbose, max_depth=args.depth, deobfuscate=not args.no_deobf, use_ast=not args.regex_only)
 
         if verbose:
             print(f"\n[*] --- Phase 2: Browser scan ---")
@@ -94,7 +95,7 @@ def main():
         )
         result["scan_mode"] = "browser"
     else:
-        result = run_extractor(args.target, threads=args.threads, verbose=verbose, max_depth=args.depth, deobfuscate=not args.no_deobf)
+        result = run_extractor(args.target, threads=args.threads, verbose=verbose, max_depth=args.depth, deobfuscate=not args.no_deobf, use_ast=not args.regex_only)
         result["scan_mode"] = "static"
 
     # Merge Wayback results

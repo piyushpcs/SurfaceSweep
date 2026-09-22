@@ -6,6 +6,7 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 
 ### ✅ Phase 1: JS Endpoint Extractor (complete)
 - **Static mode** — regex-based extraction from HTML and JS files
+- **AST-based extraction** — tree-sitter parses JS into an Abstract Syntax Tree for precise endpoint discovery (complements regex)
 - **Browser mode** — headless Chromium captures runtime API calls, lazy-loaded chunks, and dynamic endpoints
 - **Full scan** — runs both modes and merges results for best coverage
 - Detects likely API endpoints and full URLs via regex
@@ -39,6 +40,8 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 pip install -r requirements.txt
 python -m playwright install chromium
 ```
+
+Dependencies include `tree-sitter` + `tree-sitter-javascript` for AST extraction (installs from prebuilt wheels, no compiler needed). If unavailable, the tool falls back to regex-only automatically.
 
 ## Usage
 
@@ -79,6 +82,7 @@ python main.py https://target.com -f --validate --burp --zap --waf --html
 | `--html` | Also generate an HTML report |
 | `--html-only` | Generate HTML report only (skip JSON) |
 | `--no-deobf` | Skip JS deobfuscation |
+| `--regex-only` | Disable AST extraction, use regex only |
 | `-q, --quiet` | Suppress progress output |
 
 ### Examples
@@ -110,7 +114,8 @@ SurfaceSweep/
 ├── main.py                  # CLI entry point
 ├── modules/
 │   ├── __init__.py
-│   ├── extractor.py         # Static extraction logic
+│   ├── extractor.py         # Static extraction logic (regex + AST orchestration)
+│   ├── ast_extractor.py     # AST-based extraction (tree-sitter)
 │   ├── browser_extractor.py # Browser-based extraction (Playwright)
 │   ├── deobfuscator.py      # JS deobfuscation
 │   ├── validator.py         # Endpoint validation
@@ -129,17 +134,23 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 
 | Feature | Result |
 |---------|--------|
-| Static scan | 53 endpoints from 8 JS files |
+| Static scan (AST + regex) | 62 endpoints from 8 JS files |
 | Browser scan | 31 endpoints, 2 XHR/fetch intercepted |
-| Combined | 66 endpoints |
-| Validation | 37 live, 3 restricted, 36 dead filtered |
-| Burp/ZAP CSV | 33 endpoints exported |
+| Combined | 74 endpoints |
+| Validation | 41 live, 3 restricted, 40 dead filtered |
+| Burp/ZAP CSV | 35-37 endpoints exported |
 | WAF | No WAF detected |
+
+### AST vs regex comparison (same target)
+- Regex only: 53 endpoints
+- AST + regex: 62 endpoints (+17%)
+- AST-only finds included `/login?next=...`, `/me`, `/debug/bootstrap?id=`, `/me#partner-sharing`
 
 ### Fixed bugs
 - **False-positive source map detection** — now validates JSON content before flagging
 - **Validation URL filtering** — now uses base domain instead of full target URL
 - **Missing risk_summary in browser mode** — now calculates risk score
+- **Protocol-relative URL leak** — `//` URLs no longer leak into internal_paths
 
 ## Roadmap
 - ~~Headless browser mode (Playwright)~~ ✅ Done
@@ -148,9 +159,9 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 - ~~Burp/ZAP Export~~ ✅ Done
 - ~~WAF Detection~~ ✅ Done
 - ~~Wayback Machine Integration~~ ✅ Done
+- ~~AST-based extraction~~ ✅ Done
 - Diff mode to compare two scans of the same target over time
-- AST-based extraction (parse JS syntax tree instead of regex)
-- Crawl SPA routes (follow React/Vue router links)
+- SPA route crawling (follow React/Vue router links)
 
 ## Responsible use
 Built and tested only against intentionally vulnerable/legal test targets

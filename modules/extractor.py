@@ -8,6 +8,7 @@ from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from modules.deobfuscator import deobfuscate
 from modules.report import save_report, save_html_report
+from modules.ast_extractor import extract_endpoints_ast, ast_is_available
 
 
 def get_registrable_domain(url):
@@ -185,8 +186,8 @@ def discover_js_chunks(js_content, base_js_url):
     return resolved
 
 
-def extract_from_text(content, source_label, do_deobfuscate=True):
-    """Run all regex passes over a blob of JS text. Returns structured findings."""
+def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
+    """Run all extraction passes (regex + AST) over a blob of JS text. Returns structured findings."""
     deobf_findings = []
     if do_deobfuscate:
         content, deobf_findings = deobfuscate(content)
@@ -194,6 +195,11 @@ def extract_from_text(content, source_label, do_deobfuscate=True):
     endpoints = set()
     secrets = []
 
+    # ---- AST extraction (tree-sitter) ----
+    if use_ast and ast_is_available():
+        endpoints |= extract_endpoints_ast(content, source_label)
+
+    # ---- Regex extraction (complements AST) ----
     for match in ENDPOINT_PATTERN.findall(content):
         if match.startswith("//"):
             continue
@@ -210,7 +216,7 @@ def extract_from_text(content, source_label, do_deobfuscate=True):
         if not is_noise(match):
             endpoints.add(match)
 
-    # NEW: function-call based extraction — catches fetch()/axios()/$.ajax() etc.
+    # function-call based extraction — catches fetch()/axios()/$.ajax() etc.
     for match in CALL_PATTERN.findall(content):
         if match.startswith("//"):
             continue
@@ -229,6 +235,9 @@ def extract_from_text(content, source_label, do_deobfuscate=True):
                 "source": source_label
             })
 
+    # Filter noise from combined AST + regex results
+    endpoints = {e for e in endpoints if not is_noise(e) and not e.startswith("//")}
+
     return endpoints, secrets, deobf_findings
 
 def deduplicate_secrets(all_secrets):
@@ -246,7 +255,7 @@ def deduplicate_secrets(all_secrets):
     return list(dedup.values())
 
 
-def fetch_and_extract(js_url, timeout=10, limiter=None):
+def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
     try:
         resp = fetch_with_retry(js_url, timeout=timeout, limiter=limiter)
         if resp is None:
@@ -254,7 +263,7 @@ def fetch_and_extract(js_url, timeout=10, limiter=None):
 
         content_type = resp.headers.get("Content-Type", "")
         text = resp.text if "json" not in content_type.lower() else ""
-        endpoints, secrets, deobf = extract_from_text(text, js_url) if text else (set(), [], [])
+        endpoints, secrets, deobf = extract_from_text(text, js_url, use_ast=use_ast) if text else (set(), [], [])
         source_map = check_source_map(js_url, limiter=limiter)
         linked_js = discover_js_chunks(text, js_url) if text else set()
 
@@ -290,13 +299,14 @@ def calculate_risk_summary(result):
     return {"score": score, "level": level}
 
 
-def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=True):
+def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=True, use_ast=True):
     """
     Main entry point. Returns a structured dict — ready for JSON export
     or feeding straight into a dashboard later.
 
     max_depth: how many hops into referenced JS files to follow (0 = base HTML only,
                1 = JS referenced from HTML, 2 = JS referenced from those JS files, etc.)
+    use_ast: enable tree-sitter AST-based extraction (falls back to regex-only if unavailable)
     """
     result = {
         "target": base_url,
@@ -329,7 +339,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
     all_secrets = []
 
     for i, content in enumerate(inline_js):
-        eps, secs, deobf = extract_from_text(content, f"inline_script_{i}", do_deobfuscate=deobfuscate)
+        eps, secs, deobf = extract_from_text(content, f"inline_script_{i}", do_deobfuscate=deobfuscate, use_ast=use_ast)
         all_endpoints.update(eps)
         all_secrets.extend(secs)
         result["deobfuscation_findings"].extend(deobf)
@@ -351,7 +361,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         linked_at_this_level = set()
 
         with ThreadPoolExecutor(max_workers=threads) as pool:
-            futures = {pool.submit(fetch_and_extract, url, limiter=limiter): url for url in new_urls}
+            futures = {pool.submit(fetch_and_extract, url, limiter=limiter, use_ast=use_ast): url for url in new_urls}
             for future in as_completed(futures):
                 data = future.result()
                 if "error" in data:
@@ -380,7 +390,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
 
     scan_js_urls(external_js, depth=0)
 
-    result["internal_paths"] = sorted([e for e in all_endpoints if e.startswith("/")])
+    result["internal_paths"] = sorted([e for e in all_endpoints if e.startswith("/") and not e.startswith("//")])
     result["in_scope_urls"] = sorted([
         e for e in all_endpoints if e.startswith("http") and is_same_scope(e, target_domain)
     ])
@@ -394,6 +404,10 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         print(f"\n[+] Internal paths found: {len(result['internal_paths'])}")
         print(f"[+] In-scope external URLs: {len(result['in_scope_urls'])}")
         print(f"[+] Out-of-scope URLs (informational only): {len(result['out_of_scope_urls'])}")
+        if use_ast and ast_is_available():
+            print(f"[+] Extraction: AST (tree-sitter) + regex")
+        else:
+            print(f"[+] Extraction: regex only")
         if result["secrets_found"]:
             print(f"[!] {len(result['secrets_found'])} unique potential secret(s) found — review manually!")
         if result["source_maps_found"]:
