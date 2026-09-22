@@ -7,6 +7,7 @@ from modules.export import export_burp_csv, export_zap_csv
 from modules.wayback import get_wayback_endpoints
 from modules.waf import detect_waf, get_scan_adjustments
 from modules.library_detector import scan_for_libraries
+from modules.spa_crawler import crawl_spa_routes
 
 
 def main():
@@ -30,6 +31,9 @@ def main():
     parser.add_argument("--waf", action="store_true", help="Detect WAF and adjust scan speed")
     parser.add_argument("--cve", action="store_true", help="Detect JS library versions and check local CVE database")
     parser.add_argument("--osv", action="store_true", help="Query OSV.dev for additional CVEs (requires network)")
+    parser.add_argument("--spa", action="store_true", help="Discover SPA routes (React/Vue/Angular routers)")
+    parser.add_argument("--max-routes", type=int, default=50, help="Max routes to crawl in SPA mode (default: 50)")
+    parser.add_argument("--no-probe", action="store_true", help="Skip probing common admin/debug routes in SPA mode")
     parser.add_argument("--html", action="store_true", help="Also generate an HTML report")
     parser.add_argument("--html-only", action="store_true", help="Generate HTML report only (skip JSON)")
     parser.add_argument("--no-deobf", action="store_true", help="Skip JS deobfuscation")
@@ -171,6 +175,37 @@ def main():
                     print(f"[+] Risk boosted by {vuln_score} points from CVE findings")
         elif verbose:
             print("[*] No JS files to scan for libraries")
+
+    # SPA Route Discovery
+    if args.spa:
+        if verbose:
+            print(f"\n[*] --- SPA Route Discovery ---")
+        spa_result = crawl_spa_routes(
+            args.target,
+            timeout=args.timeout,
+            verbose=verbose,
+            max_routes=args.max_routes,
+            probe_common=not args.no_probe,
+            scope_filter=args.scope,
+        )
+        result["spa_routes"] = spa_result["routes"]
+        result["spa_routes_from"] = spa_result["routes_from"]
+        if spa_result["api_endpoints"]:
+            result.setdefault("intercepted_endpoints", [])
+            for url in spa_result["api_endpoints"]:
+                if not any(e.get("url") == url for e in result["intercepted_endpoints"]):
+                    result["intercepted_endpoints"].append({"url": url, "method": "GET"})
+
+        # Merge SPA routes into internal_paths
+        before = len(result.get("internal_paths", []))
+        new_routes = [
+            r for r in spa_result["routes"]
+            if r not in result.get("internal_paths", [])
+        ]
+        result["internal_paths"] = sorted(set(result.get("internal_paths", []) + new_routes))
+        result["risk_summary"] = calculate_risk_summary(result)
+        if verbose:
+            print(f"[+] Added {len(result['internal_paths']) - before} route(s) from SPA discovery")
 
     # Validation
     if args.validate:

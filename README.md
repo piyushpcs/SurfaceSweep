@@ -21,6 +21,7 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **Burp/ZAP Export** — CSV output for import into proxy tools
 - **Library Version Detection** — identifies JS library versions (jQuery, Bootstrap, Lodash, etc.) from content and filenames
 - **CVE Lookup** — checks detected libraries against local vulnerability database and OSV.dev API
+- **SPA Route Discovery** — finds hidden routes from React/Vue/Angular routers via static analysis, DOM inspection, router introspection, and BFS crawl
 - Scopes results into internal paths, in-scope URLs, and out-of-scope URLs
 - Rate limiting, retry with backoff
 - Secret deduplication — same key across multiple files shown once with all sources
@@ -79,6 +80,9 @@ python main.py https://target.com -f --validate --burp --zap --waf --html
 | `--waf` | Detect WAF and adjust scan speed |
 | `--cve` | Detect JS library versions and check local CVE database |
 | `--osv` | Query OSV.dev for additional CVEs (requires network) |
+| `--spa` | Discover SPA routes (React/Vue/Angular routers, BFS crawl) |
+| `--max-routes` | Max routes to crawl in SPA mode (default: 50) |
+| `--no-probe` | Skip probing common admin/debug routes in SPA mode |
 | `--cookie` | Cookie header for authenticated scans |
 | `--header` | Custom header (repeatable: `-H 'X-Api-Key: value'`) |
 | `--timeout` | Browser page load timeout in seconds (default: 30) |
@@ -108,10 +112,13 @@ python main.py https://target.com -f --burp --zap
 python main.py https://target.com --cookie "session=abc123" --header "X-Api-Key: value"
 
 # Full recon with all features
-python main.py https://target.com -f --validate --burp --zap --waf --wayback --cve --html
+python main.py https://target.com -f --validate --burp --zap --waf --wayback --cve --spa --html
 
 # CVE check only (fast, no browser)
 python main.py https://target.com --cve --osv --html
+
+# SPA route discovery only
+python main.py https://target.com --spa --validate --html
 ```
 
 ## Project Structure
@@ -130,7 +137,8 @@ SurfaceSweep/
 │   ├── export.py            # Burp/ZAP CSV export
 │   ├── wayback.py           # Wayback Machine integration
 │   ├── waf.py               # WAF detection
-│   └── library_detector.py  # Library version + CVE detection
+│   ├── library_detector.py  # Library version + CVE detection
+│   └── spa_crawler.py       # SPA route discovery
 ├── testbed/
 │   └── vuln_api.py          # Test Flask app
 └── reports/                 # Generated reports
@@ -159,6 +167,11 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 - Found 4 CVEs: CVE-2020-11022/11023 (jQuery XSS), CVE-2019-11358 (jQuery prototype pollution), CVE-2024-6783 (Vue XSS), CVE-2024-5020 (FancyBox XSS)
 - Risk boosted from INFO(0) to HIGH(32)
 
+### SPA route discovery (kickbacks.ai)
+- Found 20 routes: 9 DOM, 7 BFS crawl, 2 common probe, 2 static
+- New finds not in HTML: `/partners`, `/surface-pricing`, `/api/advertiser/claude.md`, `/info`, `/logout`
+- All validated: `/partners` (200), `/info` (200), `/logout` (405), `/api/advertiser/v1/status` (200)
+
 ### Fixed bugs
 - **False-positive source map detection** — now validates JSON content before flagging
 - **Validation URL filtering** — now uses base domain instead of full target URL
@@ -174,8 +187,9 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 - ~~Wayback Machine Integration~~ ✅ Done
 - ~~AST-based extraction~~ ✅ Done
 - ~~Library version + CVE detection~~ ✅ Done
+- ~~SPA route crawling~~ ✅ Done
 - Diff mode to compare two scans of the same target over time
-- SPA route crawling (follow React/Vue router links)
+- Phase 2: CORS misconfiguration scanner (in progress)
 
 ## Responsible use
 Built and tested only against intentionally vulnerable/legal test targets

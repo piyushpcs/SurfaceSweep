@@ -208,6 +208,34 @@ def render_libraries(libraries, vulnerabilities, osv_results=None):
     return "\n".join(parts) if parts else ""
 
 
+def render_spa_routes(routes, routes_from=None):
+    """Render SPA routes section."""
+    if not routes:
+        return ""
+    source_labels = {
+        "static": '<span class="badge badge-live">static</span>',
+        "dom": '<span class="badge badge-restricted">dom</span>',
+        "vue": '<span class="badge badge-live">vue</span>',
+        "react": '<span class="badge badge-live">react</span>',
+        "next": '<span class="badge badge-live">next</span>',
+        "history": '<span class="badge badge-restricted">history</span>',
+        "crawl": '<span class="badge badge-restricted">crawl</span>',
+        "probe": '<span class="badge badge-dead">probe</span>',
+    }
+    rows = []
+    for route in routes:
+        src = (routes_from or {}).get(route, "")
+        badge = source_labels.get(src, f'<span class="muted">{src}</span>')
+        rows.append(
+            f'<tr><td><code>{route}</code></td><td>{badge}</td></tr>'
+        )
+    return (
+        f'<h2>SPA Routes Discovered ({len(routes)})</h2>'
+        '<table><thead><tr><th>Route</th><th>Source</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
 def build_html(result):
     """Build the full HTML report from scan results."""
     risk = result.get("risk_summary", {})
@@ -241,6 +269,7 @@ def build_html(result):
   <div class="stat"><div class="num">{len(result.get('secrets_found', []))}</div><div class="label">Secrets Found</div></div>
   <div class="stat"><div class="num">{len(result.get('source_maps_found', []))}</div><div class="label">Exposed Source Maps</div></div>
   <div class="stat"><div class="num">{len(result.get('library_vulnerabilities', []))}</div><div class="label">Library CVEs</div></div>
+  <div class="stat"><div class="num">{len(result.get('spa_routes', []))}</div><div class="label">SPA Routes</div></div>
 </div>
 
 <h2>Internal Paths</h2>
@@ -262,6 +291,8 @@ def build_html(result):
 {render_list(result.get('js_files_scanned', []))}
 
 {render_libraries(result.get('libraries', []), result.get('library_vulnerabilities', []), result.get('osv_results'))}
+
+{render_spa_routes(result.get('spa_routes', []), result.get('spa_routes_from'))}
 
 {render_validation(result.get('validation', {}))}
 
