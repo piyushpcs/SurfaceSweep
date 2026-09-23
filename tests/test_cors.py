@@ -326,9 +326,85 @@ class TestStep2OriginsAndProbe(unittest.TestCase):
         self.assertEqual(out["acao"], "")
         self.assertEqual(out["error"], "cross-domain redirect")
 
+    @mock.patch("modules.cors.probe.requests.request")
+    def test_probe_endpoint_uses_shared_session(self, request_mock):
+        session = mock.Mock()
+        session.request.return_value = self._mock_resp({
+            "Access-Control-Allow-Origin": EVIL,
+            "Vary": "Origin",
+        })
+        results = probe_endpoint(
+            "https://example.com/api", [EVIL],
+            target_origin=TARGET, session=session,
+        )
+        session.request.assert_called_once()
+        request_mock.assert_not_called()
+        self.assertEqual(len(results), 1)
+
+
+class TestRateLimiter(unittest.TestCase):
+    """Step 4: rate limiter must not hold the lock while sleeping."""
+
+    def test_min_interval_enforced(self):
+        import time
+
+        from modules.extraction.http import RateLimiter
+
+        limiter = RateLimiter(50)  # 0.02s interval
+        t0 = time.monotonic()
+        for _ in range(5):
+            limiter.wait()
+        elapsed = time.monotonic() - t0
+        # 4 gaps × 0.02s (first call is free)
+        self.assertGreaterEqual(elapsed, 0.06)
+
+    def test_lock_released_during_sleep(self):
+        import threading
+        import time
+
+        from modules.extraction.http import RateLimiter
+
+        limiter = RateLimiter(2)  # 0.5s interval
+        limiter.wait()  # arm the bucket
+
+        acquired_during = []
+        started = threading.Event()
+
+        def try_acquire():
+            started.wait(timeout=1)
+            ok = limiter._lock.acquire(timeout=0.25)
+            if ok:
+                limiter._lock.release()
+            acquired_during.append(ok)
+
+        holder = threading.Thread(target=limiter.wait)
+        prober = threading.Thread(target=try_acquire)
+        holder.start()
+        time.sleep(0.05)  # let holder enter its sleep window
+        started.set()
+        prober.start()
+        prober.join(timeout=2)
+        holder.join(timeout=2)
+        self.assertTrue(acquired_during and acquired_during[0],
+                        "lock must not be held while wait() sleeps")
+
 
 class TestScannerEscalationAndErrors(unittest.TestCase):
     """HTTP-layer scan_cors behavior: escalation gate + ERROR counts."""
+
+    @mock.patch("modules.cors.scanner.requests.Session")
+    def test_scan_cors_closes_session(self, session_cls):
+        session = session_cls.return_value
+        session_cls.return_value = session
+
+        with mock.patch("modules.cors.scanner.probe_baseline") as baseline_mock, \
+                mock.patch("modules.cors.scanner.probe_endpoint") as probe_mock:
+            baseline_mock.return_value = {"static_acao": False, "acao": ""}
+            probe_mock.return_value = []
+            scan_cors(
+                ["/api/users"], TARGET, verbose=False, threads=1, rate_limit=0
+            )
+        session.close.assert_called_once()
 
     @staticmethod
     def _row(origin, severity, acao, method="OPTIONS"):

@@ -91,13 +91,14 @@ def _vary_missing(vary):
     return "origin" not in vary.lower()
 
 
-def probe_baseline(url, timeout=8, headers=None, limiter=None):
+def probe_baseline(url, timeout=8, headers=None, limiter=None, session=None):
     """
     One GET without an Origin header — detects a static ACAO.
 
     Returns dict with status/final_url/acao/acac/vary/acpn/error/static_acao.
     Cross-domain redirects yield empty ACAO (result belongs to another host).
     """
+    http = session if session is not None else requests
     req_headers = {"User-Agent": USER_AGENT}
     if headers:
         req_headers.update(headers)
@@ -106,7 +107,7 @@ def probe_baseline(url, timeout=8, headers=None, limiter=None):
     if limiter:
         limiter.wait()
     try:
-        resp = requests.request(
+        resp = http.request(
             "GET", url, timeout=timeout, headers=req_headers, allow_redirects=True
         )
         final_url = str(resp.url)
@@ -153,16 +154,19 @@ def probe_endpoint(
     registrable_domain=None,
     request_method="GET",
     static_acao=False,
+    session=None,
 ):
     """
     Send one request per Origin and collect CORS headers.
 
     OPTIONS probes include Access-Control-Request-Method/Headers (real preflight).
     Cross-domain redirects are skipped (CORScanner-style FP filter).
+    Pass a shared ``session`` for connection pooling across probes.
     Returns list of finding dicts.
     """
     results = []
     is_preflight = method.upper() == "OPTIONS"
+    http = session if session is not None else requests
 
     for origin in origins:
         if limiter:
@@ -176,7 +180,7 @@ def probe_endpoint(
         try:
             # Browsers follow redirects for CORS checks; ACAO is read from
             # the final response (e.g. apex → www often carries the headers).
-            resp = requests.request(
+            resp = http.request(
                 method,
                 url,
                 timeout=timeout,

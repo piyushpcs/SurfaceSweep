@@ -5,6 +5,8 @@ CORS scan orchestration: endpoint prioritization, aggregation, concurrency.
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin, urlparse
 
+import requests
+
 from modules.cors.classifier import SEVERITY_ORDER
 from modules.cors.origins import build_test_origins, normalize_origin
 from modules.cors.probe import probe_baseline, probe_endpoint
@@ -252,6 +254,7 @@ def scan_cors(
 
     raw_findings = []
     error_probes = 0
+    session = requests.Session()
 
     def _probe(url, method, request_method="GET", static_acao=False):
         return probe_endpoint(
@@ -265,6 +268,7 @@ def scan_cors(
             registrable_domain=registrable_domain,
             request_method=request_method,
             static_acao=static_acao,
+            session=session,
         )
 
     def _has_finding_acao(results):
@@ -275,7 +279,9 @@ def scan_cors(
         )
 
     def _scan_one(url):
-        baseline = probe_baseline(url, timeout=timeout, headers=headers, limiter=limiter)
+        baseline = probe_baseline(
+            url, timeout=timeout, headers=headers, limiter=limiter, session=session
+        )
         static_acao = bool(baseline.get("static_acao"))
 
         # Escalate only when no *finding-worthy* ACAO on preflight.
@@ -299,19 +305,22 @@ def scan_cors(
 
         return url, get_results, baseline
 
-    with ThreadPoolExecutor(max_workers=max(1, int(threads))) as pool:
-        futures = {pool.submit(_scan_one, url): url for url in resolved}
-        for future in as_completed(futures):
-            url, results, _baseline = future.result()
-            for r in results:
-                if r["severity"] == "ERROR":
-                    error_probes += 1
-                    continue
-                if r["severity"] == "INFO":
-                    continue
-                finding = dict(r)
-                finding["url"] = url
-                raw_findings.append(finding)
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, int(threads))) as pool:
+            futures = {pool.submit(_scan_one, url): url for url in resolved}
+            for future in as_completed(futures):
+                url, results, _baseline = future.result()
+                for r in results:
+                    if r["severity"] == "ERROR":
+                        error_probes += 1
+                        continue
+                    if r["severity"] == "INFO":
+                        continue
+                    finding = dict(r)
+                    finding["url"] = url
+                    raw_findings.append(finding)
+    finally:
+        session.close()
 
     if aggregate:
         findings = aggregate_findings(raw_findings)

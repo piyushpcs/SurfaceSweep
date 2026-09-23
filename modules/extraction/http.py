@@ -14,12 +14,16 @@ class RateLimiter:
         self._lock = __import__("threading").Lock()
 
     def wait(self):
+        # Reserve the next slot under the lock, then sleep outside so
+        # concurrent callers are not serialized for the full sleep duration.
         with self._lock:
             now = time.monotonic()
-            elapsed = now - self._last
-            if elapsed < self.min_interval:
-                time.sleep(self.min_interval - elapsed)
-            self._last = time.monotonic()
+            delay = self.min_interval - (now - self._last)
+            if delay < 0:
+                delay = 0.0
+            self._last = now + delay
+        if delay > 0:
+            time.sleep(delay)
 
 
 def fetch_with_retry(url, timeout=10, max_retries=3, limiter=None, headers=None):
