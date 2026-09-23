@@ -131,6 +131,19 @@ def extract_jwts(content, source_label=None):
     return found
 
 
+def deduplicate_jwts(all_jwts):
+    """
+    Dedupe JWTs by token value (first source wins).
+    Same token across multiple files → one entry.
+    """
+    seen = {}
+    for j in all_jwts or []:
+        tok = j.get("token")
+        if tok and tok not in seen:
+            seen[tok] = {"token": tok, "source": j.get("source", "unknown")}
+    return list(seen.values())
+
+
 def decode_jwt(token):
     """
     Decode a compact JWT without verifying the signature.

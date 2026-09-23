@@ -21,6 +21,7 @@ from modules.extraction.risk import calculate_risk_summary
 from modules.extraction.deobfuscator import deobfuscate
 from modules.extraction.ast import extract_endpoints_ast, ast_is_available
 from modules.analysis.sinks import detect_sinks, deduplicate_sinks
+from modules.jwt_analyzer import extract_jwts, deduplicate_jwts
 
 
 def get_js_sources(base_url, html):
@@ -75,7 +76,10 @@ def discover_js_chunks(js_content, base_js_url):
 
 
 def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
-    """Run all extraction passes (regex + AST) over a blob of JS text. Returns structured findings."""
+    """
+    Run all extraction passes (regex + AST) over a blob of JS text.
+    Returns (endpoints, secrets, deobf_findings, sinks, internal_hosts, jwts).
+    """
     deobf_findings = []
     if do_deobfuscate:
         content, deobf_findings = deobfuscate(content)
@@ -116,25 +120,28 @@ def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
     for h in internal:
         h["source"] = source_label
 
+    # Dedicated JWT extraction (populates jwts_found for Phase 3 analysis)
+    jwts = extract_jwts(content, source_label=source_label)
+
     # Filter noise from combined AST + regex results
     endpoints = {e for e in endpoints if not is_noise(e) and not e.startswith("//")}
 
-    return endpoints, secrets, deobf_findings, sinks, internal
+    return endpoints, secrets, deobf_findings, sinks, internal, jwts
 
 
 def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
-    """Fetch a JS file and extract endpoints/secrets/sinks from it."""
+    """Fetch a JS file and extract endpoints/secrets/sinks/jwts from it."""
     try:
         resp = fetch_with_retry(js_url, timeout=timeout, limiter=limiter)
         if resp is None:
-            return {"source": js_url, "error": "Failed after retries", "endpoints": set(), "secrets": [], "linked_js": set(), "sinks": [], "internal_hosts": []}
+            return {"source": js_url, "error": "Failed after retries", "endpoints": set(), "secrets": [], "linked_js": set(), "sinks": [], "internal_hosts": [], "jwts": []}
 
         content_type = resp.headers.get("Content-Type", "")
         text = resp.text if "json" not in content_type.lower() else ""
         if text:
-            endpoints, secrets, deobf, sinks, internal = extract_from_text(text, js_url, use_ast=use_ast)
+            endpoints, secrets, deobf, sinks, internal, jwts = extract_from_text(text, js_url, use_ast=use_ast)
         else:
-            endpoints, secrets, deobf, sinks, internal = set(), [], [], [], []
+            endpoints, secrets, deobf, sinks, internal, jwts = set(), [], [], [], [], []
         source_map = check_source_map(js_url, limiter=limiter)
         linked_js = discover_js_chunks(text, js_url) if text else set()
 
@@ -147,9 +154,10 @@ def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
             "deobfuscation_findings": deobf,
             "sinks": sinks,
             "internal_hosts": internal,
+            "jwts": jwts,
         }
     except requests.RequestException as e:
-        return {"source": js_url, "error": str(e), "endpoints": set(), "secrets": [], "linked_js": set(), "deobfuscation_findings": [], "sinks": [], "internal_hosts": []}
+        return {"source": js_url, "error": str(e), "endpoints": set(), "secrets": [], "linked_js": set(), "deobfuscation_findings": [], "sinks": [], "internal_hosts": [], "jwts": []}
 
 
 def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=True, use_ast=True):
@@ -166,6 +174,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         "js_files_scanned": [],
         "inline_scripts_scanned": 0,
         "secrets_found": [],
+        "jwts_found": [],
         "source_maps_found": [],
         "deobfuscation_findings": [],
         "sinks_found": [],
@@ -194,20 +203,22 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
     all_secrets = []
     all_sinks = []
     all_internal = []
+    all_jwts = []
 
     for i, content in enumerate(inline_js):
-        eps, secs, deobf, snks, intr = extract_from_text(content, f"inline_script_{i}", do_deobfuscate=deobfuscate, use_ast=use_ast)
+        eps, secs, deobf, snks, intr, jwts = extract_from_text(content, f"inline_script_{i}", do_deobfuscate=deobfuscate, use_ast=use_ast)
         all_endpoints.update(eps)
         all_secrets.extend(secs)
         all_sinks.extend(snks)
         all_internal.extend(intr)
+        all_jwts.extend(jwts)
         result["deobfuscation_findings"].extend(deobf)
     result["inline_scripts_scanned"] = len(inline_js)
 
     visited_js = set()
 
     def scan_js_urls(js_urls, depth):
-        nonlocal all_endpoints, all_secrets, all_sinks, all_internal
+        nonlocal all_endpoints, all_secrets, all_sinks, all_internal, all_jwts
         if not js_urls or depth > max_depth:
             return
 
@@ -234,6 +245,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
                 all_secrets.extend(data["secrets"])
                 all_sinks.extend(data.get("sinks", []))
                 all_internal.extend(data.get("internal_hosts", []))
+                all_jwts.extend(data.get("jwts", []))
                 result["deobfuscation_findings"].extend(data.get("deobfuscation_findings", []))
 
                 if data["source_map_found"]:
@@ -262,6 +274,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         e for e in all_endpoints if e.startswith("http") and not is_same_scope(e, target_domain) and not is_static_asset(e)
     ])
     result["secrets_found"] = deduplicate_secrets(all_secrets)
+    result["jwts_found"] = deduplicate_jwts(all_jwts)
     result["sinks_found"] = deduplicate_sinks(all_sinks)
     seen_host = set()
     for h in all_internal:
@@ -282,6 +295,8 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
             print(f"[+] Extraction: regex only")
         if result["secrets_found"]:
             print(f"[!] {len(result['secrets_found'])} unique potential secret(s) found — review manually!")
+        if result.get("jwts_found"):
+            print(f"[!] {len(result['jwts_found'])} unique JWT(s) found — run with --jwt to analyze")
         if result["source_maps_found"]:
             print(f"[!] {len(result['source_maps_found'])} exposed source map(s)")
         if result["deobfuscation_findings"]:
@@ -306,6 +321,7 @@ def merge_results(static_result, browser_result):
         "js_files_scanned": [],
         "inline_scripts_scanned": 0,
         "secrets_found": [],
+        "jwts_found": [],
         "source_maps_found": [],
         "deobfuscation_findings": [],
         "sinks_found": [],
@@ -371,6 +387,11 @@ def merge_results(static_result, browser_result):
         for src in s.get("sources", [s.get("source", "unknown")]):
             flat_secrets.append({"type": s["type"], "match": s["match"], "source": src})
     merged["secrets_found"] = deduplicate_secrets(flat_secrets)
+
+    all_jwts = []
+    all_jwts.extend(static_result.get("jwts_found", []))
+    all_jwts.extend(browser_result.get("jwts_found", []))
+    merged["jwts_found"] = deduplicate_jwts(all_jwts)
 
     # Merge sinks and internal hosts
     all_sinks = []

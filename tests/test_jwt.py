@@ -14,6 +14,7 @@ from modules.jwt_analyzer import (
     collect_candidate_secrets,
     collect_jwts_from_result,
     decode_jwt,
+    deduplicate_jwts,
     extract_jwts,
     jwt_risk_boost,
     verify_hs_signature,
@@ -335,6 +336,79 @@ class TestOfflineHardening(unittest.TestCase):
         a = analyze_jwt(tok, source="t")
         issues = {f["issue"] for f in a["findings"]}
         self.assertNotIn("high_entropy_claim", issues)
+
+
+class TestExtractionWiring(unittest.TestCase):
+    """Step 3: extract_from_text / merge_results populate jwts_found."""
+
+    def test_extract_from_text_returns_jwts(self):
+        from modules.extraction.engine import extract_from_text
+        content = f'var t = "{JWT_HS256_SECRET}"; fetch("/api/v1/users");'
+        eps, secrets, _, sinks, internal, jwts = extract_from_text(
+            content, "app.js", do_deobfuscate=False, use_ast=False
+        )
+        self.assertEqual(len(jwts), 1)
+        self.assertEqual(jwts[0]["token"], JWT_HS256_SECRET)
+        self.assertEqual(jwts[0]["source"], "app.js")
+        # JWT also present in secrets (type JWT)
+        self.assertTrue(any(s["type"] == "JWT" for s in secrets))
+
+    def test_extract_from_text_no_jwt(self):
+        from modules.extraction.engine import extract_from_text
+        eps, _, _, _, _, jwts = extract_from_text(
+            'fetch("/api");', "x.js", do_deobfuscate=False, use_ast=False
+        )
+        self.assertEqual(jwts, [])
+
+    def test_deduplicate_jwts_first_source_wins(self):
+        out = deduplicate_jwts([
+            {"token": "aaa.bbb.ccc", "source": "a.js"},
+            {"token": "aaa.bbb.ccc", "source": "b.js"},
+            {"token": "ddd.eee.fff", "source": "c.js"},
+        ])
+        self.assertEqual(len(out), 2)
+        by_token = {j["token"]: j for j in out}
+        self.assertEqual(by_token["aaa.bbb.ccc"]["source"], "a.js")
+        self.assertEqual(by_token["ddd.eee.fff"]["source"], "c.js")
+
+    def test_deduplicate_jwts_empty(self):
+        self.assertEqual(deduplicate_jwts([]), [])
+        self.assertEqual(deduplicate_jwts(None), [])
+
+    def test_merge_results_merges_jwts(self):
+        from modules.extraction.engine import merge_results
+        static = {
+            "target": "https://example.com",
+            "jwts_found": [{"token": JWT_NONE, "source": "a.js"}],
+        }
+        browser = {
+            "target": "https://example.com",
+            "jwts_found": [
+                {"token": JWT_NONE, "source": "b.js"},  # duplicate token
+                {"token": JWT_HS256_SECRET, "source": "c.js"},
+            ],
+        }
+        merged = merge_results(static, browser)
+        tokens = {j["token"] for j in merged["jwts_found"]}
+        self.assertEqual(len(merged["jwts_found"]), 2)
+        self.assertIn(JWT_NONE, tokens)
+        self.assertIn(JWT_HS256_SECRET, tokens)
+        # first source wins for the duplicate
+        none_entry = next(j for j in merged["jwts_found"] if j["token"] == JWT_NONE)
+        self.assertEqual(none_entry["source"], "a.js")
+
+    def test_collect_prefers_jwts_found_over_truncated_secret(self):
+        # jwts_found holds the full token; secrets may be truncated elsewhere
+        result = {
+            "secrets_found": [],
+            "jwts_found": [{"token": JWT_KID_TRAVERSAL, "source": "inline"}],
+        }
+        tokens = collect_jwts_from_result(result)
+        self.assertEqual(len(tokens), 1)
+        self.assertEqual(tokens[0]["token"], JWT_KID_TRAVERSAL)
+        out = analyze_result_jwts(result, verbose=False)
+        self.assertEqual(out["tokens_analyzed"], 1)
+        self.assertEqual(out["findings"][0]["cracked_secret"], "secret")
 
 
 class TestCollectHelpers(unittest.TestCase):

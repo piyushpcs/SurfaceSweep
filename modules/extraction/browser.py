@@ -65,6 +65,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         "js_files_scanned": [],
         "inline_scripts_scanned": 0,
         "secrets_found": [],
+        "jwts_found": [],
         "source_maps_found": [],
         "network_requests": [],
         "intercepted_endpoints": [],
@@ -176,8 +177,9 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
             eps = extract_endpoints_from_text(deobfed_content, js_url)
             endpoint_urls.update(eps)
             from modules.extraction.engine import extract_from_text
-            _, secrets, _, sinks, internal = extract_from_text(deobfed_content, js_url)
+            _, secrets, _, sinks, internal, jwts = extract_from_text(deobfed_content, js_url)
             result["secrets_found"].extend(secrets)
+            result["jwts_found"].extend(jwts)
             result["sinks_found"].extend(sinks)
             for h in internal:
                 h["source"] = js_url
@@ -192,14 +194,17 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     endpoint_urls.update(inline_eps)
 
     from modules.extraction.engine import extract_from_text, deduplicate_secrets, deduplicate_sinks
-    _, dom_secrets, _, dom_sinks, dom_internal = extract_from_text(deobfed_dom, "browser_dom")
+    from modules.jwt_analyzer import deduplicate_jwts
+    _, dom_secrets, _, dom_sinks, dom_internal, dom_jwts = extract_from_text(deobfed_dom, "browser_dom")
     result["secrets_found"].extend(dom_secrets)
+    result["jwts_found"].extend(dom_jwts)
     result["sinks_found"].extend(dom_sinks)
     for h in dom_internal:
         h["source"] = "browser_dom"
     result["internal_hosts_found"].extend(dom_internal)
     result["deobfuscation_findings"].extend(dom_deobf)
     result["secrets_found"] = deduplicate_secrets(result["secrets_found"])
+    result["jwts_found"] = deduplicate_jwts(result["jwts_found"])
     result["sinks_found"] = deduplicate_sinks(result["sinks_found"])
     seen_host = set()
     unique_hosts = []
@@ -227,6 +232,8 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         print(f"[+] Intercepted XHR/fetch: {len(result['intercepted_endpoints'])}")
         if result["secrets_found"]:
             print(f"[!] {len(result['secrets_found'])} unique secret(s) found")
+        if result.get("jwts_found"):
+            print(f"[!] {len(result['jwts_found'])} unique JWT(s) found")
         if result["deobfuscation_findings"]:
             print(f"[!] {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
         if result["sinks_found"]:

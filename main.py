@@ -141,6 +141,13 @@ def main():
                 seen_wb_host.add(h.get("match"))
                 result.setdefault("internal_hosts_found", []).append(h)
 
+        # Merge wayback JWTs
+        from modules.jwt_analyzer import deduplicate_jwts
+        for j in wayback_result.get("jwts", []):
+            result.setdefault("jwts_found", []).append(j)
+        if result.get("jwts_found"):
+            result["jwts_found"] = deduplicate_jwts(result["jwts_found"])
+
         # Recalculate risk after adding Wayback endpoints
         result["risk_summary"] = calculate_risk_summary(result)
         if verbose:
