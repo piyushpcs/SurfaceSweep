@@ -60,21 +60,42 @@ def run_pipeline(args: Namespace, verbose: bool = True,
                  headers: dict | None = None) -> dict:
     """
     Execute all enabled stages against a fresh ScanContext.
-    Stamps schema_version + meta on the result, then returns it.
+    Stamps schema_version + meta + findings before the report stage so
+    JSON/HTML on disk include the full contract (Step 4 + Step 6).
     """
     from datetime import datetime, timezone
     from time import monotonic
 
     ctx = ScanContext(args, verbose=verbose, headers=headers)
     for name, fn in build_stages(args):
+        # Stamp before report so saved JSON/HTML include meta + findings
+        if name == "report" and ctx.result is not None and "schema_version" not in ctx.result:
+            _finalize_result(ctx, datetime.now(timezone.utc))
         started = monotonic()
         ctx.stages_run.append(name)
         fn(ctx)
         ctx.stage_timings[name] = round(monotonic() - started, 3)
 
     if ctx.result is not None:
-        _stamp_meta(ctx, datetime.now(timezone.utc))
+        if "schema_version" not in ctx.result:
+            _finalize_result(ctx, datetime.now(timezone.utc))
+        else:
+            # Refresh meta so stages_run/stage_timings include report
+            _stamp_meta(ctx, datetime.now(timezone.utc))
     return ctx.require_result()
+
+
+def _finalize_result(ctx: ScanContext, finished_at) -> None:
+    """Attach findings feed, executive summary, schema_version, and meta."""
+    if ctx.result is None:
+        return
+
+    # Stage timings known so far (report stage still pending when called early)
+    from modules.reporting.findings import build_executive_summary, build_findings_feed
+    feed = build_findings_feed(ctx.result)
+    ctx.result["findings"] = feed
+    ctx.result["executive_summary"] = build_executive_summary(ctx.result, feed)
+    _stamp_meta(ctx, finished_at)
 
 
 def _stamp_meta(ctx: ScanContext, finished_at) -> None:

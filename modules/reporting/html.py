@@ -8,6 +8,13 @@ All dynamic values are escaped via html.escape before interpolation.
 import json
 from html import escape as _esc
 
+from modules.reporting.findings import (
+    build_executive_summary,
+    build_findings_feed,
+    render_executive_summary,
+    render_findings_feed,
+)
+
 
 # Keep in sync with modules.cors.classifier.SEVERITY_ORDER (lower = worse).
 # Inlined to avoid circular import through modules.cors package.
@@ -705,6 +712,8 @@ def build_html(result):
   <div class="stat"><div class="num">{(result.get('jwt') or {}).get('tokens_analyzed', 0)}</div><div class="label">JWTs Analyzed</div></div>
 </div>
 
+{render_executive_summary(result.get("executive_summary") or build_executive_summary(result, result.get("findings") or build_findings_feed(result)))}
+
 {render_waf(result.get('waf') or {})}
 
 <h2>Internal Paths</h2>
@@ -744,6 +753,8 @@ def build_html(result):
 {render_validation(result.get('validation', {}))}
 
 {render_deobf(result.get('deobfuscation_findings', []))}
+
+{render_findings_feed(result.get('findings') or build_findings_feed(result))}
 
 {render_errors(result.get('errors', []))}
 

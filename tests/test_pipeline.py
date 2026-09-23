@@ -587,5 +587,91 @@ class TestHtmlHardening(unittest.TestCase):
         self.assertIn("&lt;script&gt;", html)
 
 
+class TestFindingsFeed(unittest.TestCase):
+    """Cross-module findings feed + executive summary (Step 6)."""
+
+    def _result(self):
+        return {
+            "target": "https://example.com",
+            "risk_summary": {"level": "HIGH", "score": 42},
+            "internal_paths": ["/a"],
+            "secrets_found": [{"type": "aws_key", "match": "AKIA...", "sources": ["a.js"]}],
+            "sinks_found": [{"sink": "innerHTML", "severity": "HIGH", "description": "d",
+                             "count": 1, "source": "a"}],
+            "library_vulnerabilities": [{
+                "library": "jQuery", "version": "1.6.3", "cves": ["CVE-2011-4969"],
+                "severity": "CRITICAL", "description": "XSS", "source_file": "x.js",
+            }],
+            "cors": {"findings": [{
+                "severity": "CRITICAL", "url": "https://example.com/api",
+                "acao": "*", "origins_flagged": ["https://evil.com"], "detail": "reflected",
+            }]},
+            "jwt": {
+                "tokens_analyzed": 1,
+                "findings": [{
+                    "severity": "HIGH", "alg": "none", "source": "a",
+                    "findings": [{"severity": "HIGH", "issue": "alg none", "detail": "x"}],
+                }],
+            },
+            "internal_hosts_found": [],
+            "source_maps_found": [],
+        }
+
+    def test_feed_sorted_by_severity(self):
+        from modules.reporting.findings import build_findings_feed, SEVERITY_ORDER
+        feed = build_findings_feed(self._result())
+        self.assertTrue(feed)
+        keys = [(SEVERITY_ORDER.get(f["severity"], 9), f["module"], f["title"]) for f in feed]
+        self.assertEqual(keys, sorted(keys))
+
+    def test_feed_includes_modules(self):
+        from modules.reporting.findings import build_findings_feed
+        feed = build_findings_feed(self._result())
+        modules = {f["module"] for f in feed}
+        self.assertLessEqual({"secrets", "sinks", "cve", "cors", "jwt"}, modules)
+
+    def test_executive_summary_shape(self):
+        from modules.reporting.findings import build_executive_summary, build_findings_feed
+        r = self._result()
+        feed = build_findings_feed(r)
+        s = build_executive_summary(r, feed)
+        self.assertEqual(s["risk_level"], "HIGH")
+        self.assertEqual(s["risk_score"], 42)
+        self.assertEqual(s["total_findings"], len(feed))
+        self.assertIn("CRITICAL", s["severity_counts"])
+        self.assertTrue(s["top_findings"])
+        self.assertIn("cors", s["modules_covered"])
+        self.assertEqual(s["counts"]["secrets"], 1)
+
+    def test_html_has_executive_and_feed(self):
+        from modules.reporting.html import build_html
+        html = build_html(self._result())
+        self.assertIn("Executive Summary", html)
+        self.assertIn("All Findings", html)
+        self.assertIn("Top findings", html)
+
+    def test_html_escapes_feed_content(self):
+        from modules.reporting.html import build_html
+        r = self._result()
+        r["secrets_found"] = [{"type": "<script>", "match": "<img>", "source": "x"}]
+        html = build_html(r)
+        self.assertNotIn("<script>", html.replace("<script>alert", ""))
+        # secret type appears escaped in feed
+        self.assertIn("&lt;script&gt;", html)
+
+    def test_finalize_attaches_fields(self):
+        from datetime import datetime, timezone
+        from modules.pipeline.runner import _finalize_result
+        ctx = ScanContext(_args(cors=True, jwt=True), verbose=False)
+        ctx.stages_run = ["scan"]
+        ctx.result = self._result()
+        _finalize_result(ctx, datetime.now(timezone.utc))
+        self.assertEqual(ctx.result["schema_version"], 1)
+        self.assertIn("findings", ctx.result)
+        self.assertIn("executive_summary", ctx.result)
+        self.assertIn("meta", ctx.result)
+        self.assertTrue(ctx.result["findings"])
+
+
 if __name__ == "__main__":
     unittest.main()
