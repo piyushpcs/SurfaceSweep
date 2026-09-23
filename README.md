@@ -208,7 +208,14 @@ SurfaceSweep/
 │   │   ├── classifier.py         # Severity classification
 │   │   ├── probe.py              # Preflight + GET/POST probing
 │   │   └── scanner.py            # Prioritize, aggregate, rate limit, risk boost
-│   └── jwt_analyzer.py           # Phase 3: JWT security analyzer
+│   ├── jwt/                      # Phase 3: JWT security analyzer
+│   │   ├── __init__.py           # Public API re-exports
+│   │   ├── decode.py             # base64url, extract, dedupe, decode
+│   │   ├── crack.py              # wordlists, HMAC verify, key-confusion forge
+│   │   ├── keys.py               # SSRF guard, RSA JWK→PEM, JWKS fetch
+│   │   ├── checks.py             # single-token analysis + severity
+│   │   └── scanner.py            # scan orchestration, summary, risk boost
+│   └── jwt_analyzer.py           # Legacy shim → modules.jwt
 ├── tests/                        # Unit tests (stdlib unittest)
 │   └── test_cors.py
 ├── testbed/

@@ -10,7 +10,7 @@ from modules.reporting import export_burp_csv, export_zap_csv
 from modules.discovery import get_wayback_endpoints, crawl_spa_routes
 from modules.recon import detect_waf, get_scan_adjustments
 from modules.cors import scan_cors, collect_js_origins
-from modules.jwt_analyzer import analyze_result_jwts
+from modules.jwt import analyze_result_jwts
 
 
 def main():
@@ -147,7 +147,7 @@ def main():
                 result.setdefault("internal_hosts_found", []).append(h)
 
         # Merge wayback JWTs
-        from modules.jwt_analyzer import deduplicate_jwts
+        from modules.jwt import deduplicate_jwts
         for j in wayback_result.get("jwts", []):
             result.setdefault("jwts_found", []).append(j)
         if result.get("jwts_found"):

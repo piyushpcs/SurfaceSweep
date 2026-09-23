@@ -194,7 +194,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     endpoint_urls.update(inline_eps)
 
     from modules.extraction.engine import extract_from_text, deduplicate_secrets, deduplicate_sinks
-    from modules.jwt_analyzer import deduplicate_jwts
+    from modules.jwt import deduplicate_jwts
     _, dom_secrets, _, dom_sinks, dom_internal, dom_jwts = extract_from_text(deobfed_dom, "browser_dom")
     result["secrets_found"].extend(dom_secrets)
     result["jwts_found"].extend(dom_jwts)

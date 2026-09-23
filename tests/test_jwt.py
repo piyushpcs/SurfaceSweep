@@ -7,7 +7,7 @@ import time
 import unittest
 
 from modules.extraction.risk import calculate_risk_summary, risk_level_for_score
-from modules.jwt_analyzer import (
+from modules.jwt import (
     analyze_jwt,
     analyze_result_jwts,
     build_crack_candidates,

@@ -30,7 +30,7 @@ def _analysis_boost(result):
     boost = 0
     try:
         from modules.cors.scanner import cors_risk_boost
-        from modules.jwt_analyzer import jwt_risk_boost
+        from modules.jwt import jwt_risk_boost
     except ImportError:
         return boost
     if result.get("cors"):

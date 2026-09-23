@@ -21,7 +21,7 @@ from modules.extraction.risk import calculate_risk_summary
 from modules.extraction.deobfuscator import deobfuscate
 from modules.extraction.ast import extract_endpoints_ast, ast_is_available
 from modules.analysis.sinks import detect_sinks, deduplicate_sinks
-from modules.jwt_analyzer import extract_jwts, deduplicate_jwts
+from modules.jwt import extract_jwts, deduplicate_jwts
 
 
 def get_js_sources(base_url, html):
