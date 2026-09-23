@@ -50,15 +50,16 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **HTML report (Step 4):** severity/coverage stat cards, **Origin × URL matrix**, findings table (origins flagged, methods, hits, redirect final URL, evidence), JSON `schema_version`
 - **JSON shape:** `schema_version: 1`, top-level `findings` / `probe_hits` / `endpoints_tested` / `origins` / `severity_counts` / `summary`
 
-### ✅ Phase 3: JWT Security Analyzer (complete — Step 1+)
+### ✅ Phase 3: JWT Security Analyzer (complete — Step 2+)
 - Extracts compact JWTs (`header.payload.sig`) from JS/HTML scan results
 - Decodes header/payload offline (stdlib base64/json — no network, no PyJWT)
 - Flags: `alg=none`, weak/`kid` path traversal, `jku`/`x5u` URL injection, missing/long-lived `exp`, privileged claims
 - Offline HS256/384/512 crack attempt against a built-in weak wordlist + secrets found in the same scan
-- Severity: CRITICAL (alg none / cracked HMAC) → HIGH → MEDIUM → LOW → INFO
+- **Step 2 offline hardening:** embedded `jwk` object, `x5c` chain, `crit` header, empty/null signature, `alg=none` with leftover signature, placeholder/low-entropy signature, `kid` SQLi metacharacters, missing `iss`/`aud`, high-entropy payload claims (possible embedded secrets)
+- Severity: CRITICAL (alg none / cracked HMAC / empty signature) → HIGH → MEDIUM → LOW → INFO
 - Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per finding — **preserved across `--validate`/wayback/SPA recalculation** (Step 1)
 - HTML report section with alg, findings, and claims columns
-- Unit tests: `tests/test_jwt.py` (decode, crack, analysis, risk boost, report shape)
+- Unit tests: `tests/test_jwt.py` (decode, crack, analysis, Step 2 hardening, risk boost, report shape)
 
 ### ⏳ Phase 4: Combined pipeline + reporting (planned)
 
@@ -300,8 +301,8 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - ~~Library version + CVE detection~~ ✅ Done
 - ~~SPA route crawling~~ ✅ Done
 - ~~Phase 2: CORS misconfiguration scanner~~ ✅ Done (Steps 1–4)
-- ~~Phase 3: JWT security analyzer~~ ✅ Done (Step 1+)
-- Phase 3 continued: stronger offline checks, extraction wiring, wordlist, reporting parity, optional JWKS/key-confusion
+- ~~Phase 3: JWT security analyzer~~ ✅ Done (Step 2+)
+- Phase 3 continued: extraction wiring (`jwts_found`), wordlist/cracking, reporting parity, optional JWKS/key-confusion
 - Phase 4: Combined pipeline + reporting
 - Diff mode to compare two scans of the same target over time
 - Secret-pattern false-positive tuning (Twilio SID / Telegram Bot Token seen on mintlify)

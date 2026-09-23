@@ -1,5 +1,9 @@
-"""Unit tests for Phase 3 JWT (Step 1: decode, crack, analysis, risk boost)."""
+"""Unit tests for Phase 3 JWT (Step 1: decode, crack, analysis, risk boost;
+Step 2: stronger offline checks — embedded jwk, x5c, crit, null sig,
+kid SQLi, missing iss/aud, high-entropy claims)."""
 
+import base64
+import json
 import time
 import unittest
 
@@ -51,6 +55,19 @@ JWT_JKU = (
     "eyJzdWIiOiJ0ZXN0IiwiZXhwIjo0MTAyNDQ0ODAwfQ."
     "c2ln"
 )
+
+
+def _b64url(data):
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _make_jwt(header_obj, payload_obj, signature="c2ln"):
+    """Build a compact JWT for fixture purposes (signature need not verify)."""
+    h = _b64url(json.dumps(header_obj, separators=(",", ":")))
+    p = _b64url(json.dumps(payload_obj, separators=(",", ":")))
+    return f"{h}.{p}.{signature}"
 
 
 def _now():
@@ -171,6 +188,153 @@ class TestAnalyzeJwt(unittest.TestCase):
         a = analyze_jwt(long_tok, source="t")
         self.assertTrue(a["token"].endswith("…"))
         self.assertLessEqual(len(a["token"]), 501)
+
+
+class TestOfflineHardening(unittest.TestCase):
+    """Step 2: stronger offline checks."""
+
+    def test_embedded_jwk_object_high(self):
+        tok = _make_jwt(
+            {"alg": "RS256", "typ": "JWT", "jwk": {"kty": "RSA", "n": "x", "e": "AQAB"}},
+            {"sub": "t", "exp": 4102444800},
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("embedded_jwk", issues)
+        self.assertEqual(a["severity"], "HIGH")
+
+    def test_jwk_string_still_url_finding(self):
+        tok = _make_jwt(
+            {"alg": "RS256", "jwk": "https://evil.example/jwk.json"},
+            {"sub": "t", "exp": 4102444800},
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("jwk_header_url", issues)
+        self.assertNotIn("embedded_jwk", issues)
+
+    def test_x5c_header_chain_high(self):
+        tok = _make_jwt(
+            {"alg": "RS256", "x5c": ["MIIDdzCCAl8gAwIBAgIEb0..."]},
+            {"sub": "t", "exp": 4102444800},
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("x5c_header_chain", issues)
+        self.assertEqual(a["severity"], "HIGH")
+
+    def test_crit_header_medium(self):
+        tok = _make_jwt(
+            {"alg": "RS256", "crit": ["exp"], "exp": True},
+            {"sub": "t", "exp": 4102444800},
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("crit_header", issues)
+        finding = next(f for f in a["findings"] if f["issue"] == "crit_header")
+        self.assertEqual(finding["severity"], "MEDIUM")
+
+    def test_empty_signature_critical(self):
+        # HS256 header + payload, no signature segment content
+        tok = _make_jwt({"alg": "HS256", "typ": "JWT"}, {"sub": "t", "exp": 4102444800}, signature="")
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("empty_signature", issues)
+        self.assertEqual(a["severity"], "CRITICAL")
+
+    def test_alg_none_empty_signature_not_flagged_as_empty(self):
+        a = analyze_jwt(JWT_NONE, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertNotIn("empty_signature", issues)
+        self.assertNotIn("alg_none_with_signature", issues)
+
+    def test_alg_none_with_leftover_signature(self):
+        tok = _make_jwt(
+            {"alg": "none", "typ": "JWT"},
+            {"sub": "t", "exp": 4102444800},
+            signature="c2ln",
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("alg_none_with_signature", issues)
+        self.assertIn("alg_none", issues)
+
+    def test_kid_sqli_high(self):
+        tok = _make_jwt(
+            {"alg": "HS256", "kid": "admin'--"},
+            {"sub": "t", "exp": 4102444800},
+            signature="c2ln",
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("kid_sqli", issues)
+        self.assertIn("low_entropy_signature", issues)
+        self.assertEqual(a["severity"], "HIGH")
+
+    def test_kid_union_keyword(self):
+        tok = _make_jwt(
+            {"alg": "HS256", "kid": "1 UNION SELECT password FROM users"},
+            {"sub": "t", "exp": 4102444800},
+            signature="c2ln",
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("kid_sqli", issues)
+
+    def test_missing_iss_aud_low(self):
+        a = analyze_jwt(JWT_HS256_SECRET, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("missing_iss_aud", issues)
+
+    def test_present_iss_aud_no_finding(self):
+        tok = _make_jwt(
+            {"alg": "RS256"},
+            {"sub": "t", "iss": "https://auth.example", "aud": "api", "exp": 4102444800},
+            signature="c2ln",
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertNotIn("missing_iss_aud", issues)
+
+    def test_low_entropy_signature_medium(self):
+        # "c2ln" decodes to "sig" — placeholder
+        a = analyze_jwt(JWT_RS256_NO_EXP, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("low_entropy_signature", issues)
+
+    def test_real_hmac_signature_not_placeholder(self):
+        a = analyze_jwt(JWT_HS256_SECRET, source="t", candidate_secrets=[])
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertNotIn("low_entropy_signature", issues)
+
+    def test_high_entropy_claim_medium(self):
+        secret_val = "a3f9c8e2b1d4f6a7c9e0b2d4f6a8c1e3A3F9C8E2"
+        tok = _make_jwt(
+            {"alg": "RS256"},
+            {"sub": "t", "api_key": secret_val, "exp": 4102444800},
+            signature="c2ln",
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("high_entropy_claim", issues)
+        finding = next(f for f in a["findings"] if f["issue"] == "high_entropy_claim")
+        self.assertIn("api_key", finding["detail"])
+
+    def test_standard_claims_not_flagged_as_high_entropy(self):
+        tok = _make_jwt(
+            {"alg": "RS256"},
+            {
+                "sub": "a3f9c8e2b1d4f6a7c9e0b2d4f6a8c1e3",
+                "jti": "a3f9c8e2b1d4-f6a7-c9e0-b2d4f6a8c1e3",
+                "iss": "https://auth.example",
+                "aud": "api",
+                "exp": 4102444800,
+            },
+            signature="c2ln",
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertNotIn("high_entropy_claim", issues)
 
 
 class TestCollectHelpers(unittest.TestCase):

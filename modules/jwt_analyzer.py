@@ -5,14 +5,20 @@ Extracts JWTs from scan results, decodes header/payload (no network),
 flags alg=none / weak HMAC secrets / missing-exp / admin claims / kid+jku
 injection risks, and optionally verifies HS* signatures against weak or
 in-scan secrets.
+
+Step 2 offline hardening: embedded jwk objects, x5c chains, crit headers,
+null/placeholder signatures, kid SQLi characters, missing iss/aud, and
+high-entropy payload claims (possible embedded secrets).
 """
 
 import base64
 import hashlib
 import hmac
 import json
+import math
 import re
 import time
+from collections import Counter
 from urllib.parse import urlparse
 
 # Full compact JWT (signature may be empty for alg=none)
@@ -34,6 +40,63 @@ SENSITIVE_CLAIM_KEYS = {
     "admin", "role", "roles", "is_admin", "isAdmin", "permissions",
     "scope", "scp", "privilege", "user_type", "userType",
 }
+
+# Registered/standard claims skipped by high-entropy payload scanning
+STANDARD_CLAIM_KEYS = {
+    "iss", "sub", "aud", "exp", "nbf", "iat", "jti", "auth_time",
+    "nonce", "sid", "azp", "acr", "amr", "at_hash", "c_hash",
+}
+
+_PLACEHOLDER_SIGS = {
+    "sig", "signature", "test", "changeme", "secret", "none", "null",
+    "xxx", "abc", "placeholder",
+}
+
+_KID_SQLI_RE = re.compile(
+    r"\b(union|select|insert|update|delete|drop|alter|exec|truncate)\b",
+    re.IGNORECASE,
+)
+
+
+def _shannon_entropy(s):
+    """Shannon entropy in bits per character."""
+    if not s:
+        return 0.0
+    counts = Counter(s)
+    length = len(s)
+    return -sum((c / length) * math.log2(c / length) for c in counts.values())
+
+
+def _kid_has_sqli(kid):
+    """True when kid contains SQL injection metacharacters or keywords."""
+    if any(ch in kid for ch in ("'", '"', ";", "--", "/*", "%00")):
+        return True
+    return bool(_KID_SQLI_RE.search(kid))
+
+
+def _is_placeholder_signature(signature):
+    """True for empty-ish / low-entropy signatures that cannot be real HMACs."""
+    if not signature:
+        return False
+    try:
+        raw = _b64url_decode(signature)
+        text = raw.decode("utf-8", "ignore").lower().strip()
+    except Exception:
+        text = ""
+    if text in _PLACEHOLDER_SIGS:
+        return True
+    if len(signature) < 8:
+        return True
+    return len(signature) < 16 and _shannon_entropy(signature) < 3.0
+
+
+def _is_high_entropy_value(v):
+    """String claim values that look like embedded secrets (high entropy)."""
+    if not isinstance(v, str) or len(v) < 16:
+        return False
+    if v.startswith(("http://", "https://", "/", "eyJ")):
+        return False
+    return _shannon_entropy(v) >= 3.2
 
 
 def _b64url_decode(segment):
@@ -251,6 +314,57 @@ def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None):
             if host:
                 pass
 
+    # --- Embedded key material / critical header extensions (Step 2) ---
+    jwk_val = header.get("jwk")
+    if isinstance(jwk_val, dict) and jwk_val:
+        findings.append({
+            "severity": "HIGH",
+            "issue": "embedded_jwk",
+            "detail": "Header embeds a full JWK object — server may trust attacker-controlled keys",
+        })
+    x5c_val = header.get("x5c")
+    if isinstance(x5c_val, list) and x5c_val:
+        findings.append({
+            "severity": "HIGH",
+            "issue": "x5c_header_chain",
+            "detail": f"x5c certificate chain ({len(x5c_val)} cert(s)) — possible certificate/key confusion",
+        })
+    if "crit" in header:
+        findings.append({
+            "severity": "MEDIUM",
+            "issue": "crit_header",
+            "detail": f"crit={header['crit']!r} — critical extensions must be understood; "
+                      "misconfigured parsers may ignore them",
+        })
+    if isinstance(kid, str) and _kid_has_sqli(kid):
+        findings.append({
+            "severity": "HIGH",
+            "issue": "kid_sqli",
+            "detail": f"kid contains SQL metacharacters/keywords ('{kid[:80]}') — possible key-store injection",
+        })
+
+    # --- Signature quality: null / placeholder / alg=none with leftover sig ---
+    signature = decoded.get("signature", "")
+    if alg_l not in ("none", "") and not signature:
+        findings.append({
+            "severity": "CRITICAL",
+            "issue": "empty_signature",
+            "detail": f"alg='{alg}' claims a signature but signature is empty (signature bypass)",
+        })
+    elif alg_l in ("none", "") and signature:
+        findings.append({
+            "severity": "MEDIUM",
+            "issue": "alg_none_with_signature",
+            "detail": "alg=none token still carries a signature segment (tampering / strip attempt)",
+        })
+    elif signature and _is_placeholder_signature(signature):
+        findings.append({
+            "severity": "MEDIUM",
+            "issue": "low_entropy_signature",
+            "detail": f"Signature segment looks like a placeholder (len={len(signature)}, "
+                      f"entropy={_shannon_entropy(signature):.1f} bits/char)",
+        })
+
     # --- Payload / time claims ---
     exp = payload.get("exp")
     nbf = payload.get("nbf")
@@ -291,6 +405,28 @@ def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None):
             })
     except (TypeError, ValueError):
         pass
+
+    # --- Missing issuer / audience binding (Step 2) ---
+    if "iss" not in payload and "aud" not in payload:
+        findings.append({
+            "severity": "LOW",
+            "issue": "missing_iss_aud",
+            "detail": "No iss/aud claims — token is not bound to an issuer or audience",
+        })
+
+    # --- High-entropy payload claims (possible embedded secrets, Step 2) ---
+    high_entropy = [
+        f"{k}={str(v)[:40]}"
+        for k, v in payload.items()
+        if k not in STANDARD_CLAIM_KEYS and _is_high_entropy_value(v)
+    ]
+    if high_entropy:
+        findings.append({
+            "severity": "MEDIUM",
+            "issue": "high_entropy_claim",
+            "detail": "High-entropy value(s) in payload (possible embedded secret): "
+                      + "; ".join(high_entropy[:5]),
+        })
 
     # --- Sensitive claims ---
     sensitive = []
@@ -333,7 +469,11 @@ def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None):
         "token": token if len(token) <= 500 else token[:500] + "…",
         "source": source,
         "alg": alg,
-        "header": {k: header.get(k) for k in ("alg", "typ", "kid", "jku", "x5u") if k in header},
+        "header": {
+            k: header.get(k)
+            for k in ("alg", "typ", "kid", "jku", "x5u", "crit")
+            if k in header
+        },
         "payload_summary": payload_summary,
         "identity": identity,
         "findings": findings,
