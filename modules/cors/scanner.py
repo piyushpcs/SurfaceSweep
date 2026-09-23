@@ -335,12 +335,21 @@ def scan_cors(
             print("[!] CRITICAL: reflected origin + credentials — data theft possible")
 
     return {
+        "schema_version": 1,
         "findings": findings,
         "probe_hits": len(raw_findings),
         "endpoints_tested": len(resolved),
         "target_origin": target_origin,
         "origins": origins,
         "severity_counts": severity_counts,
+        "summary": {
+            "urls_flagged": len(findings),
+            "endpoints_tested": len(resolved),
+            "origins_probed": len(origins),
+            "probe_hits": len(raw_findings),
+            "severity_counts": dict(severity_counts),
+            "aggregated": bool(aggregate),
+        },
     }
 
 

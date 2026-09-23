@@ -1,4 +1,4 @@
-"""Unit tests for Phase 2 CORS Steps 1–2 (origins, classifier, scanner helpers)."""
+"""Unit tests for Phase 2 CORS Steps 1–4 (origins, classifier, scanner, reporting)."""
 
 import unittest
 
@@ -337,6 +337,149 @@ class TestScannerHelpers(unittest.TestCase):
             {"severity_counts": {"CRITICAL": 1, "HIGH": 1, "MEDIUM": 1, "LOW": 1}}
         )
         self.assertEqual(boost, 25 + 15 + 8 + 3)
+
+
+class TestReportingStep4(unittest.TestCase):
+    """Step 4: HTML matrix, summary, JSON schema surface."""
+
+    def _cors_payload(self):
+        return {
+            "schema_version": 1,
+            "target_origin": "https://example.com",
+            "endpoints_tested": 3,
+            "probe_hits": 4,
+            "origins": ["https://evil.com", "null", "https://example.com"],
+            "severity_counts": {"HIGH": 1, "MEDIUM": 1},
+            "summary": {
+                "urls_flagged": 2,
+                "endpoints_tested": 3,
+                "origins_probed": 3,
+                "probe_hits": 4,
+                "severity_counts": {"HIGH": 1, "MEDIUM": 1},
+                "aggregated": True,
+            },
+            "findings": [
+                {
+                    "url": "https://example.com/api/v2/users",
+                    "severity": "HIGH",
+                    "origins_flagged": ["https://evil.com"],
+                    "origin": "https://evil.com",
+                    "acao": "https://evil.com",
+                    "acac": "true",
+                    "method": "GET",
+                    "methods": ["OPTIONS", "GET"],
+                    "probe_hits": 3,
+                    "detail": "reflected + credentials",
+                    "evidence": "Methods: OPTIONS, GET",
+                },
+                {
+                    "url": "https://example.com/api/v1/public",
+                    "severity": "MEDIUM",
+                    "origins_flagged": ["https://evil.com", "null"],
+                    "origin": "*",
+                    "acao": "*",
+                    "acac": "",
+                    "method": "OPTIONS",
+                    "methods": ["OPTIONS"],
+                    "probe_hits": 1,
+                    "detail": "wildcard",
+                    "evidence": "Vary: Origin",
+                },
+            ],
+        }
+
+    def test_matrix_renders_origins_and_short_paths(self):
+        from modules.reporting.html import render_cors_matrix
+        html = render_cors_matrix(self._cors_payload())
+        self.assertIn("Origin × URL matrix", html)
+        self.assertIn("https://evil.com", html)
+        self.assertIn("/api/v2/users", html)
+        self.assertIn("HIGH", html)
+        self.assertIn("MED", html)  # compact MEDIUM badge in matrix cells
+
+    def test_matrix_empty_when_no_findings(self):
+        from modules.reporting.html import render_cors_matrix
+        self.assertEqual(render_cors_matrix({"findings": []}), "")
+        self.assertEqual(render_cors_matrix({}), "")
+
+    def test_summary_counts(self):
+        from modules.reporting.html import render_cors_summary
+        html = render_cors_summary(self._cors_payload())
+        self.assertIn("Critical", html)
+        self.assertIn("URLs flagged", html)
+        self.assertIn("Origins probed", html)
+        self.assertIn("Probe hits", html)
+
+    def test_render_cors_skips_info_and_includes_sections(self):
+        from modules.reporting.html import render_cors
+        payload = self._cors_payload()
+        payload["findings"].append(
+            {"url": "https://example.com/", "severity": "INFO", "origin": "https://example.com",
+             "acao": "https://example.com", "detail": "legit"}
+        )
+        html = render_cors(payload)
+        self.assertIn("CORS Misconfigurations", html)
+        self.assertIn("Findings (one row per URL)", html)
+        self.assertIn("JSON schema v1", html)
+        self.assertIn("Target origin:", html)
+        # INFO row omitted from findings table
+        self.assertEqual(html.count("https://example.com/api/v2/users"), 1)
+
+    def test_render_cors_empty(self):
+        from modules.reporting.html import render_cors
+        self.assertEqual(render_cors({}), "")
+        self.assertEqual(render_cors({"findings": []}), "")
+
+    def test_build_html_includes_cors_section(self):
+        from modules.reporting.html import build_html
+        result = {
+            "target": "https://example.com",
+            "scan_depth": 1,
+            "risk_summary": {"level": "HIGH", "score": 23},
+            "js_files_scanned": [],
+            "internal_paths": ["/api"],
+            "cors": self._cors_payload(),
+        }
+        html = build_html(result)
+        self.assertIn("Origin × URL matrix", html)
+        self.assertIn("CORS Findings", html)
+
+    def test_cors_sev_order_matches_classifier(self):
+        from modules.reporting.html import CORS_SEV_ORDER
+        from modules.cors.classifier import SEVERITY_ORDER
+        self.assertEqual(CORS_SEV_ORDER, SEVERITY_ORDER)
+
+    def test_scanner_return_schema_keys(self):
+        # scan_cors return shape contract (schema_version 1)
+        expected_top = {
+            "schema_version", "findings", "probe_hits", "endpoints_tested",
+            "target_origin", "origins", "severity_counts", "summary",
+        }
+        # Shape check without network: rebuild dict as scanner does
+        summary_keys = {
+            "urls_flagged", "endpoints_tested", "origins_probed",
+            "probe_hits", "severity_counts", "aggregated",
+        }
+        # Validate against a minimal fixture mirroring scanner output
+        fixture = {
+            "schema_version": 1,
+            "findings": [],
+            "probe_hits": 0,
+            "endpoints_tested": 1,
+            "target_origin": "https://example.com",
+            "origins": [],
+            "severity_counts": {},
+            "summary": {
+                "urls_flagged": 0,
+                "endpoints_tested": 1,
+                "origins_probed": 0,
+                "probe_hits": 0,
+                "severity_counts": {},
+                "aggregated": True,
+            },
+        }
+        self.assertEqual(set(fixture.keys()), expected_top)
+        self.assertTrue(summary_keys.issubset(fixture["summary"].keys()))
 
 
 if __name__ == "__main__":

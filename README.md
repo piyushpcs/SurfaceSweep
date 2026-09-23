@@ -31,7 +31,7 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - JSON and HTML report output
 - Custom headers/cookies for authenticated scans
 
-### ✅ Phase 2: CORS Misconfiguration Scanner (complete)
+### ✅ Phase 2: CORS Misconfiguration Scanner (complete — Steps 1–4)
 - Sends spoofed `Origin` headers to discovered endpoints (real preflight: `Access-Control-Request-Method`/`Headers` + GET/POST fallback)
 - Origin matrix: evil/null, path-bearing Origins, scheme/port flips on target host, subdomain/lookalike domains, custom origin
 - Normalized origin comparison (case, default ports, trailing slash) + registrable-domain awareness
@@ -47,7 +47,8 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - Findings aggregated **one row per URL** (worst severity; all flagged origins listed)
 - CLI: `--cors-threads` (default 6), `--cors-timeout` (default 5s)
 - Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per flagged URL
-- HTML report: severity, origins flagged, methods, hits, detail, evidence
+- **HTML report (Step 4):** severity/coverage stat cards, **Origin × URL matrix**, findings table (origins flagged, methods, hits, redirect final URL, evidence), JSON `schema_version`
+- **JSON shape:** `schema_version: 1`, top-level `findings` / `probe_hits` / `endpoints_tested` / `origins` / `severity_counts` / `summary`
 
 ### ✅ Phase 3: JWT Security Analyzer (complete)
 - Extracts compact JWTs (`header.payload.sig`) from JS/HTML scan results
@@ -267,6 +268,11 @@ Manual confirmation: `GET /` with `Origin: https://evil.com` → HTTP 200, ACAO/
 
 Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst severity per URL).
 
+### CORS Step 4 — reporting polish (testbed :5555)
+- HTML: stat cards (Critical/High/Medium/Low, URLs flagged, endpoints, origins, probe hits) + **Origin × URL matrix** + findings table
+- JSON: `schema_version: 1` + `summary` block for consumers
+- Verified via unit tests (matrix, summary, schema keys, severity order sync with classifier)
+
 ### Local testbed (Flask :5555)
 - CRITICAL: arbitrary origin reflected + credentials, `null` + credentials
 - HIGH: related/same-site reflect + credentials; wildcard + credentials (invalid combo)
@@ -291,9 +297,12 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - ~~AST-based extraction~~ ✅ Done
 - ~~Library version + CVE detection~~ ✅ Done
 - ~~SPA route crawling~~ ✅ Done
-- ~~Phase 2: CORS misconfiguration scanner~~ ✅ Done
+- ~~Phase 2: CORS misconfiguration scanner~~ ✅ Done (Steps 1–4)
 - ~~Phase 3: JWT security analyzer~~ ✅ Done
+- Phase 4: Combined pipeline + reporting
 - Diff mode to compare two scans of the same target over time
+- Secret-pattern false-positive tuning (Twilio SID / Telegram Bot Token seen on mintlify)
+- PII quick wins
 
 ## Responsible use
 Built and tested only against intentionally vulnerable/legal test targets

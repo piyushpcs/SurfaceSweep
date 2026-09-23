@@ -7,6 +7,11 @@ Keeps HTML/CSS templates separate from extraction logic.
 import json
 
 
+# Keep in sync with modules.cors.classifier.SEVERITY_ORDER (lower = worse).
+# Inlined to avoid circular import through modules.cors package.
+CORS_SEV_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4, "ERROR": 5}
+
+
 CSS = """
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 2rem; line-height: 1.6; }
@@ -286,10 +291,142 @@ def render_internal_hosts(hosts):
     )
 
 
-def render_cors(cors):
-    """Render CORS misconfiguration findings section (one row per URL)."""
+def _cors_sev_badge(sev):
+    return {
+        "CRITICAL": '<span class="badge badge-high">CRIT</span>',
+        "HIGH": '<span class="badge badge-high">HIGH</span>',
+        "MEDIUM": '<span class="badge badge-restricted">MED</span>',
+        "LOW": '<span class="badge badge-live">LOW</span>',
+        "INFO": '<span class="badge badge-error">INFO</span>',
+    }.get(sev, f'<span class="muted">{sev}</span>')
+
+
+def _cors_short_label(url, target_origin=""):
+    """Short column label for matrix (path if same host as target)."""
+    if target_origin and url.startswith(target_origin):
+        path = url[len(target_origin):] or "/"
+        return path if len(path) <= 24 else path[:21] + "…"
+    # fallback: last two path segments
+    parts = url.rstrip("/").split("/")
+    tail = "/".join(parts[-2:]) if len(parts) >= 2 else url
+    return tail if len(tail) <= 24 else "…" + tail[-23:]
+
+
+def render_cors_matrix(cors):
+    """
+    Origin × URL severity matrix.
+
+    Rows = origins that triggered at least one flag.
+    Columns = flagged URLs (short path labels).
+    Cells = worst severity for that (origin, URL) pair.
+    """
     if not cors or not cors.get("findings"):
         return ""
+
+    findings = [
+        f for f in cors.get("findings", [])
+        if f.get("severity") not in ("INFO", "ERROR") or f.get("acao")
+    ]
+    findings = [f for f in findings if f.get("severity") != "INFO"]
+    if not findings:
+        return ""
+
+    target_origin = cors.get("target_origin") or ""
+    urls = []
+    for f in findings:
+        u = f.get("url") or ""
+        if u and u not in urls:
+            urls.append(u)
+    urls = urls[:20]  # keep matrix readable
+
+    # origin -> url -> worst severity
+    cell = {}
+    origins = []
+    for f in findings:
+        flagged = f.get("origins_flagged") or (
+            [f.get("origin")] if f.get("origin") else []
+        )
+        url = f.get("url") or ""
+        if url not in urls:
+            continue
+        sev = f.get("severity") or "INFO"
+        for o in flagged:
+            if not o:
+                continue
+            if o not in origins:
+                origins.append(o)
+            key = (o, url)
+            prev = cell.get(key)
+            if prev is None or CORS_SEV_ORDER.get(sev, 9) < CORS_SEV_ORDER.get(prev, 9):
+                cell[key] = sev
+
+    if not origins:
+        return ""
+
+    origins = origins[:25]
+    headers = "".join(
+        f"<th title=\"{_cors_short_label(u, target_origin)}\">"
+        f"{_cors_short_label(u, target_origin)}</th>"
+        for u in urls
+    )
+    rows_html = []
+    for o in origins:
+        tds = []
+        for u in urls:
+            sev = cell.get((o, u))
+            tds.append(f"<td>{_cors_sev_badge(sev)}</td>" if sev else '<td class="muted">·</td>')
+        rows_html.append(
+            f"<tr><td><code>{o}</code></td>{''.join(tds)}</tr>"
+        )
+
+    return (
+        f'<h3 style="margin:1rem 0 0.35rem;color:#8b949e;font-size:0.95rem;">'
+        f'Origin × URL matrix ({len(origins)} origins × {len(urls)} URLs)</h3>'
+        '<div style="overflow-x:auto;">'
+        '<table><thead><tr><th>Origin</th>' + headers + "</tr></thead>"
+        f"<tbody>{''.join(rows_html)}</tbody></table></div>"
+    )
+
+
+def render_cors_summary(cors):
+    """Compact severity / coverage summary for the CORS section."""
+    if not cors:
+        return ""
+    summary = cors.get("summary") or {}
+    counts = summary.get("severity_counts") or cors.get("severity_counts") or {}
+    urls = summary.get("urls_flagged", len(cors.get("findings") or []))
+    tested = summary.get("endpoints_tested", cors.get("endpoints_tested", 0))
+    origins_n = summary.get("origins_probed", len(cors.get("origins") or []))
+    hits = summary.get("probe_hits", cors.get("probe_hits", 0))
+    if not counts and not urls:
+        return ""
+
+    def _stat(n, label, color="#58a6ff"):
+        style = f"color:{color}" if n else "color:#484f58"
+        return (
+            f'<div class="stat"><div class="num" style="{style}">{n}</div>'
+            f'<div class="label">{label}</div></div>'
+        )
+
+    return (
+        "<div class=\"stats\">"
+        + _stat(counts.get("CRITICAL", 0), "Critical", "#e74c3c")
+        + _stat(counts.get("HIGH", 0), "High", "#e74c3c")
+        + _stat(counts.get("MEDIUM", 0), "Medium", "#f39c12")
+        + _stat(counts.get("LOW", 0), "Low", "#27ae60")
+        + _stat(urls, "URLs flagged")
+        + _stat(tested, "Endpoints tested")
+        + _stat(origins_n, "Origins probed")
+        + _stat(hits, "Probe hits")
+        + "</div>"
+    )
+
+
+def render_cors(cors):
+    """Render CORS misconfiguration findings: summary, matrix, then table."""
+    if not cors or not cors.get("findings"):
+        return ""
+
     sev_badge = {
         "CRITICAL": '<span class="badge badge-high">CRITICAL</span>',
         "HIGH": '<span class="badge badge-high">HIGH</span>',
@@ -301,15 +438,23 @@ def render_cors(cors):
     for f in cors.get("findings", []):
         if f.get("severity") in ("INFO", "ERROR") and not f.get("acao"):
             continue
+        if f.get("severity") == "INFO":
+            continue
         evidence = f.get("evidence") or ""
         flagged = f.get("origins_flagged") or ([f.get("origin", "")] if f.get("origin") else [])
         origin_cell = ", ".join(o for o in flagged if o) or "—"
         methods = f.get("methods") or ([f.get("method", "")] if f.get("method") else [])
         method_cell = ", ".join(m for m in methods if m) or "—"
         hits = f.get("probe_hits") or 1
+        final_url = f.get("final_url") or ""
+        final_cell = (
+            f'<br><span class="muted" style="font-size:0.75rem;">→ {final_url}</span>'
+            if final_url and f.get("redirected")
+            else ""
+        )
         rows.append(
             f'<tr><td>{sev_badge.get(f.get("severity", ""), f.get("severity", ""))}</td>'
-            f'<td><code>{f.get("url", "")}</code></td>'
+            f'<td><code>{f.get("url", "")}</code>{final_cell}</td>'
             f'<td><code>{origin_cell}</code></td>'
             f'<td><code>{f.get("acao", "")}</code></td>'
             f'<td>{f.get("acac", "") or "—"}</td>'
@@ -320,15 +465,34 @@ def render_cors(cors):
         )
     if not rows:
         return ""
+
     tested = cors.get("endpoints_tested", 0)
     probe_hits = cors.get("probe_hits", len(cors.get("findings") or []))
-    return (
-        f'<h2>CORS Misconfigurations ({len(rows)} URL(s) / {tested} tested'
-        f'{f", {probe_hits} probe hits" if probe_hits != len(rows) else ""})</h2>'
+    target_origin = cors.get("target_origin") or ""
+    schema = cors.get("schema_version", "")
+
+    matrix = render_cors_matrix(cors)
+    summary = render_cors_summary(cors)
+    meta = (
+        f'<p class="muted" style="font-size:0.8rem;margin-top:0.35rem;">'
+        f'Target origin: <code>{target_origin}</code> · '
+        f'{len(rows)} URL(s) / {tested} tested'
+        + (f' · {probe_hits} probe hits' if probe_hits != len(rows) else "")
+        + (f' · JSON schema v{schema}' if schema else "")
+        + "</p>"
+    )
+
+    table = (
         '<table><thead><tr><th>Severity</th><th>URL</th><th>Origins flagged</th>'
         '<th>ACAO</th><th>ACAC</th><th>Methods</th><th>Hits</th><th>Detail</th>'
         '<th>Evidence</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+    return (
+        f"<h2>CORS Misconfigurations</h2>"
+        f"{summary}{meta}{matrix}"
+        f'<h3 style="margin:1rem 0 0.35rem;color:#8b949e;font-size:0.95rem;">'
+        f"Findings (one row per URL)</h3>{table}"
     )
 
 
