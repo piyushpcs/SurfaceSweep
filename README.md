@@ -215,9 +215,10 @@ SurfaceSweep/
 │   │   ├── keys.py               # SSRF guard, RSA JWK→PEM, JWKS fetch
 │   │   ├── checks.py             # single-token analysis + severity
 │   │   └── scanner.py            # scan orchestration, summary, risk boost
-│   └── jwt_analyzer.py           # Legacy shim → modules.jwt
 ├── tests/                        # Unit tests (stdlib unittest)
-│   └── test_cors.py
+│   ├── test_cors.py
+│   ├── test_jwt.py
+│   └── test_pipeline.py
 ├── testbed/
 │   └── vuln_api.py               # Test Flask app
 └── reports/                      # Generated reports
