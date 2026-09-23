@@ -306,8 +306,8 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - ~~Library version + CVE detection~~ ✅ Done
 - ~~SPA route crawling~~ ✅ Done
 - ~~Phase 2: CORS misconfiguration scanner~~ ✅ Done (Steps 1–4)
-- ~~Phase 3: JWT security analyzer~~ ✅ Done (Step 3+)
-- Phase 3 continued: wordlist/cracking (`--jwt-wordlist`, hashcat export), reporting parity, optional JWKS/key-confusion
+- ~~Phase 3: JWT security analyzer~~ ✅ Done (Steps 1–5)
+- Phase 3 continued: optional JWKS/key-confusion network checks (Step 6)
 - Phase 4: Combined pipeline + reporting
 - Diff mode to compare two scans of the same target over time
 - Secret-pattern false-positive tuning (Twilio SID / Telegram Bot Token seen on mintlify)

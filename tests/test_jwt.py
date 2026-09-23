@@ -1,6 +1,5 @@
-"""Unit tests for Phase 3 JWT (Step 1: decode, crack, analysis, risk boost;
-Step 2: stronger offline checks — embedded jwk, x5c, crit, null sig,
-kid SQLi, missing iss/aud, high-entropy claims)."""
+"""Unit tests for Phase 3 JWT (Steps 1–5: decode, crack, analysis, offline
+hardening, pipeline wiring, cracking, reporting parity, risk boost)."""
 
 import base64
 import json
