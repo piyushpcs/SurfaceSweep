@@ -3,6 +3,7 @@
 import unittest
 from argparse import Namespace
 
+from modules.extraction.risk import calculate_risk_summary
 from modules.pipeline import (
     ScanContext,
     build_stages,
@@ -394,6 +395,36 @@ class TestMergeWayback(unittest.TestCase):
         merge_wayback(r, wb, "https://example.com")
         self.assertEqual(r["internal_paths"], ["/keep"])
         self.assertEqual(r["wayback_js_files"], [])
+
+
+class TestCveBoost(unittest.TestCase):
+    """CVE boost must live inside calculate_risk_summary (Step 3)."""
+
+    def test_cve_boost_weights(self):
+        r = _result(internal_paths=["/a"])
+        r["library_vulnerabilities"] = [{"severity": "CRITICAL"}, {"severity": "HIGH"}]
+        # path(1) + 25 + 15
+        self.assertEqual(calculate_risk_summary(r)["score"], 41)
+        self.assertEqual(calculate_risk_summary(r)["level"], "HIGH")
+
+    def test_cve_boost_preserved_on_recalc(self):
+        """SPA/validation recalculation must not wipe the CVE boost."""
+        r = _result(internal_paths=["/a"])
+        r["library_vulnerabilities"] = [{"severity": "CRITICAL"}]
+        first = calculate_risk_summary(r)
+        self.assertEqual(first["score"], 26)
+        r["spa_routes"] = ["/b"]
+        second = calculate_risk_summary(r)
+        self.assertEqual(second["score"], first["score"])
+
+    def test_unknown_severity_defaults_to_5(self):
+        r = _result()
+        r["library_vulnerabilities"] = [{"severity": "WAT"}]
+        self.assertEqual(calculate_risk_summary(r)["score"], 5)
+
+    def test_no_vulns_zero_boost(self):
+        r = _result(internal_paths=["/a"])
+        self.assertEqual(calculate_risk_summary(r)["score"], 1)
 
 
 if __name__ == "__main__":

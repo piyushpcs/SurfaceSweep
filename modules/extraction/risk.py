@@ -40,6 +40,22 @@ def _analysis_boost(result):
     return boost
 
 
+CVE_SEVERITY_WEIGHTS = {"CRITICAL": 25, "HIGH": 15, "MEDIUM": 8, "LOW": 3}
+
+
+def _cve_boost(result):
+    """
+    Weight CVE/OSV library vulnerabilities found by stage_cve.
+
+    Applied inside calculate_risk_summary so later recalculations
+    (SPA, validation, wayback) preserve the boost instead of wiping it.
+    """
+    return sum(
+        CVE_SEVERITY_WEIGHTS.get(v.get("severity", ""), 5)
+        for v in result.get("library_vulnerabilities") or []
+    )
+
+
 def calculate_risk_summary(result):
     """
     Calculate risk score and level from scan results.
@@ -51,6 +67,7 @@ def calculate_risk_summary(result):
       - source maps: 5 each
       - deobfuscation findings: 3 each
       - internal paths: 1 each
+      - library CVEs: CRITICAL=25, HIGH=15, MEDIUM=8, LOW=3 (default 5)
       - CORS / JWT analysis boosts (when result["cors"] / result["jwt"] set)
     """
     score = 0
@@ -62,6 +79,7 @@ def calculate_risk_summary(result):
     for s in result.get("sinks_found", []):
         score += {"HIGH": 4, "MEDIUM": 2, "LOW": 1}.get(s.get("severity", ""), 1)
 
+    score += _cve_boost(result)
     score += _analysis_boost(result)
 
     return {"score": score, "level": risk_level_for_score(score)}

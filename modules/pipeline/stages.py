@@ -141,20 +141,13 @@ def stage_cve(ctx: ScanContext) -> None:
     if lib_result["osv_results"]:
         result["osv_results"] = lib_result["osv_results"]
 
-    if lib_result["vulnerabilities"]:
-        vuln_score = sum(
-            {"CRITICAL": 25, "HIGH": 15, "MEDIUM": 8, "LOW": 3}.get(v["severity"], 5)
-            for v in lib_result["vulnerabilities"]
-        )
-        result["risk_summary"]["score"] += vuln_score
-        score = result["risk_summary"]["score"]
-        if score >= 30:
-            result["risk_summary"]["level"] = "HIGH"
-        elif score >= 10:
-            result["risk_summary"]["level"] = "MEDIUM"
-        elif score > 0:
-            result["risk_summary"]["level"] = "LOW"
-        ctx.log(f"[+] Risk boosted by {vuln_score} points from CVE findings")
+    # CVE boost is applied inside calculate_risk_summary (Step 3) so later
+    # recalculations (SPA/validation/wayback) no longer wipe it.
+    before = result.get("risk_summary", {}).get("score", 0)
+    result["risk_summary"] = calculate_risk_summary(result)
+    delta = result["risk_summary"]["score"] - before
+    if delta:
+        ctx.log(f"[+] Risk boosted by {delta} points from CVE findings")
 
 
 def stage_spa(ctx: ScanContext) -> None:
