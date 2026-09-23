@@ -50,6 +50,7 @@ def main():
     parser.add_argument("--jwt", action="store_true", help="Analyze JWTs found in scanned content (alg/none, weak HMAC, exp, claims)")
     parser.add_argument("--jwt-wordlist", default=None, metavar="FILE", help="Extra newline-delimited secrets for offline HS* cracking")
     parser.add_argument("--jwt-hashcat", default=None, metavar="FILE", help="Export HS* JWTs to FILE in hashcat mode 16500 format")
+    parser.add_argument("--jwt-export", default=None, metavar="FILE", help="Write per-token JWT findings as NDJSON to FILE")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
     args = parser.parse_args()
 
@@ -277,6 +278,7 @@ def main():
             wordlist_path=args.jwt_wordlist,
             target=args.target,
             hashcat_path=args.jwt_hashcat,
+            export_path=args.jwt_export,
         )
         result["risk_summary"] = calculate_risk_summary(result)
         if verbose:

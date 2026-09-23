@@ -17,6 +17,7 @@ from modules.jwt_analyzer import (
     decode_jwt,
     deduplicate_jwts,
     export_hashcat,
+    export_jwt_findings,
     extract_jwts,
     jwt_risk_boost,
     load_wordlist,
@@ -503,6 +504,123 @@ class TestCrackingStep4(unittest.TestCase):
             self.assertEqual(out["hashcat_exported"], 1)
             self.assertIn("crack_meta", out)
             self.assertIn("total", out["crack_meta"])
+        finally:
+            os.unlink(path)
+
+
+class TestReportingStep5(unittest.TestCase):
+    """Step 5: schema/summary, HTML escaping, severity cards, per-token export."""
+
+    def test_empty_result_has_schema_and_summary(self):
+        out = analyze_result_jwts({"secrets_found": []}, verbose=False)
+        self.assertEqual(out["schema_version"], 1)
+        self.assertIn("summary", out)
+        self.assertEqual(out["summary"]["tokens_analyzed"], 0)
+        self.assertIn("severity_counts", out["summary"])
+        self.assertIn("issue_counts", out["summary"])
+
+    def test_full_result_schema_and_summary(self):
+        result = {
+            "secrets_found": [
+                {"type": "JWT", "match": JWT_NONE, "sources": ["a"]},
+                {"type": "JWT", "match": JWT_HS256_SECRET, "sources": ["b"]},
+            ]
+        }
+        out = analyze_result_jwts(result, verbose=False, target="https://example.com")
+        self.assertEqual(out["schema_version"], 1)
+        s = out["summary"]
+        self.assertEqual(s["tokens_analyzed"], 2)
+        self.assertEqual(s["severity_counts"], out["severity_counts"])
+        self.assertGreaterEqual(s["cracked_secrets"], 1)  # "secret"
+        self.assertGreaterEqual(s["candidate_secrets_tried"], 100)
+        self.assertIn("alg_none", s["issue_counts"])
+
+    def test_html_escapes_payload_and_detail(self):
+        from modules.reporting.html import render_jwt
+        evil = {
+            "schema_version": 1,
+            "tokens_analyzed": 1,
+            "severity_counts": {"HIGH": 1},
+            "summary": {"tokens_analyzed": 1, "severity_counts": {"HIGH": 1}},
+            "findings": [{
+                "severity": "HIGH",
+                "alg": "RS256",
+                "source": '<img src=x onerror=alert(1)>',
+                "payload_summary": {"x": "<script>alert(1)</script>"},
+                "cracked_secret": "</code><script>alert(2)</script>",
+                "findings": [{
+                    "severity": "HIGH",
+                    "issue": "sensitive_claims",
+                    "detail": 'role=<script>alert("xss")</script>',
+                }],
+            }],
+        }
+        html = render_jwt(evil)
+        self.assertNotIn('<script>alert("xss")</script>', html)
+        self.assertNotIn("<img src=x", html)
+        self.assertNotIn("</code><script>alert(2)</script>", html)
+        self.assertIn("&lt;script&gt;", html)
+
+    def test_html_severity_cards(self):
+        from modules.reporting.html import render_jwt
+        result = {
+            "schema_version": 1,
+            "tokens_analyzed": 2,
+            "severity_counts": {"CRITICAL": 2, "HIGH": 1, "MEDIUM": 3},
+            "summary": {
+                "tokens_analyzed": 2,
+                "severity_counts": {"CRITICAL": 2, "HIGH": 1, "MEDIUM": 3},
+                "cracked_secrets": 1,
+                "candidate_secrets_tried": 134,
+            },
+            "findings": [{
+                "severity": "CRITICAL",
+                "alg": "HS256",
+                "source": "a.js",
+                "payload_summary": {},
+                "cracked_secret": "secret",
+                "findings": [{"severity": "CRITICAL", "issue": "alg_none", "detail": "x"}],
+            }],
+        }
+        html = render_jwt(result)
+        self.assertIn("Critical", html)
+        self.assertIn("Tokens analyzed", html)
+        self.assertIn("Secrets cracked", html)
+        self.assertIn("Crack candidates", html)
+        self.assertIn("JSON schema v1", html)
+
+    def test_export_jwt_findings_ndjson(self):
+        import tempfile, os
+        result = {
+            "secrets_found": [
+                {"type": "JWT", "match": JWT_NONE, "sources": ["a"]},
+                {"type": "JWT", "match": JWT_HS256_SECRET, "sources": ["b"]},
+            ]
+        }
+        out = analyze_result_jwts(result, verbose=False)
+        with tempfile.NamedTemporaryFile("r", suffix=".ndjson", delete=False) as fh:
+            path = fh.name
+        try:
+            n = export_jwt_findings(out, path)
+            self.assertEqual(n, 2)
+            with open(path) as fh2:
+                lines = [json.loads(l) for l in fh2 if l.strip()]
+            self.assertEqual(len(lines), 2)
+            self.assertTrue(all("findings" in l and "severity" in l for l in lines))
+        finally:
+            os.unlink(path)
+
+    def test_analyze_result_jwts_export_path(self):
+        import tempfile, os
+        result = {
+            "secrets_found": [{"type": "JWT", "match": JWT_NONE, "sources": ["a"]}],
+        }
+        with tempfile.NamedTemporaryFile("r", suffix=".ndjson", delete=False) as fh:
+            path = fh.name
+        try:
+            out = analyze_result_jwts(result, verbose=False, export_path=path)
+            self.assertEqual(out["findings_exported"], 1)
+            self.assertEqual(out["summary"]["tokens_analyzed"], 1)
         finally:
             os.unlink(path)
 

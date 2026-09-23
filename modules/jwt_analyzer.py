@@ -672,22 +672,62 @@ def scan_jwts(content, source="unknown", candidate_secrets=None):
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
 
 
+def export_jwt_findings(jwt_result, path):
+    """
+    Write one JSON object per analyzed token (NDJSON) for tooling.
+    Returns count of lines written.
+    """
+    written = 0
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            for a in (jwt_result or {}).get("findings", []):
+                fh.write(json.dumps(a, ensure_ascii=False, default=str) + "\n")
+                written += 1
+    except OSError:
+        return 0
+    return written
+
+
+def _jwt_summary(analyses, severity_counts, candidates_meta, exported=0):
+    """Compact summary block for JSON consumers (parity with CORS schema)."""
+    cracked = sum(1 for a in analyses if a.get("cracked_secret"))
+    issue_counts = {}
+    for a in analyses:
+        for f in a.get("findings", []):
+            issue = f.get("issue", "unknown")
+            issue_counts[issue] = issue_counts.get(issue, 0) + 1
+    summary = {
+        "tokens_analyzed": len(analyses),
+        "severity_counts": severity_counts,
+        "cracked_secrets": cracked,
+        "candidate_secrets_tried": (candidates_meta or {}).get("total", 0),
+        "issue_counts": dict(sorted(issue_counts.items(), key=lambda kv: -kv[1])),
+    }
+    if exported:
+        summary["hashcat_exported"] = exported
+    return summary
+
+
 def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
-                        hashcat_path=None):
+                        hashcat_path=None, export_path=None):
     """
     Run JWT analysis over a full scan result.
     Args:
         wordlist_path: optional extra newline-delimited secret wordlist
         target: target URL — derive host-based HMAC mutations
         hashcat_path: if set, export HS* tokens in hashcat mode 16500 format
+        export_path: if set, write per-token findings as NDJSON
     Returns:
       {
+        "schema_version": 1,
         "tokens_analyzed": n,
         "findings": [analyze_jwt dicts...],
         "severity_counts": {...},
+        "summary": {...},
         "candidate_secrets_tried": n,
-        "crack_meta": {...},   # when candidates were built
-        "hashcat_exported": n, # when hashcat_path set
+        "crack_meta": {...},
+        "hashcat_exported": n,  # when hashcat_path set
+        "findings_exported": n, # when export_path set
       }
     """
     if verbose:
@@ -699,29 +739,32 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
 
     tokens = collect_jwts_from_result(result)
 
+    hashcat_n = 0
     if hashcat_path and tokens:
-        hs_tokens = [t["token"] for t in tokens]
-        exported = export_hashcat(hs_tokens, hashcat_path)
-        if verbose and exported:
-            print(f"[+] Exported {exported} HS* JWT(s) for hashcat (-m 16500): {hashcat_path}")
+        hashcat_n = export_hashcat([t["token"] for t in tokens], hashcat_path)
+        if verbose and hashcat_n:
+            print(f"[+] Exported {hashcat_n} HS* JWT(s) for hashcat (-m 16500): {hashcat_path}")
 
-    # Also re-extract from deobfuscation outputs and raw path strings if present
-    # (full tokens often truncated in secrets.match — jwts_found preferred)
     if not tokens:
         if verbose:
             print("[*] No complete JWTs found in scan results")
-        return {
+        empty = {
+            "schema_version": 1,
             "tokens_analyzed": 0,
             "findings": [],
             "severity_counts": {},
+            "summary": _jwt_summary([], {}, crack_meta),
             "candidate_secrets_tried": len(candidates),
             "crack_meta": crack_meta,
         }
+        if hashcat_n:
+            empty["hashcat_exported"] = hashcat_n
+        if export_path:
+            empty["findings_exported"] = export_jwt_findings(empty, export_path)
+        return empty
 
     analyses = []
     for item in tokens:
-        # Re-expand truncated secret matches by re-scanning is not possible;
-        # analyze what we have (full tokens come from extract_jwts on content).
         a = analyze_jwt(
             item["token"],
             source=item.get("source", "unknown"),
@@ -729,8 +772,7 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
         )
         analyses.append(a)
 
-    # Prefer longest/full tokens: if a truncated token analyzed as malformed,
-    # drop LOW malformed duplicates when a sibling decoded cleanly
+    # Prefer longest/full tokens: drop LOW malformed duplicates when a sibling decoded cleanly
     analyses = [a for a in analyses if not (
         a["findings"] and a["findings"][0].get("issue") == "malformed_jwt"
         and any(x["findings"] and x["findings"][0].get("issue") != "malformed_jwt"
@@ -761,16 +803,20 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
                 print(f"    [!] {a['severity']:8s} {a['alg'] or '?':6s} {top['issue']}: {top['detail'][:90]}")
 
     out = {
+        "schema_version": 1,
         "tokens_analyzed": len(analyses),
         "findings": analyses,
         "severity_counts": severity_counts,
+        "summary": _jwt_summary(analyses, severity_counts, crack_meta, exported=hashcat_n),
         "candidate_secrets_tried": len(candidates),
         "crack_meta": crack_meta,
     }
-    if hashcat_path and tokens:
-        out["hashcat_exported"] = export_hashcat(
-            [t["token"] for t in tokens], hashcat_path
-        )
+    if hashcat_n:
+        out["hashcat_exported"] = hashcat_n
+    if export_path:
+        out["findings_exported"] = export_jwt_findings(out, export_path)
+        if verbose and out["findings_exported"]:
+            print(f"[+] Wrote {out['findings_exported']} per-token finding(s) (NDJSON): {export_path}")
     return out
 
 

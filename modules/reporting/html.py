@@ -5,6 +5,7 @@ Keeps HTML/CSS templates separate from extraction logic.
 """
 
 import json
+from html import escape as _esc
 
 
 # Keep in sync with modules.cors.classifier.SEVERITY_ORDER (lower = worse).
@@ -496,8 +497,43 @@ def render_cors(cors):
     )
 
 
+def render_jwt_summary(jwt_result):
+    """Severity / coverage stat cards for the JWT section (CORS parity)."""
+    if not jwt_result:
+        return ""
+    summary = jwt_result.get("summary") or {}
+    counts = summary.get("severity_counts") or jwt_result.get("severity_counts") or {}
+    tokens = summary.get("tokens_analyzed", jwt_result.get("tokens_analyzed", 0))
+    cracked = summary.get("cracked_secrets", 0)
+    candidates = summary.get(
+        "candidate_secrets_tried",
+        jwt_result.get("candidate_secrets_tried", 0),
+    )
+    if not counts and not tokens:
+        return ""
+
+    def _stat(n, label, color="#58a6ff"):
+        style = f"color:{color}" if n else "color:#484f58"
+        return (
+            f'<div class="stat"><div class="num" style="{style}">{n}</div>'
+            f'<div class="label">{label}</div></div>'
+        )
+
+    return (
+        "<div class=\"stats\">"
+        + _stat(counts.get("CRITICAL", 0), "Critical", "#e74c3c")
+        + _stat(counts.get("HIGH", 0), "High", "#e74c3c")
+        + _stat(counts.get("MEDIUM", 0), "Medium", "#f39c12")
+        + _stat(counts.get("LOW", 0), "Low", "#27ae60")
+        + _stat(tokens, "Tokens analyzed")
+        + _stat(cracked, "Secrets cracked", "#e74c3c" if cracked else "#484f58")
+        + _stat(candidates, "Crack candidates")
+        + "</div>"
+    )
+
+
 def render_jwt(jwt_result):
-    """Render JWT security analysis section."""
+    """Render JWT security analysis section (summary cards + findings table)."""
     if not jwt_result or not jwt_result.get("findings"):
         return ""
     sev_badge = {
@@ -513,30 +549,44 @@ def render_jwt(jwt_result):
         if not issues:
             continue
         issue_html = "<br>".join(
-            f'{sev_badge.get(f.get("severity", ""), f.get("severity", ""))} '
-            f'<code>{f.get("issue", "")}</code> {f.get("detail", "")}'
+            f'{sev_badge.get(f.get("severity", ""), _esc(str(f.get("severity", ""))))} '
+            f'<code>{_esc(str(f.get("issue", "")))}</code> {_esc(str(f.get("detail", "")))}'
             for f in issues
         )
-        claims = ", ".join(f"{k}={v}" for k, v in (a.get("payload_summary") or {}).items())
+        claims_raw = ", ".join(
+            f"{k}={v}" for k, v in (a.get("payload_summary") or {}).items()
+        )
+        claims = _esc(claims_raw[:200])
         cracked = (
-            f'<br><span class="badge badge-high">secret: {a.get("cracked_secret", "")}</span>'
+            f'<br><span class="badge badge-high">secret: {_esc(str(a.get("cracked_secret", "")))}</span>'
             if a.get("cracked_secret") else ""
         )
         rows.append(
-            f'<tr><td>{sev_badge.get(a.get("severity", ""), a.get("severity", ""))}</td>'
-            f'<td><code>{a.get("alg") or "?"}</code></td>'
+            f'<tr><td>{sev_badge.get(a.get("severity", ""), _esc(str(a.get("severity", ""))))}</td>'
+            f'<td><code>{_esc(str(a.get("alg") or "?"))}</code></td>'
             f'<td>{issue_html}{cracked}</td>'
-            f'<td class="muted">{claims[:200]}</td>'
-            f'<td class="muted">{a.get("source", "")}</td></tr>'
+            f'<td class="muted">{claims}</td>'
+            f'<td class="muted">{_esc(str(a.get("source", "")))}</td></tr>'
         )
     if not rows:
         return ""
     n = jwt_result.get("tokens_analyzed", len(rows))
-    return (
-        f'<h2>JWT Analysis ({n} token(s))</h2>'
+    schema = jwt_result.get("schema_version", "")
+    summary = render_jwt_summary(jwt_result)
+    meta = (
+        f'<p class="muted" style="font-size:0.8rem;margin-top:0.35rem;">'
+        f'{n} token(s) analyzed'
+        + (f' · JSON schema v{schema}' if schema else "")
+        + "</p>"
+    )
+    table = (
         '<table><thead><tr><th>Severity</th><th>Alg</th><th>Findings</th>'
         '<th>Claims</th><th>Source</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+    return (
+        f'<h2>JWT Analysis ({n} token(s))</h2>'
+        f'{summary}{meta}{table}'
     )
 
 
