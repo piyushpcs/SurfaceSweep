@@ -30,7 +30,7 @@ from modules.pipeline.merge import (
     merge_wayback,
 )
 from modules.recon import detect_waf, get_scan_adjustments
-from modules.reporting import export_burp_csv, export_zap_csv, save_html_report, save_report
+from modules.reporting import build_report_plan, write_reports
 
 
 def stage_waf_detect(ctx: ScanContext) -> None:
@@ -252,27 +252,26 @@ def stage_validate(ctx: ScanContext) -> None:
 
 
 def stage_export(ctx: ScanContext) -> None:
-    """Write Burp/ZAP CSVs (when requested)."""
+    """Write Burp/ZAP CSVs (when requested) via the unified report builder."""
     args = ctx.args
     result = ctx.require_result()
-    if args.burp:
-        base = args.output.replace(".json", "") if args.output.endswith(".json") else args.output
-        export_burp_csv(result, f"{base}_burp.csv")
-    if args.zap:
-        base = args.output.replace(".json", "") if args.output.endswith(".json") else args.output
-        export_zap_csv(result, f"{base}_zap.csv")
+    plan = build_report_plan(args)
+    write_reports(
+        result, args.output,
+        write_json=False, write_html=False,
+        write_burp=plan["write_burp"], write_zap=plan["write_zap"],
+        verbose=ctx.verbose,
+    )
 
 
 def stage_report(ctx: ScanContext) -> None:
-    """Save JSON and/or HTML reports."""
+    """Save JSON and/or HTML reports via the unified report builder."""
     args = ctx.args
     result = ctx.require_result()
-    if not args.html_only:
-        save_report(result, args.output)
-    if args.html or args.html_only:
-        html_path = (
-            args.output.replace(".json", ".html")
-            if args.output.endswith(".json")
-            else args.output + ".html"
-        )
-        save_html_report(result, html_path)
+    plan = build_report_plan(args)
+    write_reports(
+        result, args.output,
+        write_json=plan["write_json"], write_html=plan["write_html"],
+        write_burp=False, write_zap=False,
+        verbose=ctx.verbose,
+    )

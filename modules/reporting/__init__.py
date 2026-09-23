@@ -1,5 +1,8 @@
 """
 Reporting — generate output formats (JSON, HTML, Burp CSV, ZAP CSV).
+
+Unified entry point: write_reports / output_paths / build_report_plan
+(single path computation for all formats — Phase 4 Step 7).
 """
 
 from modules.reporting.html import save_report, save_html_report, build_html
@@ -10,10 +13,17 @@ from modules.reporting.findings import (
     render_findings_feed,
 )
 from modules.reporting.export import export_burp_csv, export_zap_csv
+from modules.reporting.builder import (
+    build_report_plan,
+    ensure_parent_dir,
+    output_paths,
+    write_reports,
+)
 
 __all__ = [
     "save_report", "save_html_report", "build_html",
     "build_executive_summary", "build_findings_feed",
     "render_executive_summary", "render_findings_feed",
     "export_burp_csv", "export_zap_csv",
+    "build_report_plan", "ensure_parent_dir", "output_paths", "write_reports",
 ]

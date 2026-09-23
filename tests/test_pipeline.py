@@ -673,5 +673,92 @@ class TestFindingsFeed(unittest.TestCase):
         self.assertTrue(ctx.result["findings"])
 
 
+class TestReportBuilder(unittest.TestCase):
+    """Unified report builder (Step 7): path derivation + toggles."""
+
+    def test_output_paths_from_json(self):
+        from modules.reporting.builder import output_paths
+        p = output_paths("reports/scan.json")
+        self.assertEqual(p["base"], "reports/scan")
+        self.assertEqual(p["json"], "reports/scan.json")
+        self.assertEqual(p["html"], "reports/scan.html")
+        self.assertEqual(p["burp"], "reports/scan_burp.csv")
+        self.assertEqual(p["zap"], "reports/scan_zap.csv")
+
+    def test_output_paths_from_non_json(self):
+        from modules.reporting.builder import output_paths
+        p = output_paths("reports/out")
+        self.assertEqual(p["json"], "reports/out.json")
+        self.assertEqual(p["html"], "reports/out.html")
+        p2 = output_paths("reports/old.html")
+        self.assertEqual(p2["base"], "reports/old")
+        self.assertEqual(p2["json"], "reports/old.json")
+
+    def test_report_plan_flags(self):
+        from modules.reporting.builder import build_report_plan
+        plan = build_report_plan(_args())
+        self.assertTrue(plan["write_json"])
+        self.assertFalse(plan["write_html"])
+        self.assertFalse(plan["write_burp"])
+
+        plan = build_report_plan(_args(html=True, burp=True, zap=True))
+        self.assertTrue(plan["write_json"])
+        self.assertTrue(plan["write_html"])
+        self.assertTrue(plan["write_burp"])
+        self.assertTrue(plan["write_zap"])
+
+        plan = build_report_plan(_args(html_only=True))
+        self.assertFalse(plan["write_json"])
+        self.assertTrue(plan["write_html"])
+
+    def test_write_reports_creates_files(self):
+        import tempfile
+        import json as _json
+        from pathlib import Path
+        from modules.reporting.builder import write_reports
+
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "nested" / "scan.json")
+            result = {"target": "https://example.com", "internal_paths": ["/a"],
+                      "schema_version": 1, "meta": {}, "findings": []}
+            written = write_reports(
+                result, out,
+                write_json=True, write_html=True, write_burp=True, write_zap=True,
+                verbose=False,
+            )
+            self.assertTrue(Path(written["json"]).is_file())
+            self.assertTrue(Path(written["html"]).is_file())
+            self.assertTrue(Path(written["burp"]).is_file())
+            self.assertTrue(Path(written["zap"]).is_file())
+            with open(written["json"]) as f:
+                data = _json.load(f)
+            self.assertEqual(data["schema_version"], 1)
+
+    def test_write_reports_respects_toggles(self):
+        import tempfile
+        from pathlib import Path
+        from modules.reporting.builder import write_reports
+
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "scan.json")
+            written = write_reports(
+                {"target": "https://x.com"}, out,
+                write_json=True, write_html=False,
+                write_burp=False, write_zap=False,
+                verbose=False,
+            )
+            self.assertIsNotNone(written["json"])
+            self.assertIsNone(written["html"])
+            self.assertIsNone(written["burp"])
+            self.assertIsNone(written["zap"])
+
+    def test_no_inline_path_duplication_in_stages(self):
+        """stage_export / stage_report must not re-derive paths inline."""
+        import inspect
+        from modules.pipeline import stages
+        src = inspect.getsource(stages)
+        self.assertNotIn('args.output.replace(".json"', src)
+
+
 if __name__ == "__main__":
     unittest.main()
