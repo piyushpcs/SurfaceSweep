@@ -64,7 +64,17 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per finding — **preserved across `--validate`/wayback/SPA recalculation** (Step 1)
 - Unit tests: `tests/test_jwt.py` (decode, crack, analysis, Steps 2–6, risk boost, report shape)
 
-### ⏳ Phase 4: Combined pipeline + reporting (planned)
+### ✅ Phase 4: Combined pipeline + reporting (complete — Steps 1–8)
+- **Step 1 — pipeline package:** `main.py` reduced to arg parsing + header assembly; orchestration lives in `modules/pipeline/` (`context` → `stages` → `runner`)
+- **Step 2 — shared merge helpers:** `modules/pipeline/merge.py` — one dialect for wayback/SPA fragment merge, endpoint collection, secret/sink/JWT dedupe
+- **Step 3 — risk integration:** CVE/OSV boost applied inside `calculate_risk_summary` so later recalculations (SPA/validation/wayback) preserve it; weights CRITICAL=25, HIGH=15, MEDIUM=8, LOW=3
+- **Step 4 — result schema:** every JSON report gets `schema_version: 1` + `meta` (tool, finished_at, duration, scan_mode, stages_run, stage_timings, flags)
+- **Step 5 — HTML hardening:** all dynamic values escaped; distinct CRITICAL badge; WAF / Wayback historical JS / intercepted endpoints / scan-mode sections
+- **Step 6 — findings feed:** cross-module `findings` list + `executive_summary` (risk, severity counts, top findings, module coverage) in JSON and HTML
+- **Step 7 — report builder:** `modules/reporting/builder.py` — single path computation for JSON/HTML/Burp/ZAP outputs
+- **Step 8 — integration tests:** offline end-to-end pipeline tests (stage order, schema contract, on-disk reports) in `tests/test_integration.py`
+- Stage order: `waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve → spa → cors → jwt → validate → export → report`
+- Unit + integration suite: **227 tests** (`test_cors`, `test_jwt`, `test_pipeline`, `test_integration`)
 
 ## Setup
 
@@ -198,10 +208,18 @@ SurfaceSweep/
 │   ├── recon/                    # Target reconnaissance
 │   │   ├── __init__.py
 │   │   └── waf.py                # WAF detection
+│   ├── pipeline/                 # Phase 4: ordered scan orchestration
+│   │   ├── __init__.py           # Public API (run_pipeline, merge helpers)
+│   │   ├── context.py            # ScanContext (args, result, stage timings)
+│   │   ├── stages.py             # One function per pipeline stage
+│   │   ├── merge.py              # Shared wayback/SPA/endpoint merge helpers
+│   │   └── runner.py             # Stage order + schema/meta stamping
 │   ├── reporting/                # Output generation
 │   │   ├── __init__.py
 │   │   ├── html.py               # HTML/JSON report generation
-│   │   └── export.py             # Burp/ZAP CSV export
+│   │   ├── export.py             # Burp/ZAP CSV export
+│   │   ├── findings.py           # Cross-module findings feed + exec summary
+│   │   └── builder.py            # Unified report path/output builder
 │   ├── cors/                     # Phase 2: CORS misconfiguration scanner
 │   │   ├── __init__.py           # Public API re-exports
 │   │   ├── origins.py            # Origin build/normalize/compare
@@ -215,10 +233,11 @@ SurfaceSweep/
 │   │   ├── keys.py               # SSRF guard, RSA JWK→PEM, JWKS fetch
 │   │   ├── checks.py             # single-token analysis + severity
 │   │   └── scanner.py            # scan orchestration, summary, risk boost
-├── tests/                        # Unit tests (stdlib unittest)
+├── tests/                        # Unit + integration tests (stdlib unittest)
 │   ├── test_cors.py
 │   ├── test_jwt.py
-│   └── test_pipeline.py
+│   ├── test_pipeline.py
+│   └── test_integration.py       # Offline end-to-end pipeline (Phase 4 Step 8)
 ├── testbed/
 │   └── vuln_api.py               # Test Flask app
 └── reports/                      # Generated reports
@@ -318,7 +337,7 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - ~~SPA route crawling~~ ✅ Done
 - ~~Phase 2: CORS misconfiguration scanner~~ ✅ Done (Steps 1–4)
 - ~~Phase 3: JWT security analyzer~~ ✅ Done (Steps 1–6)
-- Phase 4: Combined pipeline + reporting
+- ~~Phase 4: Combined pipeline + reporting~~ ✅ Done (Steps 1–8)
 - Diff mode to compare two scans of the same target over time
 - Secret-pattern false-positive tuning (Twilio SID / Telegram Bot Token seen on mintlify)
 - PII quick wins
