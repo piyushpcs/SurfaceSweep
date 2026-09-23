@@ -1,6 +1,7 @@
 """Unit tests for Phase 2 CORS Steps 1–4 (origins, classifier, scanner, reporting)."""
 
 import unittest
+from unittest import mock
 
 from modules.cors import (
     aggregate_findings,
@@ -9,15 +10,19 @@ from modules.cors import (
     collect_js_origins,
     endpoint_priority,
     is_api_like_path,
+    is_cross_domain_redirect,
     is_multi_origin_acao,
+    is_reflected_acao,
     normalize_origin,
     origins_equal,
     parse_acao_list,
+    probe_baseline,
+    probe_endpoint,
 )
 from modules.cors.classifier import classify_cors as classify
 from modules.cors.origins import MAX_TEST_ORIGINS, THIRD_PARTY_SUFFIXES
-from modules.cors.probe import build_evidence
-from modules.cors.scanner import cors_risk_boost, resolve_endpoints
+from modules.cors.probe import build_evidence, build_probe_headers, extract_cors_headers
+from modules.cors.scanner import cors_risk_boost, resolve_endpoints, scan_cors
 
 
 TARGET = "https://example.com"
@@ -207,6 +212,207 @@ class TestStep2OriginsAndProbe(unittest.TestCase):
 
     def test_build_evidence_empty(self):
         self.assertEqual(build_evidence({"vary": "", "acam": "", "acah": "", "acma": ""}), "")
+
+    def test_build_evidence_includes_private_network(self):
+        ev = build_evidence({"acpn": "true", "vary": ""})
+        self.assertIn("Allow-Private-Network: true", ev)
+
+    def test_preflight_acrm_matches_request_method(self):
+        headers = build_probe_headers(
+            EVIL, preflight=True, request_method="POST"
+        )
+        self.assertEqual(headers["Access-Control-Request-Method"], "POST")
+        self.assertEqual(headers["Origin"], EVIL)
+
+    def test_extract_pna_allow_header(self):
+        resp = mock.Mock()
+        resp.headers = {
+            "Access-Control-Allow-Origin": EVIL,
+            "Access-Control-Allow-Private-Network": "true",
+        }
+        cors = extract_cors_headers(resp)
+        self.assertEqual(cors["acpn"], "true")
+        self.assertNotIn("acrq", cors)
+
+    def test_is_cross_domain_redirect(self):
+        self.assertTrue(
+            is_cross_domain_redirect("https://a.example/api", "https://evil.com/api")
+        )
+        self.assertFalse(
+            is_cross_domain_redirect("https://a.example/api", "https://a.example/other")
+        )
+        self.assertFalse(is_cross_domain_redirect("https://a.example/api", ""))
+
+    def test_is_reflected_acao(self):
+        self.assertTrue(is_reflected_acao(EVIL, EVIL))
+        self.assertTrue(is_reflected_acao(EVIL, f"{EVIL}, https://other.com"))
+        self.assertFalse(is_reflected_acao(EVIL, "*"))
+        self.assertFalse(is_reflected_acao(EVIL, "https://other.com"))
+        self.assertFalse(is_reflected_acao(EVIL, ""))
+
+    @staticmethod
+    def _mock_resp(headers=None, status=200, url="https://example.com/api"):
+        resp = mock.Mock()
+        resp.headers = headers or {}
+        resp.status_code = status
+        resp.url = url
+        return resp
+
+    @mock.patch("modules.cors.probe.requests.request")
+    def test_probe_endpoint_happy_path(self, request_mock):
+        request_mock.return_value = self._mock_resp({
+            "Access-Control-Allow-Origin": EVIL,
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+        })
+        results = probe_endpoint(
+            "https://example.com/api", [EVIL], target_origin=TARGET
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["severity"], "CRITICAL")
+        self.assertEqual(results[0]["acpn"], "")
+        self.assertNotIn("missing Vary", results[0]["detail"])
+
+    @mock.patch("modules.cors.probe.requests.request")
+    def test_probe_endpoint_missing_vary_note(self, request_mock):
+        request_mock.return_value = self._mock_resp({
+            "Access-Control-Allow-Origin": EVIL,
+            "Access-Control-Allow-Credentials": "true",
+        })
+        results = probe_endpoint(
+            "https://example.com/api", [EVIL], target_origin=TARGET
+        )
+        self.assertIn("missing Vary: Origin", results[0]["detail"])
+
+    @mock.patch("modules.cors.probe.requests.request")
+    def test_probe_endpoint_skips_cross_domain_redirect(self, request_mock):
+        request_mock.return_value = self._mock_resp(
+            headers={"Access-Control-Allow-Origin": EVIL},
+            url="https://other-host.test/api",
+        )
+        results = probe_endpoint(
+            "https://example.com/api", [EVIL], target_origin=TARGET
+        )
+        self.assertEqual(results, [])
+
+    @mock.patch("modules.cors.probe.requests.request")
+    def test_probe_endpoint_error_row(self, request_mock):
+        import requests as requests_lib
+
+        request_mock.side_effect = requests_lib.exceptions.ConnectionError("down")
+        results = probe_endpoint("https://example.com/api", [EVIL])
+        self.assertEqual(results[0]["severity"], "ERROR")
+        self.assertEqual(results[0]["acpn"], "")
+
+    @mock.patch("modules.cors.probe.requests.request")
+    def test_probe_baseline_omits_origin_header(self, request_mock):
+        request_mock.return_value = self._mock_resp({
+            "Access-Control-Allow-Origin": "*",
+        })
+        out = probe_baseline("https://example.com/api")
+        sent = request_mock.call_args.kwargs["headers"]
+        self.assertNotIn("Origin", sent)
+        self.assertTrue(out["static_acao"])
+        self.assertEqual(out["acao"], "*")
+
+    @mock.patch("modules.cors.probe.requests.request")
+    def test_probe_baseline_cross_domain_static_false(self, request_mock):
+        request_mock.return_value = self._mock_resp(
+            headers={"Access-Control-Allow-Origin": "*"},
+            url="https://other-host.test/api",
+        )
+        out = probe_baseline("https://example.com/api")
+        self.assertFalse(out["static_acao"])
+        self.assertEqual(out["acao"], "")
+        self.assertEqual(out["error"], "cross-domain redirect")
+
+
+class TestScannerEscalationAndErrors(unittest.TestCase):
+    """HTTP-layer scan_cors behavior: escalation gate + ERROR counts."""
+
+    @staticmethod
+    def _row(origin, severity, acao, method="OPTIONS"):
+        return {
+            "origin": origin,
+            "method": method,
+            "status": 200,
+            "final_url": "https://example.com/api",
+            "redirected": False,
+            "severity": severity,
+            "detail": "x",
+            "evidence": "",
+            "static_acao": False,
+            "acao": acao,
+            "acac": "true" if severity == "CRITICAL" else "",
+            "vary": "Origin",
+            "acpn": "",
+        }
+
+    def test_get_runs_when_options_only_legit_acao(self):
+        # OPTIONS returns only legitimate target ACAO (INFO) — must still GET
+        opt = [self._row(TARGET, "INFO", TARGET, method="OPTIONS")]
+        get_crit = [self._row(EVIL, "CRITICAL", EVIL, method="GET")]
+
+        with mock.patch("modules.cors.scanner.probe_baseline") as baseline_mock, \
+                mock.patch("modules.cors.scanner.probe_endpoint") as probe_mock:
+            baseline_mock.return_value = {"static_acao": False, "acao": ""}
+            probe_mock.side_effect = [opt, get_crit]
+            out = scan_cors(
+                ["/api/users"], TARGET, verbose=False, threads=1, rate_limit=0
+            )
+
+        self.assertEqual(probe_mock.call_count, 2)
+        self.assertEqual(probe_mock.call_args_list[0].kwargs["method"], "OPTIONS")
+        self.assertEqual(probe_mock.call_args_list[1].kwargs["method"], "GET")
+        self.assertEqual(out["severity_counts"]["CRITICAL"], 1)
+        self.assertEqual(len(out["findings"]), 1)
+
+    def test_no_get_when_options_already_finding(self):
+        opt_crit = [self._row(EVIL, "CRITICAL", EVIL, method="OPTIONS")]
+
+        with mock.patch("modules.cors.scanner.probe_baseline") as baseline_mock, \
+                mock.patch("modules.cors.scanner.probe_endpoint") as probe_mock:
+            baseline_mock.return_value = {"static_acao": False, "acao": ""}
+            probe_mock.return_value = opt_crit
+            out = scan_cors(
+                ["/api/users"], TARGET, verbose=False, threads=1, rate_limit=0
+            )
+
+        self.assertEqual(probe_mock.call_count, 1)
+        self.assertEqual(out["severity_counts"]["CRITICAL"], 1)
+
+    def test_error_probes_counted_in_severity_counts(self):
+        err = [self._row(EVIL, "ERROR", "", method="GET")]
+        err[0]["detail"] = "timeout"
+
+        with mock.patch("modules.cors.scanner.probe_baseline") as baseline_mock, \
+                mock.patch("modules.cors.scanner.probe_endpoint") as probe_mock:
+            baseline_mock.return_value = {"static_acao": False, "acao": ""}
+            probe_mock.return_value = err
+            out = scan_cors(
+                ["/api/users"], TARGET, verbose=False, threads=1, rate_limit=0
+            )
+
+        self.assertEqual(out["severity_counts"].get("ERROR"), 1)
+        self.assertEqual(out["summary"].get("error_probes"), 1)
+        self.assertEqual(out["findings"], [])
+
+    def test_post_escalation_when_get_and_options_empty(self):
+        empty = []
+        post_crit = [self._row(EVIL, "CRITICAL", EVIL, method="POST")]
+
+        with mock.patch("modules.cors.scanner.probe_baseline") as baseline_mock, \
+                mock.patch("modules.cors.scanner.probe_endpoint") as probe_mock:
+            baseline_mock.return_value = {"static_acao": False, "acao": ""}
+            probe_mock.side_effect = [empty, empty, post_crit]
+            out = scan_cors(
+                ["/api/v2/users"], TARGET, verbose=False, threads=1, rate_limit=0
+            )
+
+        self.assertEqual(probe_mock.call_count, 3)
+        methods = [c.kwargs["method"] for c in probe_mock.call_args_list]
+        self.assertEqual(methods, ["OPTIONS", "GET", "POST"])
+        self.assertEqual(out["severity_counts"]["CRITICAL"], 1)
 
 
 class TestClassifyCors(unittest.TestCase):

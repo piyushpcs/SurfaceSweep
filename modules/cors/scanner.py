@@ -7,7 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 from modules.cors.classifier import SEVERITY_ORDER
 from modules.cors.origins import build_test_origins, normalize_origin
-from modules.cors.probe import probe_endpoint
+from modules.cors.probe import probe_baseline, probe_endpoint
 from modules.extraction.http import RateLimiter
 from modules.extraction.scope import get_registrable_domain
 
@@ -251,8 +251,9 @@ def scan_cors(
             print(f"[*] First (highest priority): {top}")
 
     raw_findings = []
+    error_probes = 0
 
-    def _probe(url, method, request_method="GET"):
+    def _probe(url, method, request_method="GET", static_acao=False):
         return probe_endpoint(
             url,
             origins,
@@ -263,32 +264,48 @@ def scan_cors(
             target_origin=target_origin,
             registrable_domain=registrable_domain,
             request_method=request_method,
+            static_acao=static_acao,
+        )
+
+    def _has_finding_acao(results):
+        """True when any row is a real misconfig (not INFO / bare ERROR)."""
+        return any(
+            r.get("acao") and r.get("severity") not in ("INFO", "ERROR")
+            for r in results
         )
 
     def _scan_one(url):
-        opt_results = _probe(url, "OPTIONS")
-        if any(r["acao"] for r in opt_results):
-            return url, opt_results
+        baseline = probe_baseline(url, timeout=timeout, headers=headers, limiter=limiter)
+        static_acao = bool(baseline.get("static_acao"))
 
-        get_results = _probe(url, "GET")
-        if any(r["acao"] for r in get_results):
-            return url, get_results
+        # Escalate only when no *finding-worthy* ACAO on preflight.
+        # A legitimate target-origin ACAO on OPTIONS must not suppress GET.
+        opt_results = _probe(url, "OPTIONS", static_acao=static_acao)
+        if _has_finding_acao(opt_results):
+            return url, opt_results, baseline
+
+        get_results = _probe(url, "GET", static_acao=static_acao)
+        if _has_finding_acao(get_results):
+            return url, get_results, baseline
 
         # API-like paths often only expose CORS on non-simple requests
         if is_api_like_path(url):
-            post_results = _probe(url, "POST", request_method="POST")
-            if any(r["acao"] for r in post_results):
-                return url, post_results
-            return url, get_results
+            post_results = _probe(
+                url, "POST", request_method="POST", static_acao=static_acao
+            )
+            if _has_finding_acao(post_results):
+                return url, post_results, baseline
+            return url, get_results, baseline
 
-        return url, get_results
+        return url, get_results, baseline
 
     with ThreadPoolExecutor(max_workers=max(1, int(threads))) as pool:
         futures = {pool.submit(_scan_one, url): url for url in resolved}
         for future in as_completed(futures):
-            url, results = future.result()
+            url, results, _baseline = future.result()
             for r in results:
-                if r["severity"] in ("INFO", "ERROR") and not r["acao"]:
+                if r["severity"] == "ERROR":
+                    error_probes += 1
                     continue
                 if r["severity"] == "INFO":
                     continue
@@ -320,19 +337,34 @@ def scan_cors(
     severity_counts = {}
     for f in findings:
         severity_counts[f["severity"]] = severity_counts.get(f["severity"], 0) + 1
+    if error_probes:
+        severity_counts["ERROR"] = error_probes
 
     if verbose:
         crit = severity_counts.get("CRITICAL", 0)
         high = severity_counts.get("HIGH", 0)
         med = severity_counts.get("MEDIUM", 0)
+        err = severity_counts.get("ERROR", 0)
         print(
             f"[+] CORS findings: {crit} critical, {high} high, {med} medium "
             f"({len(findings)} URL(s) flagged"
             + (f", {len(raw_findings)} probe hits" if aggregate else "")
+            + (f", {err} probe errors" if err else "")
             + ")"
         )
         if crit:
             print("[!] CRITICAL: reflected origin + credentials — data theft possible")
+
+    summary = {
+        "urls_flagged": len(findings),
+        "endpoints_tested": len(resolved),
+        "origins_probed": len(origins),
+        "probe_hits": len(raw_findings),
+        "severity_counts": dict(severity_counts),
+        "aggregated": bool(aggregate),
+    }
+    if error_probes:
+        summary["error_probes"] = error_probes
 
     return {
         "schema_version": 1,
@@ -342,14 +374,7 @@ def scan_cors(
         "target_origin": target_origin,
         "origins": origins,
         "severity_counts": severity_counts,
-        "summary": {
-            "urls_flagged": len(findings),
-            "endpoints_tested": len(resolved),
-            "origins_probed": len(origins),
-            "probe_hits": len(raw_findings),
-            "severity_counts": dict(severity_counts),
-            "aggregated": bool(aggregate),
-        },
+        "summary": summary,
     }
 
 
