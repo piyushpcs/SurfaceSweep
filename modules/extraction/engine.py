@@ -409,7 +409,7 @@ def merge_results(static_result, browser_result):
             seen_host.add(key)
             merged["internal_hosts_found"].append(h)
 
-    merged["errors"] = list(set(
+    merged["errors"] = sorted(set(
         static_result.get("errors", []) + browser_result.get("errors", [])
     ))
 

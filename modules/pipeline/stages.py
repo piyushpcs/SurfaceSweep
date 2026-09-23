@@ -22,8 +22,13 @@ from modules.extraction import (
     run_extractor,
 )
 from modules.extraction.browser import run_browser_scan
-from modules.jwt import analyze_result_jwts, deduplicate_jwts
+from modules.jwt import analyze_result_jwts
 from modules.pipeline.context import ScanContext
+from modules.pipeline.merge import (
+    collect_endpoints,
+    merge_endpoints,
+    merge_wayback,
+)
 from modules.recon import detect_waf, get_scan_adjustments
 from modules.reporting import export_burp_csv, export_zap_csv, save_html_report, save_report
 
@@ -90,39 +95,17 @@ def stage_scan(ctx: ScanContext) -> None:
 def stage_wayback_merge(ctx: ScanContext) -> None:
     """Merge Wayback historical findings into the live scan result."""
     wb = ctx.wayback_result
-    if not (wb and wb.get("endpoints")):
+    if wb is None:
         return
     result = ctx.require_result()
     ctx.log("\n[*] Merging Wayback results...")
-    before = len(result.get("internal_paths", []))
-    new_paths = [
-        e for e in wb["endpoints"]
-        if e.startswith("/") and e not in result.get("internal_paths", [])
-        and not is_static_asset(e)
-    ]
-    result["internal_paths"] = sorted(set(result.get("internal_paths", []) + new_paths))
-    result["wayback_js_files"] = wb.get("js_files", [])
-    for s in wb.get("secrets", []):
-        result.setdefault("secrets_found", []).append(s)
-
-    from modules.extraction import deduplicate_sinks
-    for s in wb.get("sinks", []):
-        result.setdefault("sinks_found", []).append(s)
-    if result.get("sinks_found"):
-        result["sinks_found"] = deduplicate_sinks(result["sinks_found"])
-    seen_wb_host = {h.get("match") for h in result.get("internal_hosts_found", [])}
-    for h in wb.get("internal_hosts", []):
-        if h.get("match") not in seen_wb_host:
-            seen_wb_host.add(h.get("match"))
-            result.setdefault("internal_hosts_found", []).append(h)
-
-    for j in wb.get("jwts", []):
-        result.setdefault("jwts_found", []).append(j)
-    if result.get("jwts_found"):
-        result["jwts_found"] = deduplicate_jwts(result["jwts_found"])
-
+    before_paths = len(result.get("internal_paths", []))
+    stats = merge_wayback(result, wb, ctx.args.target)
     result["risk_summary"] = calculate_risk_summary(result)
-    ctx.log(f"[+] Added {len(result['internal_paths']) - before} endpoint(s) from Wayback")
+    ctx.log(
+        f"[+] Wayback merge: +{stats['paths']} path(s), +{stats['urls']} URL(s), "
+        f"+{stats['secrets']} secret(s) ({len(result.get('internal_paths', [])) - before_paths} net path(s))"
+    )
 
 
 def stage_waf_inject(ctx: ScanContext) -> None:
@@ -192,25 +175,18 @@ def stage_spa(ctx: ScanContext) -> None:
             if not any(e.get("url") == url for e in result["intercepted_endpoints"]):
                 result["intercepted_endpoints"].append({"url": url, "method": "GET"})
 
+    # Same static-asset filter as wayback merge (parity)
     before = len(result.get("internal_paths", []))
-    new_routes = [
-        r for r in spa_result["routes"]
-        if r not in result.get("internal_paths", [])
-    ]
-    result["internal_paths"] = sorted(set(result.get("internal_paths", []) + new_routes))
+    merge_endpoints(result, spa_result["routes"], args.target)
     result["risk_summary"] = calculate_risk_summary(result)
-    ctx.log(f"[+] Added {len(result['internal_paths']) - before} route(s) from SPA discovery")
+    ctx.log(f"[+] Added {len(result.get('internal_paths', [])) - before} route(s) from SPA discovery")
 
 
 def stage_cors(ctx: ScanContext) -> None:
     """Probe discovered endpoints for CORS misconfigurations."""
     args = ctx.args
     result = ctx.require_result()
-    cors_endpoints = list(set(
-        result.get("internal_paths", []) +
-        result.get("in_scope_urls", []) +
-        [e.get("url") for e in result.get("intercepted_endpoints", []) if e.get("url")]
-    ))
+    cors_endpoints = collect_endpoints(result)
     if not cors_endpoints:
         ctx.log("[*] No endpoints to CORS-test")
         return
@@ -256,11 +232,7 @@ def stage_validate(ctx: ScanContext) -> None:
     args = ctx.args
     result = ctx.require_result()
     ctx.log("\n[*] --- Endpoint Validation ---")
-    all_endpoints = list(set(
-        result.get("internal_paths", []) +
-        result.get("in_scope_urls", []) +
-        [e.get("url") for e in result.get("intercepted_endpoints", []) if e.get("url")]
-    ))
+    all_endpoints = collect_endpoints(result)
     if not all_endpoints:
         ctx.log("[*] No endpoints to validate")
         return
