@@ -489,5 +489,103 @@ class TestSchemaMeta(unittest.TestCase):
         self.assertIsNone(ctx.result)
 
 
+class TestHtmlHardening(unittest.TestCase):
+    """HTML report escaping + missing sections (Step 5)."""
+
+    def test_list_escapes(self):
+        from modules.reporting.html import render_list
+        html = render_list(["<script>alert(1)</script>"])
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;", html)
+
+    def test_secrets_escape(self):
+        from modules.reporting.html import render_secrets
+        html = render_secrets([{
+            "type": "<b>x</b>",
+            "match": "\"><img src=x>",
+            "source": "<i>src</i>",
+        }])
+        self.assertNotIn("<b>x</b>", html)
+        self.assertNotIn("<img src=x>", html)
+        self.assertIn("&lt;b&gt;", html)
+
+    def test_errors_escape(self):
+        from modules.reporting.html import render_errors
+        html = render_errors(["<svg onload=alert(1)>"])
+        self.assertNotIn("<svg", html)
+        self.assertIn("&lt;svg", html)
+
+    def test_build_html_escapes_target(self):
+        from modules.reporting.html import build_html
+        html = build_html({"target": '"><script>alert(1)</script>'})
+        self.assertNotIn("<script>alert(1)</script>", html)
+
+    def test_critical_badge_distinct(self):
+        from modules.reporting.html import render_sinks, CSS
+        self.assertIn("badge-critical", CSS)
+        html = render_sinks([{
+            "sink": "innerHTML", "severity": "CRITICAL",
+            "description": "d", "count": 1, "source": "a",
+        }])
+        self.assertIn("badge-critical", html)
+
+    def test_waf_section_present(self):
+        from modules.reporting.html import build_html
+        html = build_html({
+            "target": "https://example.com",
+            "waf": {
+                "detected": True,
+                "waf_name": "Cloudflare",
+                "confidence": "high",
+                "headers_matched": [{"header": "server", "value": "cloudflare", "waf": "Cloudflare"}],
+                "adjustments": {"recommendation": "slow down"},
+            },
+        })
+        self.assertIn("WAF Detection", html)
+        self.assertIn("Cloudflare", html)
+        self.assertIn("slow down", html)
+
+    def test_wayback_section_present(self):
+        from modules.reporting.html import build_html
+        html = build_html({
+            "target": "https://example.com",
+            "wayback_js_files": ["https://example.com/old.js"],
+        })
+        self.assertIn("Wayback Machine Historical JS", html)
+        self.assertIn("old.js", html)
+
+    def test_intercepted_section_present(self):
+        from modules.reporting.html import build_html
+        html = build_html({
+            "target": "https://example.com",
+            "intercepted_endpoints": [{"url": "https://example.com/api", "method": "POST"}],
+        })
+        self.assertIn("Intercepted API Endpoints", html)
+        self.assertIn("POST", html)
+
+    def test_scan_mode_in_header(self):
+        from modules.reporting.html import build_html
+        html = build_html({"target": "https://example.com", "scan_mode": "full"})
+        self.assertIn("Mode: full", html)
+
+    def test_cors_table_escapes(self):
+        from modules.reporting.html import render_cors
+        html = render_cors({
+            "findings": [{
+                "severity": "HIGH",
+                "url": "https://example.com/<script>",
+                "origin": "https://evil.com",
+                "acao": "*",
+                "acac": "true",
+                "method": "GET",
+                "detail": "<svg/onload=1>",
+                "evidence": "<b>e</b>",
+            }],
+        })
+        self.assertNotIn("<script>", html)
+        self.assertNotIn("<svg/onload=1>", html)
+        self.assertIn("&lt;script&gt;", html)
+
+
 if __name__ == "__main__":
     unittest.main()

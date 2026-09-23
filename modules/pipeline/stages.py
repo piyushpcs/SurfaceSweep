@@ -109,9 +109,11 @@ def stage_wayback_merge(ctx: ScanContext) -> None:
 
 
 def stage_waf_inject(ctx: ScanContext) -> None:
-    """Attach stashed WAF detection result to the scan result."""
+    """Attach stashed WAF detection result (and adjustments) to the scan result."""
     result = ctx.require_result()
-    result["waf"] = (ctx.waf_info or {})
+    result["waf"] = dict(ctx.waf_info or {})
+    if ctx.waf_adjustments:
+        result["waf"]["adjustments"] = ctx.waf_adjustments
 
 
 def stage_cve(ctx: ScanContext) -> None:

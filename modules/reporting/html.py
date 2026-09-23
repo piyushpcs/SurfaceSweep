@@ -2,6 +2,7 @@
 HTML report generation for SurfaceSweep.
 
 Keeps HTML/CSS templates separate from extraction logic.
+All dynamic values are escaped via html.escape before interpolation.
 """
 
 import json
@@ -31,6 +32,7 @@ table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
 th { text-align: left; padding: 0.5rem; border-bottom: 2px solid #21262d; color: #8b949e; font-size: 0.8rem; text-transform: uppercase; }
 td { padding: 0.5rem; border-bottom: 1px solid #21262d; font-size: 0.85rem; }
 .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 3px; font-size: 0.75rem; font-weight: 600; }
+.badge-critical { background: #ff004022; color: #ff4d6d; border: 1px solid #ff004055; }
 .badge-high { background: #e74c3c22; color: #e74c3c; border: 1px solid #e74c3c44; }
 .badge-live { background: #27ae6022; color: #27ae60; border: 1px solid #27ae6044; }
 .badge-restricted { background: #f39c1222; color: #f39c12; border: 1px solid #f39c1244; }
@@ -42,24 +44,42 @@ td { padding: 0.5rem; border-bottom: 1px solid #21262d; font-size: 0.85rem; }
 """
 
 
+def _sev_badge(sev):
+    """Severity badge with distinct CRITICAL styling."""
+    sev = (sev or "").upper()
+    css = {
+        "CRITICAL": "badge-critical",
+        "HIGH": "badge-high",
+        "MEDIUM": "badge-restricted",
+        "LOW": "badge-live",
+        "INFO": "badge-error",
+    }.get(sev, "badge-error")
+    label = _esc(sev) if sev else "—"
+    return f'<span class="badge {css}">{label}</span>'
+
+
 def render_list(items, empty_msg="None found"):
-    """Render a list of items as HTML."""
+    """Render a list of items as HTML (escaped)."""
     if not items:
-        return f'<p class="muted">{empty_msg}</p>'
-    return "<ul>" + "".join(f"<li><code>{item}</code></li>" for item in items) + "</ul>"
+        return f'<p class="muted">{_esc(empty_msg)}</p>'
+    return (
+        "<ul>"
+        + "".join(f"<li><code>{_esc(str(item))}</code></li>" for item in items)
+        + "</ul>"
+    )
 
 
 def render_secrets(secrets):
-    """Render secrets table."""
+    """Render secrets table (escaped)."""
     if not secrets:
         return '<p class="muted">No secrets detected</p>'
     rows = []
     for s in secrets:
-        sources = ", ".join(s.get("sources", [s.get("source", "unknown")]))
+        sources = ", ".join(str(x) for x in s.get("sources", [s.get("source", "unknown")]))
         rows.append(
-            f'<tr><td><span class="badge badge-high">{s["type"]}</span></td>'
-            f'<td><code>{s["match"]}</code></td>'
-            f'<td class="muted">{sources}</td></tr>'
+            f'<tr><td><span class="badge badge-high">{_esc(str(s.get("type", "")))}</span></td>'
+            f'<td><code>{_esc(str(s.get("match", "")))}</code></td>'
+            f'<td class="muted">{_esc(sources)}</td></tr>'
         )
     return (
         '<table><thead><tr><th>Type</th><th>Match</th><th>Sources</th></tr></thead>'
@@ -68,7 +88,7 @@ def render_secrets(secrets):
 
 
 def render_validation(validation):
-    """Render validation results section."""
+    """Render validation results section (escaped)."""
     if not validation:
         return ""
 
@@ -94,8 +114,8 @@ def render_validation(validation):
             code = item.get("status_code", "ERR")
             rows.append(
                 f'<tr><td>{status_badges.get(status, status)}</td>'
-                f'<td>{code}</td>'
-                f'<td><code>{item.get("url", "")}</code></td></tr>'
+                f'<td>{_esc(str(code))}</td>'
+                f'<td><code>{_esc(str(item.get("url", "")))}</code></td></tr>'
             )
 
     table = (
@@ -117,14 +137,14 @@ def render_validation(validation):
 
 
 def render_deobf(findings):
-    """Render deobfuscation findings section."""
+    """Render deobfuscation findings section (escaped)."""
     if not findings:
         return ""
     rows = []
     for f in findings:
         rows.append(
-            f'<tr><td><span class="badge badge-live">{f.get("type", "")}</span></td>'
-            f'<td><code>{f.get("decoded", "")[:120]}</code></td></tr>'
+            f'<tr><td><span class="badge badge-live">{_esc(str(f.get("type", "")))}</span></td>'
+            f'<td><code>{_esc(str(f.get("decoded", ""))[:120])}</code></td></tr>'
         )
     return (
         '<h2>Deobfuscation Findings</h2>'
@@ -134,18 +154,18 @@ def render_deobf(findings):
 
 
 def render_errors(errors):
-    """Render errors section."""
+    """Render errors section (escaped)."""
     if not errors:
         return ""
     return (
         '<h2>Errors</h2><div class="errors">' +
-        "".join(f"<p>{e}</p>" for e in errors) +
+        "".join(f"<p>{_esc(str(e))}</p>" for e in errors) +
         "</div>"
     )
 
 
 def render_libraries(libraries, vulnerabilities, osv_results=None):
-    """Render detected libraries and their vulnerabilities."""
+    """Render detected libraries and their vulnerabilities (escaped)."""
     if not libraries and not vulnerabilities:
         return ""
 
@@ -156,10 +176,10 @@ def render_libraries(libraries, vulnerabilities, osv_results=None):
         rows = []
         for lib in libraries:
             rows.append(
-                f'<tr><td><code>{lib["library"]}</code></td>'
-                f'<td><code>{lib["version"]}</code></td>'
-                f'<td class="muted">{lib["source"]}</td>'
-                f'<td class="muted">{lib.get("file", "")[:60]}</td></tr>'
+                f'<tr><td><code>{_esc(str(lib.get("library", "")))}</code></td>'
+                f'<td><code>{_esc(str(lib.get("version", "")))}</code></td>'
+                f'<td class="muted">{_esc(str(lib.get("source", "")))}</td>'
+                f'<td class="muted">{_esc(str(lib.get("file", ""))[:60])}</td></tr>'
             )
         parts.append(
             '<h2>Detected JavaScript Libraries</h2>'
@@ -169,22 +189,21 @@ def render_libraries(libraries, vulnerabilities, osv_results=None):
 
     # Vulnerabilities table
     if vulnerabilities:
-        sev_badge = {
-            "CRITICAL": '<span class="badge badge-high">CRITICAL</span>',
-            "HIGH": '<span class="badge badge-high">HIGH</span>',
-            "MEDIUM": '<span class="badge badge-restricted">MEDIUM</span>',
-            "LOW": '<span class="badge badge-live">LOW</span>',
-        }
         rows = []
         for v in vulnerabilities:
-            cve_str = ", ".join(f'<a href="https://nvd.nist.gov/vuln/detail/{cve}" style="color:#58a6ff">{cve}</a>' for cve in v["cves"])
-            cvss = f' ({v["cvss"]})' if v.get("cvss") else ""
+            sev = _sev_badge(v.get("severity", ""))
+            cves = v.get("cves") or []
+            cve_str = ", ".join(
+                f'<a href="https://nvd.nist.gov/vuln/detail/{_esc(str(cve))}" style="color:#58a6ff">{_esc(str(cve))}</a>'
+                for cve in cves
+            )
+            cvss = f' ({_esc(str(v["cvss"]))})' if v.get("cvss") else ""
             rows.append(
-                f'<tr><td>{sev_badge.get(v["severity"], v["severity"])}</td>'
-                f'<td><code>{v["library"]} {v["version"]}</code></td>'
+                f'<tr><td>{sev}</td>'
+                f'<td><code>{_esc(str(v.get("library", "")))} {_esc(str(v.get("version", "")))}</code></td>'
                 f'<td>{cve_str}{cvss}</td>'
-                f'<td>{v["description"]}</td>'
-                f'<td><code>{v["fixed_in"]}</code></td></tr>'
+                f'<td>{_esc(str(v.get("description", "")))}</td>'
+                f'<td><code>{_esc(str(v.get("fixed_in", "unknown")))}</code></td></tr>'
             )
         parts.append(
             '<h2>Library Vulnerabilities (CVE)</h2>'
@@ -196,13 +215,14 @@ def render_libraries(libraries, vulnerabilities, osv_results=None):
     if osv_results:
         rows = []
         for lib_name, data in osv_results.items():
+            version = data.get("version", "")
             for vuln in data.get("vulns", []):
-                vid = vuln.get("id", "")
-                vid_link = f'<a href="https://osv.dev/vulnerability/{vid}" style="color:#58a6ff">{vid}</a>'
+                vid = str(vuln.get("id", ""))
+                vid_link = f'<a href="https://osv.dev/vulnerability/{_esc(vid)}" style="color:#58a6ff">{_esc(vid)}</a>'
                 rows.append(
-                    f'<tr><td><code>{lib_name} {data["version"]}</code></td>'
+                    f'<tr><td><code>{_esc(str(lib_name))} {_esc(str(version))}</code></td>'
                     f'<td>{vid_link}</td>'
-                    f'<td>{vuln.get("summary", "")[:150]}</td></tr>'
+                    f'<td>{_esc(str(vuln.get("summary", ""))[:150])}</td></tr>'
                 )
         if rows:
             parts.append(
@@ -215,7 +235,7 @@ def render_libraries(libraries, vulnerabilities, osv_results=None):
 
 
 def render_spa_routes(routes, routes_from=None):
-    """Render SPA routes section."""
+    """Render SPA routes section (escaped)."""
     if not routes:
         return ""
     source_labels = {
@@ -231,9 +251,9 @@ def render_spa_routes(routes, routes_from=None):
     rows = []
     for route in routes:
         src = (routes_from or {}).get(route, "")
-        badge = source_labels.get(src, f'<span class="muted">{src}</span>')
+        badge = source_labels.get(src, f'<span class="muted">{_esc(str(src))}</span>')
         rows.append(
-            f'<tr><td><code>{route}</code></td><td>{badge}</td></tr>'
+            f'<tr><td><code>{_esc(str(route))}</code></td><td>{badge}</td></tr>'
         )
     return (
         f'<h2>SPA Routes Discovered ({len(routes)})</h2>'
@@ -243,23 +263,18 @@ def render_spa_routes(routes, routes_from=None):
 
 
 def render_sinks(sinks):
-    """Render dangerous sink findings section."""
+    """Render dangerous sink findings section (escaped)."""
     if not sinks:
         return ""
-    sev_badge = {
-        "HIGH": '<span class="badge badge-high">HIGH</span>',
-        "MEDIUM": '<span class="badge badge-restricted">MEDIUM</span>',
-        "LOW": '<span class="badge badge-live">LOW</span>',
-    }
     rows = []
     for s in sinks:
-        sources = ", ".join(s.get("sources", [s.get("source", "unknown")]))
+        sources = ", ".join(str(x) for x in s.get("sources", [s.get("source", "unknown")]))
         rows.append(
-            f'<tr><td>{sev_badge.get(s.get("severity", ""), s.get("severity", ""))}</td>'
-            f'<td><code>{s.get("sink", "")}</code></td>'
-            f'<td>{s.get("description", "")}</td>'
+            f'<tr><td>{_sev_badge(s.get("severity", ""))}</td>'
+            f'<td><code>{_esc(str(s.get("sink", "")))}</code></td>'
+            f'<td>{_esc(str(s.get("description", "")))}</td>'
             f'<td>{s.get("count", 1)}</td>'
-            f'<td class="muted">{sources}</td></tr>'
+            f'<td class="muted">{_esc(sources)}</td></tr>'
         )
     return (
         f'<h2>Dangerous Sinks ({len(sinks)})</h2>'
@@ -269,7 +284,7 @@ def render_sinks(sinks):
 
 
 def render_internal_hosts(hosts):
-    """Render internal/private host findings section."""
+    """Render internal/private host findings section (escaped)."""
     if not hosts:
         return ""
     kind_badge = {
@@ -280,10 +295,12 @@ def render_internal_hosts(hosts):
     }
     rows = []
     for h in hosts:
+        kind = str(h.get("kind", ""))
+        badge = kind_badge.get(kind, f'<span class="muted">{_esc(kind)}</span>')
         rows.append(
-            f'<tr><td>{kind_badge.get(h.get("kind", ""), h.get("kind", ""))}</td>'
-            f'<td><code>{h.get("match", "")}</code></td>'
-            f'<td class="muted">{h.get("source", "unknown")}</td></tr>'
+            f'<tr><td>{badge}</td>'
+            f'<td><code>{_esc(str(h.get("match", "")))}</code></td>'
+            f'<td class="muted">{_esc(str(h.get("source", "unknown")))}</td></tr>'
         )
     return (
         f'<h2>Internal / Private Hosts ({len(hosts)})</h2>'
@@ -292,25 +309,92 @@ def render_internal_hosts(hosts):
     )
 
 
+def render_waf(waf):
+    """Render WAF detection section (Step 5)."""
+    if not waf:
+        return ""
+    detected = waf.get("detected", False)
+    name = waf.get("waf_name") or "None detected"
+    confidence = waf.get("confidence", "")
+    adjustments = waf.get("adjustments") or {}
+    recommendation = adjustments.get("recommendation", "")
+    matched = waf.get("headers_matched") or []
+    error = waf.get("error")
+
+    badge = (
+        '<span class="badge badge-high">DETECTED</span>'
+        if detected else
+        '<span class="badge badge-live">Not detected</span>'
+    )
+    parts = [f"<h2>WAF Detection</h2><p>{badge} <code>{_esc(str(name))}</code>"]
+    if confidence:
+        parts.append(f' <span class="muted">(confidence: {_esc(str(confidence))})</span>')
+    parts.append("</p>")
+    if recommendation:
+        parts.append(
+            f'<p class="muted">Scan adjustment: {_esc(str(recommendation))}</p>'
+        )
+    if error:
+        parts.append(f'<p class="muted">Detection error: {_esc(str(error))}</p>')
+    if matched:
+        rows = "".join(
+            f'<tr><td><code>{_esc(str(m.get("header", "")))}</code></td>'
+            f'<td><code>{_esc(str(m.get("value", "")))}</code></td>'
+            f'<td class="muted">{_esc(str(m.get("waf", "")))}</td></tr>'
+            for m in matched
+        )
+        parts.append(
+            '<table><thead><tr><th>Header</th><th>Value</th><th>Matched</th></tr></thead>'
+            f'<tbody>{rows}</tbody></table>'
+        )
+    return "".join(parts)
+
+
+def render_wayback(wayback_js_files):
+    """Render Wayback Machine historical JS list (Step 5)."""
+    if not wayback_js_files:
+        return ""
+    return (
+        "<h2>Wayback Machine Historical JS</h2>"
+        + render_list(wayback_js_files, "No historical JS files")
+    )
+
+
+def render_intercepted(endpoints):
+    """Render browser-intercepted API endpoints (Step 5)."""
+    if not endpoints:
+        return ""
+    rows = []
+    for ep in endpoints:
+        method = str(ep.get("method", "GET"))
+        url = str(ep.get("url", ""))
+        rows.append(
+            f'<tr><td><code>{_esc(method)}</code></td><td><code>{_esc(url)}</code></td></tr>'
+        )
+    if not rows:
+        return ""
+    return (
+        f"<h2>Intercepted API Endpoints ({len(rows)})</h2>"
+        '<table><thead><tr><th>Method</th><th>URL</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
 def _cors_sev_badge(sev):
-    return {
-        "CRITICAL": '<span class="badge badge-high">CRIT</span>',
-        "HIGH": '<span class="badge badge-high">HIGH</span>',
-        "MEDIUM": '<span class="badge badge-restricted">MED</span>',
-        "LOW": '<span class="badge badge-live">LOW</span>',
-        "INFO": '<span class="badge badge-error">INFO</span>',
-    }.get(sev, f'<span class="muted">{sev}</span>')
+    return _sev_badge(sev) if sev else '<span class="muted">—</span>'
 
 
 def _cors_short_label(url, target_origin=""):
     """Short column label for matrix (path if same host as target)."""
     if target_origin and url.startswith(target_origin):
         path = url[len(target_origin):] or "/"
-        return path if len(path) <= 24 else path[:21] + "…"
+        path = path if len(path) <= 24 else path[:21] + "…"
+        return _esc(path)
     # fallback: last two path segments
     parts = url.rstrip("/").split("/")
     tail = "/".join(parts[-2:]) if len(parts) >= 2 else url
-    return tail if len(tail) <= 24 else "…" + tail[-23:]
+    tail = tail if len(tail) <= 24 else "…" + tail[-23:]
+    return _esc(tail)
 
 
 def render_cors_matrix(cors):
@@ -377,7 +461,7 @@ def render_cors_matrix(cors):
             sev = cell.get((o, u))
             tds.append(f"<td>{_cors_sev_badge(sev)}</td>" if sev else '<td class="muted">·</td>')
         rows_html.append(
-            f"<tr><td><code>{o}</code></td>{''.join(tds)}</tr>"
+            f"<tr><td><code>{_esc(str(o))}</code></td>{''.join(tds)}</tr>"
         )
 
     return (
@@ -428,55 +512,48 @@ def render_cors(cors):
     if not cors or not cors.get("findings"):
         return ""
 
-    sev_badge = {
-        "CRITICAL": '<span class="badge badge-high">CRITICAL</span>',
-        "HIGH": '<span class="badge badge-high">HIGH</span>',
-        "MEDIUM": '<span class="badge badge-restricted">MEDIUM</span>',
-        "LOW": '<span class="badge badge-live">LOW</span>',
-        "INFO": '<span class="badge badge-error">INFO</span>',
-    }
     rows = []
     for f in cors.get("findings", []):
         if f.get("severity") in ("INFO", "ERROR") and not f.get("acao"):
             continue
         if f.get("severity") == "INFO":
             continue
-        evidence = f.get("evidence") or ""
+        evidence = str(f.get("evidence") or "")
         flagged = f.get("origins_flagged") or ([f.get("origin", "")] if f.get("origin") else [])
-        origin_cell = ", ".join(o for o in flagged if o) or "—"
+        origin_cell = ", ".join(str(o) for o in flagged if o) or "—"
         methods = f.get("methods") or ([f.get("method", "")] if f.get("method") else [])
-        method_cell = ", ".join(m for m in methods if m) or "—"
+        method_cell = ", ".join(str(m) for m in methods if m) or "—"
         hits = f.get("probe_hits") or 1
-        final_url = f.get("final_url") or ""
+        final_url = str(f.get("final_url") or "")
         final_cell = (
-            f'<br><span class="muted" style="font-size:0.75rem;">→ {final_url}</span>'
+            f'<br><span class="muted" style="font-size:0.75rem;">→ {_esc(final_url)}</span>'
             if final_url and f.get("redirected")
             else ""
         )
         rows.append(
-            f'<tr><td>{sev_badge.get(f.get("severity", ""), f.get("severity", ""))}</td>'
-            f'<td><code>{f.get("url", "")}</code>{final_cell}</td>'
-            f'<td><code>{origin_cell}</code></td>'
-            f'<td><code>{f.get("acao", "")}</code></td>'
-            f'<td>{f.get("acac", "") or "—"}</td>'
-            f'<td>{method_cell}</td>'
+            f'<tr><td>{_sev_badge(f.get("severity", ""))}</td>'
+            f'<td><code>{_esc(str(f.get("url", "")))}</code>{final_cell}</td>'
+            f'<td><code>{_esc(origin_cell)}</code></td>'
+            f'<td><code>{_esc(str(f.get("acao", "")))}</code></td>'
+            f'<td>{_esc(str(f.get("acac") or "—"))}</td>'
+            f'<td>{_esc(method_cell)}</td>'
             f'<td>{hits}</td>'
-            f'<td class="muted">{f.get("detail", "")}</td>'
-            f'<td class="muted">{evidence or "—"}</td></tr>'
+            f'<td class="muted">{_esc(str(f.get("detail", "")))}</td>'
+            f'<td class="muted">{_esc(evidence) if evidence else "—"}</td></tr>'
         )
     if not rows:
         return ""
 
     tested = cors.get("endpoints_tested", 0)
     probe_hits = cors.get("probe_hits", len(cors.get("findings") or []))
-    target_origin = cors.get("target_origin") or ""
+    target_origin = str(cors.get("target_origin") or "")
     schema = cors.get("schema_version", "")
 
     matrix = render_cors_matrix(cors)
     summary = render_cors_summary(cors)
     meta = (
         f'<p class="muted" style="font-size:0.8rem;margin-top:0.35rem;">'
-        f'Target origin: <code>{target_origin}</code> · '
+        f'Target origin: <code>{_esc(target_origin)}</code> · '
         f'{len(rows)} URL(s) / {tested} tested'
         + (f' · {probe_hits} probe hits' if probe_hits != len(rows) else "")
         + (f' · JSON schema v{schema}' if schema else "")
@@ -536,20 +613,13 @@ def render_jwt(jwt_result):
     """Render JWT security analysis section (summary cards + findings table)."""
     if not jwt_result or not jwt_result.get("findings"):
         return ""
-    sev_badge = {
-        "CRITICAL": '<span class="badge badge-high">CRITICAL</span>',
-        "HIGH": '<span class="badge badge-high">HIGH</span>',
-        "MEDIUM": '<span class="badge badge-restricted">MEDIUM</span>',
-        "LOW": '<span class="badge badge-live">LOW</span>',
-        "INFO": '<span class="badge badge-error">INFO</span>',
-    }
     rows = []
     for a in jwt_result.get("findings", []):
         issues = a.get("findings", [])
         if not issues:
             continue
         issue_html = "<br>".join(
-            f'{sev_badge.get(f.get("severity", ""), _esc(str(f.get("severity", ""))))} '
+            f'{_sev_badge(f.get("severity", ""))} '
             f'<code>{_esc(str(f.get("issue", "")))}</code> {_esc(str(f.get("detail", "")))}'
             for f in issues
         )
@@ -558,11 +628,11 @@ def render_jwt(jwt_result):
         )
         claims = _esc(claims_raw[:200])
         cracked = (
-            f'<br><span class="badge badge-high">secret: {_esc(str(a.get("cracked_secret", "")))}</span>'
+            f'<br><span class="badge badge-critical">secret: {_esc(str(a.get("cracked_secret", "")))}</span>'
             if a.get("cracked_secret") else ""
         )
         rows.append(
-            f'<tr><td>{sev_badge.get(a.get("severity", ""), _esc(str(a.get("severity", ""))))}</td>'
+            f'<tr><td>{_sev_badge(a.get("severity", ""))}</td>'
             f'<td><code>{_esc(str(a.get("alg") or "?"))}</code></td>'
             f'<td>{issue_html}{cracked}</td>'
             f'<td class="muted">{claims}</td>'
@@ -593,14 +663,19 @@ def render_jwt(jwt_result):
 def build_html(result):
     """Build the full HTML report from scan results."""
     risk = result.get("risk_summary", {})
+    risk_level = str(risk.get("level", "") or "")
     risk_color = {
         "HIGH": "#e74c3c",
         "MEDIUM": "#f39c12",
         "LOW": "#27ae60",
         "INFO": "#3498db"
-    }.get(risk.get("level", ""), "#999")
+    }.get(risk_level, "#999")
 
-    target = result.get("target", "unknown")
+    target = _esc(str(result.get("target", "unknown")))
+    scan_mode = _esc(str(result.get("scan_mode", result.get("meta", {}).get("scan_mode", "static"))))
+    scan_depth = result.get("scan_depth", 0)
+    risk_level_esc = _esc(risk_level) if risk_level else "N/A"
+    risk_score = risk.get("score", 0)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -614,7 +689,7 @@ def build_html(result):
 </head>
 <body>
 <h1>SurfaceSweep — Attack Surface Report</h1>
-<p class="target">Target: {result.get('target', 'N/A')} | Scan depth: {result.get('scan_depth', 0)} | Risk: <span class="risk">{risk.get('level', 'N/A')}</span> (score: {risk.get('score', 0)})</p>
+<p class="target">Target: {target} | Mode: {scan_mode} | Scan depth: {scan_depth} | Risk: <span class="risk">{risk_level_esc}</span> (score: {risk_score})</p>
 
 <div class="stats">
   <div class="stat"><div class="num">{len(result.get('js_files_scanned', []))}</div><div class="label">JS Files Scanned</div></div>
@@ -630,6 +705,8 @@ def build_html(result):
   <div class="stat"><div class="num">{(result.get('jwt') or {}).get('tokens_analyzed', 0)}</div><div class="label">JWTs Analyzed</div></div>
 </div>
 
+{render_waf(result.get('waf') or {})}
+
 <h2>Internal Paths</h2>
 {render_list(result.get('internal_paths', []), 'No internal paths discovered')}
 
@@ -638,6 +715,10 @@ def build_html(result):
 
 <h2>Out-of-Scope URLs (informational)</h2>
 {render_list(result.get('out_of_scope_urls', []), 'None')}
+
+{render_wayback(result.get('wayback_js_files') or [])}
+
+{render_intercepted(result.get('intercepted_endpoints') or [])}
 
 <h2>Secrets / Leaked Keys</h2>
 {render_secrets(result.get('secrets_found', []))}
