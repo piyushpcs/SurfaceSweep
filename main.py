@@ -9,8 +9,8 @@ from modules.analysis import validate_endpoints, get_live_endpoints, scan_for_li
 from modules.reporting import export_burp_csv, export_zap_csv
 from modules.discovery import get_wayback_endpoints, crawl_spa_routes
 from modules.recon import detect_waf, get_scan_adjustments
-from modules.cors import scan_cors, cors_risk_boost, collect_js_origins
-from modules.jwt_analyzer import analyze_result_jwts, jwt_risk_boost
+from modules.cors import scan_cors, collect_js_origins
+from modules.jwt_analyzer import analyze_result_jwts
 
 
 def main():
@@ -239,7 +239,7 @@ def main():
             js_origins = collect_js_origins(result, args.target)
             if verbose and js_origins:
                 print(f"[*] CORS extra origins from scan: {', '.join(js_origins)}")
-            cors_result = scan_cors(
+            result["cors"] = scan_cors(
                 cors_endpoints,
                 args.target,
                 custom_origin=args.cors_origin,
@@ -251,38 +251,24 @@ def main():
                 rate_limit=args.cors_rps,
                 extra_origins=js_origins,
             )
-            result["cors"] = cors_result
-            boost = cors_risk_boost(cors_result)
-            if boost:
-                result["risk_summary"]["score"] += boost
-                score = result["risk_summary"]["score"]
-                if score >= 30:
-                    result["risk_summary"]["level"] = "HIGH"
-                elif score >= 10:
-                    result["risk_summary"]["level"] = "MEDIUM"
-                elif score > 0:
-                    result["risk_summary"]["level"] = "LOW"
-                if verbose:
-                    print(f"[+] Risk boosted by {boost} points from CORS findings")
+            result["risk_summary"] = calculate_risk_summary(result)
+            if verbose and result["risk_summary"]["score"]:
+                print(
+                    f"[+] Risk: {result['risk_summary']['level']} "
+                    f"(score: {result['risk_summary']['score']}) including CORS boost"
+                )
         elif verbose:
             print("[*] No endpoints to CORS-test")
 
     # JWT security analysis
     if args.jwt:
-        jwt_result = analyze_result_jwts(result, verbose=verbose)
-        result["jwt"] = jwt_result
-        boost = jwt_risk_boost(jwt_result)
-        if boost:
-            result["risk_summary"]["score"] += boost
-            score = result["risk_summary"]["score"]
-            if score >= 30:
-                result["risk_summary"]["level"] = "HIGH"
-            elif score >= 10:
-                result["risk_summary"]["level"] = "MEDIUM"
-            elif score > 0:
-                result["risk_summary"]["level"] = "LOW"
-            if verbose:
-                print(f"[+] Risk boosted by {boost} points from JWT findings")
+        result["jwt"] = analyze_result_jwts(result, verbose=verbose)
+        result["risk_summary"] = calculate_risk_summary(result)
+        if verbose:
+            print(
+                f"[+] Risk: {result['risk_summary']['level']} "
+                f"(score: {result['risk_summary']['score']}) including JWT boost"
+            )
 
     # Validation
     if args.validate:
@@ -315,6 +301,7 @@ def main():
             ))
 
             # Recalculate risk after validation filtering
+            # (calculate_risk_summary re-applies CORS/JWT boosts)
             result["risk_summary"] = calculate_risk_summary(result)
 
             if verbose:

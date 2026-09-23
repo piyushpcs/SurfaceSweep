@@ -420,9 +420,15 @@ def analyze_result_jwts(result, verbose=True):
 
     # Also re-extract from deobfuscation outputs and raw path strings if present
     # (full tokens often truncated in secrets.match — jwts_found preferred)
-    if not tokens and verbose:
-        print("[*] No complete JWTs found in scan results")
-        return {"tokens_analyzed": 0, "findings": [], "severity_counts": {}}
+    if not tokens:
+        if verbose:
+            print("[*] No complete JWTs found in scan results")
+        return {
+            "tokens_analyzed": 0,
+            "findings": [],
+            "severity_counts": {},
+            "candidate_secrets_tried": len(candidates),
+        }
 
     analyses = []
     for item in tokens:
