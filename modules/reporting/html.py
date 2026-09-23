@@ -287,7 +287,7 @@ def render_internal_hosts(hosts):
 
 
 def render_cors(cors):
-    """Render CORS misconfiguration findings section."""
+    """Render CORS misconfiguration findings section (one row per URL)."""
     if not cors or not cors.get("findings"):
         return ""
     sev_badge = {
@@ -302,23 +302,31 @@ def render_cors(cors):
         if f.get("severity") in ("INFO", "ERROR") and not f.get("acao"):
             continue
         evidence = f.get("evidence") or ""
+        flagged = f.get("origins_flagged") or ([f.get("origin", "")] if f.get("origin") else [])
+        origin_cell = ", ".join(o for o in flagged if o) or "—"
+        methods = f.get("methods") or ([f.get("method", "")] if f.get("method") else [])
+        method_cell = ", ".join(m for m in methods if m) or "—"
+        hits = f.get("probe_hits") or 1
         rows.append(
             f'<tr><td>{sev_badge.get(f.get("severity", ""), f.get("severity", ""))}</td>'
             f'<td><code>{f.get("url", "")}</code></td>'
-            f'<td><code>{f.get("origin", "")}</code></td>'
+            f'<td><code>{origin_cell}</code></td>'
             f'<td><code>{f.get("acao", "")}</code></td>'
             f'<td>{f.get("acac", "") or "—"}</td>'
-            f'<td>{f.get("method", "") or "—"}</td>'
+            f'<td>{method_cell}</td>'
+            f'<td>{hits}</td>'
             f'<td class="muted">{f.get("detail", "")}</td>'
             f'<td class="muted">{evidence or "—"}</td></tr>'
         )
     if not rows:
         return ""
     tested = cors.get("endpoints_tested", 0)
+    probe_hits = cors.get("probe_hits", len(cors.get("findings") or []))
     return (
-        f'<h2>CORS Misconfigurations ({len(rows)} findings / {tested} tested)</h2>'
-        '<table><thead><tr><th>Severity</th><th>URL</th><th>Origin</th>'
-        '<th>ACAO</th><th>ACAC</th><th>Method</th><th>Detail</th>'
+        f'<h2>CORS Misconfigurations ({len(rows)} URL(s) / {tested} tested'
+        f'{f", {probe_hits} probe hits" if probe_hits != len(rows) else ""})</h2>'
+        '<table><thead><tr><th>Severity</th><th>URL</th><th>Origins flagged</th>'
+        '<th>ACAO</th><th>ACAC</th><th>Methods</th><th>Hits</th><th>Detail</th>'
         '<th>Evidence</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table>'
     )

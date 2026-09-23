@@ -1,5 +1,5 @@
 """
-CORS scan orchestration: endpoint resolution, concurrency, risk boost.
+CORS scan orchestration: endpoint prioritization, aggregation, concurrency.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,6 +23,23 @@ API_PATH_HINTS = (
     "/auth/", "/oauth/", "/webhook", "/rpc/", "/json/", "/post-only",
 )
 
+# Higher score = probe first when max_endpoints truncates the list
+PRIORITY_HINTS = (
+    ("/api/", 100),
+    ("/auth", 90),
+    ("/oauth", 90),
+    ("/login", 85),
+    ("/session", 85),
+    ("/admin", 85),
+    ("/graphql", 85),
+    ("/webhook", 80),
+    ("/rpc/", 80),
+    ("/v1/", 75),
+    ("/v2/", 75),
+    ("/v3/", 75),
+    ("/rest/", 75),
+)
+
 
 def is_api_like_path(url):
     """True when the path looks like an API endpoint (POST fallback candidate)."""
@@ -30,8 +47,35 @@ def is_api_like_path(url):
     return any(hint in path for hint in API_PATH_HINTS)
 
 
+def endpoint_priority(url, base_url=None):
+    """
+    Sort key score for CORS probing (higher = more interesting).
+    API/auth paths rank above static/marketing pages.
+    """
+    path = urlparse(url).path.lower() if "://" in url else url.lower()
+    score = 0
+    for hint, weight in PRIORITY_HINTS:
+        if hint in path:
+            score = max(score, weight)
+    if is_api_like_path(url):
+        score = max(score, 70)
+    # Same-host absolute URLs beat cross-host noise when tied
+    if base_url and url.startswith("http"):
+        base_host = (urlparse(base_url).hostname or "").lower()
+        url_host = (urlparse(url).hostname or "").lower()
+        if base_host and url_host == base_host:
+            score += 5
+    # Fewer path segments → broader surface, slight preference
+    segments = [s for s in path.split("/") if s]
+    score += max(0, 10 - len(segments))
+    return score
+
+
 def resolve_endpoints(endpoints, base_url, max_endpoints=50):
-    """Resolve paths/URLs to absolute URLs, drop static assets, cap count."""
+    """
+    Resolve paths/URLs to absolute URLs, drop static assets,
+    prioritize API-like endpoints, then cap at max_endpoints.
+    """
     resolved = []
     seen = set()
     for ep in endpoints:
@@ -50,7 +94,104 @@ def resolve_endpoints(endpoints, base_url, max_endpoints=50):
         if url not in seen:
             seen.add(url)
             resolved.append(url)
+
+    resolved.sort(key=lambda u: (-endpoint_priority(u, base_url), u))
     return resolved[:max_endpoints]
+
+
+def collect_js_origins(result, base_url, limit=8):
+    """
+    Origins the target's own JS/scan already references (API hosts, CDNs).
+    Added to the probe matrix so overly-broad allowlists of first-party
+    or partner origins are tested alongside attacker origins.
+    """
+    target_n = normalize_origin(base_url)
+    target_host = (urlparse(target_n).hostname or "").lower()
+    candidates = []
+
+    buckets = [
+        result.get("in_scope_urls") or [],
+        result.get("out_of_scope_urls") or [],
+        [e.get("url") for e in (result.get("intercepted_endpoints") or []) if e.get("url")],
+        result.get("js_files_scanned") or [],
+    ]
+    for bucket in buckets:
+        for raw in bucket:
+            if not raw or not isinstance(raw, str) or not raw.startswith("http"):
+                continue
+            parsed = urlparse(raw)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname:
+                continue
+            host = parsed.hostname.lower()
+            if host == target_host:
+                continue
+            origin = f"{parsed.scheme}://{host}"
+            if parsed.port and parsed.port not in (80, 443):
+                origin = f"{origin}:{parsed.port}"
+            if origin != target_n:
+                candidates.append(origin)
+
+    seen = set()
+    ordered = []
+    for o in candidates:
+        if o not in seen:
+            seen.add(o)
+            ordered.append(o)
+    return ordered[:limit]
+
+
+def aggregate_findings(raw_findings):
+    """
+    Collapse probe rows to one finding per URL (worst severity wins).
+
+    Keeps representative fields from the worst-severity probe and records
+    every origin that triggered at least one flag on that URL.
+    """
+    by_url = {}
+    for f in raw_findings:
+        url = f.get("url") or ""
+        sev = f.get("severity") or "INFO"
+        if sev == "INFO" and not f.get("acao"):
+            continue
+        if sev == "INFO":
+            continue
+        current = by_url.get(url)
+        if current is None:
+            item = dict(f)
+            item["origins_flagged"] = [f.get("origin", "")]
+            item["methods"] = [f.get("method", "")]
+            item["probe_hits"] = 1
+            by_url[url] = item
+            continue
+        current["probe_hits"] = current.get("probe_hits", 1) + 1
+        origin = f.get("origin", "")
+        if origin and origin not in current["origins_flagged"]:
+            current["origins_flagged"].append(origin)
+        method = f.get("method", "")
+        if method and method not in current["methods"]:
+            current["methods"].append(method)
+        # Worst severity wins (SEVERITY_ORDER: lower = worse)
+        if SEVERITY_ORDER.get(sev, 9) < SEVERITY_ORDER.get(current["severity"], 9):
+            keep_origins = current["origins_flagged"]
+            keep_methods = current["methods"]
+            keep_hits = current["probe_hits"]
+            current.clear()
+            current.update(f)
+            current["origins_flagged"] = keep_origins
+            current["methods"] = keep_methods
+            current["probe_hits"] = keep_hits
+        elif sev == current["severity"]:
+            # Same severity: prefer the most specific detail/acao sample
+            if not current.get("acao") and f.get("acao"):
+                for key in ("acao", "acac", "detail", "evidence", "method", "origin"):
+                    if f.get(key):
+                        current[key] = f[key]
+
+    aggregated = list(by_url.values())
+    aggregated.sort(
+        key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f.get("url") or "")
+    )
+    return aggregated
 
 
 def scan_cors(
@@ -63,6 +204,8 @@ def scan_cors(
     verbose=True,
     headers=None,
     rate_limit=5,
+    extra_origins=None,
+    aggregate=True,
 ):
     """
     Scan discovered endpoints for CORS misconfigurations.
@@ -70,18 +213,24 @@ def scan_cors(
     Args:
         endpoints: list of paths or absolute URLs to test
         base_url: base URL for resolving relative paths (also = legitimate origin)
-        custom_origin: optional extra Origin to test
-        max_endpoints: cap on number of endpoints probed
+        custom_origin: optional extra Origin to test first
+        max_endpoints: cap after API-first prioritization
         threads: concurrent probe threads
-        timeout: per-request timeout
+        timeout: per-request timeout seconds
         verbose: print progress
         headers: extra request headers (cookies etc.)
         rate_limit: max requests/sec across probes (0 disables)
+        extra_origins: additional Origins (e.g. hosts seen in scanned JS)
+        aggregate: collapse findings to one row per URL (worst severity)
 
     Returns dict with findings, endpoints_tested, origins, severity_counts.
     """
     resolved = resolve_endpoints(endpoints, base_url, max_endpoints)
     origins = build_test_origins(base_url, custom_origin)
+    if extra_origins:
+        for o in extra_origins:
+            if o and o not in origins and o != normalize_origin(base_url):
+                origins.append(o)
     target_origin = normalize_origin(base_url)
 
     registrable_domain = None
@@ -97,8 +246,11 @@ def scan_cors(
         print(f"[*] Testing {len(resolved)} endpoint(s) with {len(origins)} origin(s)")
         print(f"[*] Target origin: {target_origin}")
         print(f"[*] Origins: {', '.join(origins)}")
+        if resolved:
+            top = resolved[0]
+            print(f"[*] First (highest priority): {top}")
 
-    findings = []
+    raw_findings = []
 
     def _probe(url, method, request_method="GET"):
         return probe_endpoint(
@@ -127,12 +279,11 @@ def scan_cors(
             post_results = _probe(url, "POST", request_method="POST")
             if any(r["acao"] for r in post_results):
                 return url, post_results
-            # Merge POST errors into GET noise only if GET had nothing
             return url, get_results
 
         return url, get_results
 
-    with ThreadPoolExecutor(max_workers=threads) as pool:
+    with ThreadPoolExecutor(max_workers=max(1, int(threads))) as pool:
         futures = {pool.submit(_scan_one, url): url for url in resolved}
         for future in as_completed(futures):
             url, results = future.result()
@@ -140,17 +291,31 @@ def scan_cors(
                 if r["severity"] in ("INFO", "ERROR") and not r["acao"]:
                     continue
                 if r["severity"] == "INFO":
-                    continue  # expected / not-allowed — not a finding
+                    continue
                 finding = dict(r)
                 finding["url"] = url
-                findings.append(finding)
-                if verbose:
-                    print(
-                        f"    [!] {r['severity']:8s} {url[:70]} "
-                        f"origin={r['origin']} ACAO={r['acao']}"
-                    )
+                raw_findings.append(finding)
 
-    findings.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f["url"]))
+    if aggregate:
+        findings = aggregate_findings(raw_findings)
+        if verbose:
+            for f in findings:
+                origins_list = ", ".join(f.get("origins_flagged") or [f.get("origin", "")])
+                print(
+                    f"    [!] {f['severity']:8s} {f['url'][:70]} "
+                    f"origins={origins_list[:80]} ACAO={f.get('acao', '')}"
+                )
+    else:
+        findings = sorted(
+            raw_findings,
+            key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9), f.get("url") or ""),
+        )
+        if verbose:
+            for f in findings:
+                print(
+                    f"    [!] {f['severity']:8s} {f['url'][:70]} "
+                    f"origin={f.get('origin', '')} ACAO={f.get('acao', '')}"
+                )
 
     severity_counts = {}
     for f in findings:
@@ -162,13 +327,16 @@ def scan_cors(
         med = severity_counts.get("MEDIUM", 0)
         print(
             f"[+] CORS findings: {crit} critical, {high} high, {med} medium "
-            f"({len(findings)} total flagged)"
+            f"({len(findings)} URL(s) flagged"
+            + (f", {len(raw_findings)} probe hits" if aggregate else "")
+            + ")"
         )
         if crit:
             print("[!] CRITICAL: reflected origin + credentials — data theft possible")
 
     return {
         "findings": findings,
+        "probe_hits": len(raw_findings),
         "endpoints_tested": len(resolved),
         "target_origin": target_origin,
         "origins": origins,

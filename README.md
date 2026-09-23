@@ -42,8 +42,12 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - Legitimate target origin reflection reported as INFO (not a finding)
 - Rate-limited probes (`--cors-rps`, default 5/sec)
 - Follows redirects and reads ACAO on the final response (apex → www etc.)
-- Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per finding
-- HTML report: severity, method, detail, evidence columns
+- API-first endpoint prioritization when `--cors-max` truncates the list
+- Extra probe origins from hosts seen in scanned JS (`collect_js_origins`)
+- Findings aggregated **one row per URL** (worst severity; all flagged origins listed)
+- CLI: `--cors-threads` (default 6), `--cors-timeout` (default 5s)
+- Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per flagged URL
+- HTML report: severity, origins flagged, methods, hits, detail, evidence
 
 ### ✅ Phase 3: JWT Security Analyzer (complete)
 - Extracts compact JWTs (`header.payload.sig`) from JS/HTML scan results
@@ -114,6 +118,8 @@ python main.py https://target.com -f --validate --burp --zap --waf --html
 | `--cors-origin` | Custom Origin header to test (default: built-in test set) |
 | `--cors-max` | Max endpoints to CORS-test (default: 50) |
 | `--cors-rps` | CORS probe rate limit req/s (default: 5, 0=unlimited) |
+| `--cors-threads` | CORS probe threads (default: 6) |
+| `--cors-timeout` | CORS per-request timeout seconds (default: 5) |
 | `--jwt` | Analyze JWTs found in scanned content (alg/none, weak HMAC, exp, claims) |
 | `-q, --quiet` | Suppress progress output |
 
@@ -189,8 +195,8 @@ SurfaceSweep/
 │   │   ├── __init__.py           # Public API re-exports
 │   │   ├── origins.py            # Origin build/normalize/compare
 │   │   ├── classifier.py         # Severity classification
-│   │   ├── probe.py              # Preflight + GET probing
-│   │   └── scanner.py            # Orchestration, rate limit, risk boost
+│   │   ├── probe.py              # Preflight + GET/POST probing
+│   │   └── scanner.py            # Prioritize, aggregate, rate limit, risk boost
 │   └── jwt_analyzer.py           # Phase 3: JWT security analyzer
 ├── tests/                        # Unit tests (stdlib unittest)
 │   └── test_cors.py
@@ -243,6 +249,23 @@ Target: `https://mintlify.com` (apex 307-redirects to `https://www.mintlify.com`
 | Reportable? | **No** — wildcard without credentials on public pages; not a vuln |
 
 Redirect handling fix verified on this target: probes without following redirects saw only `307` + empty ACAO (false negative).
+
+### CORS Step 3 (biharbhawan.gov.in)
+Target: `https://biharbhawan.gov.in/`
+
+| Check | Result |
+|-------|--------|
+| Scan mode | Static `-d 0`, 53 JS files, API-first prioritization |
+| Endpoints tested | 1 (only `/translate_a/l` extracted as internal path) |
+| Origin matrix | 22 origins (built-in + JS-seen: `192.168.100.230`, `ceobihar`, doc hosts) |
+| Findings | **0** — no `Access-Control-Allow-Origin` on probed paths |
+| Manual spot-check | `/`, `/login`, `/admin`, auth JS paths, GET+OPTIONS — ACAO empty |
+| Risk boost | 0 (no CORS findings) |
+| Reportable? | **No CORS issue** — site does not emit ACAO headers |
+
+Manual confirmation: `GET /` with `Origin: https://evil.com` → HTTP 200, ACAO/ACAC absent (not a redirect false negative).
+
+Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst severity per URL).
 
 ### Local testbed (Flask :5555)
 - CRITICAL: arbitrary origin reflected + credentials, `null` + credentials

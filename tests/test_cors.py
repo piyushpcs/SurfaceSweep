@@ -3,8 +3,11 @@
 import unittest
 
 from modules.cors import (
+    aggregate_findings,
     build_test_origins,
     classify_cors,
+    collect_js_origins,
+    endpoint_priority,
     is_api_like_path,
     is_multi_origin_acao,
     normalize_origin,
@@ -245,6 +248,89 @@ class TestScannerHelpers(unittest.TestCase):
             urls,
             ["https://example.com/api/users", "https://x.test/api"],
         )
+
+    def test_api_paths_prioritized(self):
+        urls = resolve_endpoints(
+            ["/about", "/pricing", "/api/v2/users", "/login", "/blog/post"],
+            "https://example.com",
+            max_endpoints=2,
+        )
+        self.assertEqual(len(urls), 2)
+        # /api/v2/users and /login should outrank marketing pages
+        joined = " ".join(urls)
+        self.assertIn("/api/v2/users", joined)
+        self.assertIn("/login", joined)
+
+    def test_endpoint_priority_api_gt_about(self):
+        base = "https://example.com"
+        self.assertGreater(
+            endpoint_priority("https://example.com/api/users", base),
+            endpoint_priority("https://example.com/about", base),
+        )
+
+    def test_collect_js_origins_skips_target_host(self):
+        result = {
+            "in_scope_urls": [
+                "https://api.partner.example/v1",
+                "https://example.com/static/x.js",
+            ],
+            "out_of_scope_urls": ["https://cdn.other.com/app.js"],
+            "intercepted_endpoints": [{"url": "https://graphql.partner.example/"}],
+            "js_files_scanned": ["https://example.com/_next/chunk.js"],
+        }
+        origins = collect_js_origins(result, "https://example.com")
+        self.assertIn("https://api.partner.example", origins)
+        self.assertIn("https://cdn.other.com", origins)
+        self.assertIn("https://graphql.partner.example", origins)
+        self.assertNotIn("https://example.com", origins)
+
+    def test_collect_js_origins_limit(self):
+        result = {
+            "in_scope_urls": [f"https://h{i}.example.com/x" for i in range(20)],
+        }
+        origins = collect_js_origins(result, "https://example.com", limit=5)
+        self.assertEqual(len(origins), 5)
+
+    def test_aggregate_worst_severity_per_url(self):
+        url = "https://example.com/api"
+        raw = [
+            {"url": url, "severity": "MEDIUM", "origin": "https://evil.com",
+             "acao": "*", "method": "OPTIONS", "detail": "wildcard", "acac": ""},
+            {"url": url, "severity": "CRITICAL", "origin": "https://attacker.example",
+             "acao": "https://attacker.example", "method": "GET",
+             "detail": "reflected+creds", "acac": "true"},
+            {"url": url, "severity": "HIGH", "origin": "https://evil.com/path",
+             "acao": "https://evil.com/path", "method": "GET",
+             "detail": "reflected", "acac": ""},
+        ]
+        agg = aggregate_findings(raw)
+        self.assertEqual(len(agg), 1)
+        self.assertEqual(agg[0]["severity"], "CRITICAL")
+        self.assertEqual(agg[0]["probe_hits"], 3)
+        self.assertEqual(
+            set(agg[0]["origins_flagged"]),
+            {"https://evil.com", "https://attacker.example", "https://evil.com/path"},
+        )
+        self.assertEqual(agg[0]["acao"], "https://attacker.example")
+
+    def test_aggregate_multiple_urls_sorted_by_severity(self):
+        raw = [
+            {"url": "https://example.com/a", "severity": "MEDIUM",
+             "origin": "https://evil.com", "acao": "*", "method": "OPTIONS"},
+            {"url": "https://example.com/b", "severity": "CRITICAL",
+             "origin": "https://evil.com", "acao": "https://evil.com",
+             "method": "GET", "acac": "true"},
+        ]
+        agg = aggregate_findings(raw)
+        self.assertEqual([f["url"] for f in agg],
+                         ["https://example.com/b", "https://example.com/a"])
+
+    def test_aggregate_skips_info(self):
+        raw = [
+            {"url": "https://example.com/x", "severity": "INFO",
+             "origin": "https://evil.com", "acao": "", "method": "OPTIONS"},
+        ]
+        self.assertEqual(aggregate_findings(raw), [])
 
     def test_risk_boost_weights(self):
         boost = cors_risk_boost(

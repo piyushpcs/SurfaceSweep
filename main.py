@@ -9,7 +9,7 @@ from modules.analysis import validate_endpoints, get_live_endpoints, scan_for_li
 from modules.reporting import export_burp_csv, export_zap_csv
 from modules.discovery import get_wayback_endpoints, crawl_spa_routes
 from modules.recon import detect_waf, get_scan_adjustments
-from modules.cors import scan_cors, cors_risk_boost
+from modules.cors import scan_cors, cors_risk_boost, collect_js_origins
 from modules.jwt_analyzer import analyze_result_jwts, jwt_risk_boost
 
 
@@ -45,6 +45,8 @@ def main():
     parser.add_argument("--cors-origin", default=None, help="Custom Origin header to test (default: built-in test set)")
     parser.add_argument("--cors-max", type=int, default=50, help="Max endpoints to CORS-test (default: 50)")
     parser.add_argument("--cors-rps", type=float, default=5.0, help="CORS probe rate limit, requests/sec (default: 5, 0=unlimited)")
+    parser.add_argument("--cors-threads", type=int, default=6, help="CORS probe threads (default: 6)")
+    parser.add_argument("--cors-timeout", type=float, default=5.0, help="CORS per-request timeout seconds (default: 5)")
     parser.add_argument("--jwt", action="store_true", help="Analyze JWTs found in scanned content (alg/none, weak HMAC, exp, claims)")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
     args = parser.parse_args()
@@ -234,14 +236,20 @@ def main():
             [e.get("url") for e in result.get("intercepted_endpoints", []) if e.get("url")]
         ))
         if cors_endpoints:
+            js_origins = collect_js_origins(result, args.target)
+            if verbose and js_origins:
+                print(f"[*] CORS extra origins from scan: {', '.join(js_origins)}")
             cors_result = scan_cors(
                 cors_endpoints,
                 args.target,
                 custom_origin=args.cors_origin,
                 max_endpoints=args.cors_max,
+                threads=args.cors_threads,
+                timeout=args.cors_timeout,
                 verbose=verbose,
                 headers=custom_headers if custom_headers else None,
                 rate_limit=args.cors_rps,
+                extra_origins=js_origins,
             )
             result["cors"] = cors_result
             boost = cors_risk_boost(cors_result)
