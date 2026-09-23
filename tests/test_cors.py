@@ -1,4 +1,4 @@
-"""Unit tests for Phase 2 CORS Steps 1–4 (origins, classifier, scanner, reporting)."""
+"""Unit tests for Phase 2 CORS + Phase 2.1 hardening (origins, probe, scanner, reporting)."""
 
 import unittest
 from unittest import mock

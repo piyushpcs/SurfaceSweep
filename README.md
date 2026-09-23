@@ -50,6 +50,14 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **HTML report (Step 4):** severity/coverage stat cards, **Origin × URL matrix**, findings table (origins flagged, methods, hits, redirect final URL, evidence), JSON `schema_version`
 - **JSON shape:** `schema_version: 1`, top-level `findings` / `probe_hits` / `endpoints_tested` / `origins` / `severity_counts` / `summary`
 
+### ✅ Phase 2.1: CORS hardening (complete — Steps 1–5)
+- **Step 1 — origin matrix:** tldextract registrable domains (correct for `co.uk` etc.), special-char/no-dot attackers (`evil_com`, `evilcom`), local-origin probes (`localhost`, `127.0.0.1`), alternate loopback forms (`127.1`, `0.0.0.0`, `[::1]`, decimal IP), third-party free-host suffixes (github.io, netlify.app, …), matrix capped at **25** origins
+- **Step 2 — probe correctness:** response header `Access-Control-Allow-Private-Network` (was reading the request-side name); OPTIONS→GET escalates only when no *finding-worthy* ACAO (legit target ACAO no longer suppresses GET); no-Origin **baseline probe** (`static_acao`); cross-domain redirect **FP filter** (CORScanner-style); missing `Vary: Origin` noted on reflected dynamic ACAO; `severity_counts["ERROR"]` + `summary.error_probes`
+- **Step 3 — severity notes + WAF pacing:** exploitation caveats on null/wildcard findings; `stage_cors` applies WAF `delay_multiplier` / `max_threads` / UA
+- **Step 4 — perf:** shared `requests.Session` per scan (pooling, closed in `finally`); `RateLimiter` reserves the slot under lock and **sleeps outside** (threads not serialized during sleep)
+- **Step 5 — tests + docs:** HTTP-layer `probe_endpoint`/`probe_baseline` coverage, escalation/error/session unit tests, WAF pacing tests, this README section
+- Reference techniques: PortSwigger CORS labs, Nuclei `cors-misconfig`, CORScanner origin matrix/redirect filter, Fetch spec `Vary: Origin`
+
 ### ✅ Phase 3: JWT Security Analyzer (complete — Steps 1–6)
 - Extracts compact JWTs (`header.payload.sig`) from JS/HTML scan results
 - **Step 3 pipeline wiring:** `extract_from_text` returns JWTs; `jwts_found` populated in static/browser/wayback/full scans and merged/deduped across modes
@@ -74,7 +82,7 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **Step 7 — report builder:** `modules/reporting/builder.py` — single path computation for JSON/HTML/Burp/ZAP outputs
 - **Step 8 — integration tests:** offline end-to-end pipeline tests (stage order, schema contract, on-disk reports) in `tests/test_integration.py`
 - Stage order: `waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve → spa → cors → jwt → validate → export → report`
-- Unit + integration suite: **227 tests** (`test_cors`, `test_jwt`, `test_pipeline`, `test_integration`)
+- Unit + integration suite: **259 tests** (`test_cors`, `test_jwt`, `test_pipeline`, `test_integration`)
 
 ## Setup
 
@@ -222,10 +230,10 @@ SurfaceSweep/
 │   │   └── builder.py            # Unified report path/output builder
 │   ├── cors/                     # Phase 2: CORS misconfiguration scanner
 │   │   ├── __init__.py           # Public API re-exports
-│   │   ├── origins.py            # Origin build/normalize/compare
-│   │   ├── classifier.py         # Severity classification
-│   │   ├── probe.py              # Preflight + GET/POST probing
-│   │   └── scanner.py            # Prioritize, aggregate, rate limit, risk boost
+│   │   ├── origins.py            # Origin build/normalize/compare (Phase 2.1 matrix)
+│   │   ├── classifier.py         # Severity classification + exploitation notes
+│   │   ├── probe.py              # Preflight + GET/POST, baseline, redirect FP filter
+│   │   └── scanner.py            # Prioritize, aggregate, rate limit, risk boost, Session
 │   ├── jwt/                      # Phase 3: JWT security analyzer
 │   │   ├── __init__.py           # Public API re-exports
 │   │   ├── decode.py             # base64url, extract, dedupe, decode
@@ -324,6 +332,10 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - **Protocol-relative URL leak** — `//` URLs no longer leak into internal_paths
 - **CORS redirect false negatives** — probes follow redirects; ACAO read from final response
 - **`--validate`/wayback/SPA wiping CORS+JWT risk boosts** — `calculate_risk_summary` now re-applies analysis boosts on every recalculation (Phase 3 Step 1)
+- **CORS PNA header name** — read response `Access-Control-Allow-Private-Network` (Phase 2.1 Step 2)
+- **CORS OPTIONS-only escalation FN** — GET still runs when preflight only returns legitimate target ACAO (Phase 2.1 Step 2)
+- **CORS registrable-domain FP** — naive last-two-labels → tldextract via `get_registrable_domain` (Phase 2.1 Step 1)
+- **RateLimiter lock-while-sleep** — sleep outside the lock so probe threads are not serialized (Phase 2.1 Step 4)
 
 ## Roadmap
 - ~~Headless browser mode (Playwright)~~ ✅ Done
@@ -336,6 +348,7 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - ~~Library version + CVE detection~~ ✅ Done
 - ~~SPA route crawling~~ ✅ Done
 - ~~Phase 2: CORS misconfiguration scanner~~ ✅ Done (Steps 1–4)
+- ~~Phase 2.1: CORS hardening~~ ✅ Done (Steps 1–5)
 - ~~Phase 3: JWT security analyzer~~ ✅ Done (Steps 1–6)
 - ~~Phase 4: Combined pipeline + reporting~~ ✅ Done (Steps 1–8)
 - Diff mode to compare two scans of the same target over time
