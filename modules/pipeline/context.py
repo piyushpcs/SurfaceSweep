@@ -2,12 +2,13 @@
 Scan context shared across pipeline stages.
 
 Holds CLI args, verbosity, auth headers, and the mutable result dict
-that each stage enriches.
+that each stage enriches. Also tracks stage timing for the result meta block.
 """
 
 from __future__ import annotations
 
 from argparse import Namespace
+from time import monotonic
 from typing import Any, Optional
 
 
@@ -15,7 +16,8 @@ class ScanContext:
     """Mutable state passed through every pipeline stage."""
 
     __slots__ = ("args", "verbose", "headers", "result", "wayback_result",
-                 "waf_info", "waf_adjustments", "stages_run")
+                 "waf_info", "waf_adjustments", "stages_run", "_t0",
+                 "stage_timings")
 
     def __init__(self, args: Namespace, verbose: bool = True,
                  headers: Optional[dict] = None):
@@ -27,6 +29,8 @@ class ScanContext:
         self.waf_info: Optional[dict] = None
         self.waf_adjustments: Optional[dict] = None
         self.stages_run: list[str] = []
+        self.stage_timings: dict[str, float] = {}
+        self._t0 = monotonic()
 
     def log(self, msg: str) -> None:
         if self.verbose:
@@ -36,3 +40,7 @@ class ScanContext:
         if self.result is None:
             raise RuntimeError("pipeline: result not initialized (scan stage must run first)")
         return self.result
+
+    def elapsed(self) -> float:
+        """Total seconds since the context was created."""
+        return monotonic() - self._t0

@@ -3,6 +3,8 @@
 import unittest
 from argparse import Namespace
 
+from datetime import datetime, timezone
+
 from modules.extraction.risk import calculate_risk_summary
 from modules.pipeline import (
     ScanContext,
@@ -20,6 +22,7 @@ from modules.pipeline import (
     merge_wayback,
     stage_names,
 )
+from modules.pipeline.runner import _stamp_meta
 
 
 def _args(**overrides):
@@ -425,6 +428,65 @@ class TestCveBoost(unittest.TestCase):
     def test_no_vulns_zero_boost(self):
         r = _result(internal_paths=["/a"])
         self.assertEqual(calculate_risk_summary(r)["score"], 1)
+
+
+class TestSchemaMeta(unittest.TestCase):
+    """Result schema contract (Step 4): schema_version + meta block."""
+
+    def _stamp(self, **arg_overrides):
+        args = _args(**arg_overrides)
+        ctx = ScanContext(args, verbose=False)
+        ctx.stages_run = ["scan", "report"]
+        ctx.stage_timings = {"scan": 0.1, "report": 0.0}
+        ctx.result = {"target": args.target, "internal_paths": ["/a"]}
+        _stamp_meta(ctx, datetime.now(timezone.utc))
+        return ctx.result
+
+    def test_schema_version_is_1(self):
+        r = self._stamp()
+        self.assertEqual(r["schema_version"], 1)
+
+    def test_meta_required_keys(self):
+        r = self._stamp()
+        meta = r["meta"]
+        for key in (
+            "tool", "finished_at", "duration_seconds", "scan_mode",
+            "stages_run", "stage_timings", "flags",
+        ):
+            self.assertIn(key, meta)
+        self.assertEqual(meta["tool"], "SurfaceSweep")
+        self.assertEqual(meta["scan_mode"], "static")
+        self.assertEqual(meta["stages_run"], ["scan", "report"])
+        self.assertEqual(meta["stage_timings"], {"scan": 0.1, "report": 0.0})
+        self.assertIsInstance(meta["duration_seconds"], float)
+        self.assertTrue(meta["finished_at"].endswith("+00:00") or "T" in meta["finished_at"])
+
+    def test_meta_flags_sorted_enabled_only(self):
+        r = self._stamp(cors=True, jwt=True, waf=False, wayback=True)
+        flags = r["meta"]["flags"]
+        self.assertEqual(flags, sorted(flags))
+        self.assertIn("cors", flags)
+        self.assertIn("jwt", flags)
+        self.assertIn("wayback", flags)
+        self.assertNotIn("waf", flags)
+
+    def test_scan_mode_respected(self):
+        r = self._stamp(full=True)
+        self.assertEqual(r["meta"]["scan_mode"], "full")
+        r = self._stamp(browser=True)
+        self.assertEqual(r["meta"]["scan_mode"], "browser")
+
+    def test_result_scan_mode_wins(self):
+        """result["scan_mode"] set by stage_scan overrides flag-derived mode."""
+        ctx = ScanContext(_args(), verbose=False)
+        ctx.result = {"scan_mode": "full", "target": "x"}
+        _stamp_meta(ctx, datetime.now(timezone.utc))
+        self.assertEqual(ctx.result["meta"]["scan_mode"], "full")
+
+    def test_stamp_without_result_is_noop(self):
+        ctx = ScanContext(_args(), verbose=False)
+        _stamp_meta(ctx, datetime.now(timezone.utc))  # must not raise
+        self.assertIsNone(ctx.result)
 
 
 if __name__ == "__main__":
