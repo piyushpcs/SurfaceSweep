@@ -5,7 +5,22 @@ CORS origin construction, normalization, and comparison.
 import ipaddress
 from urllib.parse import urlparse
 
+from modules.extraction.scope import get_registrable_domain
+
 DEFAULT_PORTS = {"http": 80, "https": 443}
+
+# Probe-cost budget: origins × endpoints × methods stays manageable.
+MAX_TEST_ORIGINS = 25
+
+# Third-party free-host suffixes (CORScanner-style) probed last before the cap.
+THIRD_PARTY_SUFFIXES = (
+    "github.io",
+    "gitlab.io",
+    "netlify.app",
+    "vercel.app",
+    "pages.dev",
+    "web.app",
+)
 
 
 def normalize_origin(origin):
@@ -40,8 +55,11 @@ def normalize_origin(origin):
         return value.rstrip("/") if "://" in value else value
 
     netloc = host
+    if ":" in host and not host.startswith("["):
+        # urlparse.hostname strips IPv6 brackets — restore for netloc
+        netloc = f"[{host}]"
     if port and port != DEFAULT_PORTS.get(scheme):
-        netloc = f"{host}:{port}"
+        netloc = f"{netloc}:{port}"
 
     return f"{scheme}://{netloc}"
 
@@ -112,19 +130,44 @@ def _dedupe(origins):
     return ordered
 
 
+def _format_origin_host(host):
+    """Bracket IPv6 literals so Origin URLs stay parseable (http://[::1])."""
+    if host and ":" in host and not host.startswith("["):
+        return f"[{host}]"
+    return host
+
+
+def _registrable_domain(host, scheme="https"):
+    """
+    Registrable domain via tldextract (correct for co.uk etc.).
+    Empty for IP literals and localhost; last-label fallback on failure.
+    """
+    if not host or is_ip_host(host) or host == "localhost":
+        return ""
+    try:
+        return get_registrable_domain(f"{scheme}://{host}")
+    except Exception:
+        parts = host.split(".")
+        return ".".join(parts[-2:]) if len(parts) >= 2 else host
+
+
 def build_test_origins(target_url, custom_origin=None):
     """
-    Build list of Origin values to probe.
+    Build list of Origin values to probe (capped at MAX_TEST_ORIGINS).
 
-    Matrix covers: attacker hosts, null, path-bearing Origins (naive
-    substring matchers), same host with scheme/port flips, and domain
-    lookalikes. IP / localhost targets skip domain-derived lookalikes
-    (they produce nonsense like sub.0.1).
+    Priority (first kept under the cap): custom origin, attacker/null/special
+    hosts, local-origin probes, target scheme/port flips, domain lookalikes
+    (tldextract registrable), then third-party free-host suffixes.
+
+    IP / localhost targets skip domain-derived lookalikes (they produce
+    nonsense like sub.0.1) and gain alternate loopback forms instead.
     """
     parsed = urlparse(target_url)
     host = parsed.hostname or "example.com"
     scheme = parsed.scheme or "https"
     port = parsed.port
+    origin_host_lit = _format_origin_host(host)
+    ip_target = is_ip_host(host) or host == "localhost"
 
     origins = [
         "https://evil.com",
@@ -133,48 +176,64 @@ def build_test_origins(target_url, custom_origin=None):
         "https://evil.com/path",
         "https://evil.com.evil",
         "null",
+        # Special-character / no-dot hosts — naive contains or unescaped-dot matchers
+        "https://evil_com",
+        "https://evilcom",
+        # Local-origin probes (servers that allow loopback Origin values)
+        "http://localhost",
+        "http://127.0.0.1",
     ]
 
     # Scheme + port flips on the real target host
     if port and port not in (80, 443):
         origins.extend([
-            f"{scheme}://{host}:{port}",
-            f"http://{host}:{port}",
-            f"https://{host}:{port}",
-            f"http://{host}",
-            f"https://{host}",
-            f"{scheme}://{host}",
+            f"{scheme}://{origin_host_lit}:{port}",
+            f"http://{origin_host_lit}:{port}",
+            f"https://{origin_host_lit}:{port}",
+            f"http://{origin_host_lit}",
+            f"https://{origin_host_lit}",
+            f"{scheme}://{origin_host_lit}",
         ])
     else:
         origins.extend([
-            f"https://{host}",
-            f"http://{host}",
+            f"https://{origin_host_lit}",
+            f"http://{origin_host_lit}",
         ])
         # Explicit non-default port probe (scheme-relative style)
         if scheme == "https":
-            origins.append(f"http://{host}:8080")
+            origins.append(f"http://{origin_host_lit}:8080")
         else:
-            origins.append(f"https://{host}:8443")
+            origins.append(f"https://{origin_host_lit}:8443")
 
-    if is_ip_host(host) or host == "localhost":
+    if ip_target:
         if port and port not in (80, 443):
-            origins.append(f"https://{host}:9999")
-        origins.append(f"{scheme}://{host}/path")  # path-bearing on target host
+            origins.append(f"https://{origin_host_lit}:9999")
+        origins.append(f"{scheme}://{origin_host_lit}/path")
+        # Alternate loopback spellings (short, wildcard, IPv6, decimal)
+        if host in ("127.0.0.1", "localhost", "0.0.0.0", "::1"):
+            origins.extend([
+                "http://127.1",
+                "http://0.0.0.0",
+                "http://[::1]",
+                "http://2130706433",
+            ])
     else:
-        parts = host.split(".")
-        registrable = ".".join(parts[-2:]) if len(parts) >= 2 else host
-        origins.extend([
-            f"https://sub.{registrable}",
-            f"https://{registrable}.evil.com",
-            f"https://{registrable}",
-            f"http://{registrable}",
-            f"https://{registrable}/path",
-            f"https://evil.{registrable}",
-        ])
-        if port and port not in (80, 443):
-            origins.append(f"https://{registrable}:{port}")
+        registrable = _registrable_domain(host, scheme)
+        if registrable:
+            origins.extend([
+                f"https://sub.{registrable}",
+                f"https://{registrable}.evil.com",
+                f"https://{registrable}",
+                f"http://{registrable}",
+                f"https://{registrable}/path",
+                f"https://evil.{registrable}",
+            ])
+            if port and port not in (80, 443):
+                origins.append(f"https://{registrable}:{port}")
+            for suffix in THIRD_PARTY_SUFFIXES:
+                origins.append(f"https://{registrable}.{suffix}")
 
     if custom_origin:
         origins.insert(0, custom_origin)
 
-    return _dedupe(origins)
+    return _dedupe(origins)[:MAX_TEST_ORIGINS]

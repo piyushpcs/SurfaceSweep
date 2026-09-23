@@ -15,6 +15,7 @@ from modules.cors import (
     parse_acao_list,
 )
 from modules.cors.classifier import classify_cors as classify
+from modules.cors.origins import MAX_TEST_ORIGINS, THIRD_PARTY_SUFFIXES
 from modules.cors.probe import build_evidence
 from modules.cors.scanner import cors_risk_boost, resolve_endpoints
 
@@ -45,6 +46,10 @@ class TestNormalizeOrigin(unittest.TestCase):
 
     def test_origins_equal_ignores_case_and_port(self):
         self.assertTrue(origins_equal("https://Example.com:443", "https://example.com"))
+
+    def test_normalize_ipv6_keeps_brackets(self):
+        self.assertEqual(normalize_origin("http://[::1]:5555"), "http://[::1]:5555")
+        self.assertEqual(normalize_origin("http://[::1]:80"), "http://[::1]")
 
 
 class TestBuildTestOrigins(unittest.TestCase):
@@ -78,6 +83,51 @@ class TestBuildTestOrigins(unittest.TestCase):
         self.assertIn("http://127.0.0.1:5555", origins)
         self.assertIn("https://127.0.0.1:5555", origins)
         self.assertIn("http://127.0.0.1", origins)
+        self.assertNotIn("https://sub.0.1", origins)
+
+    def test_registrable_domain_uses_public_suffix(self):
+        # Naive last-two-labels would yield co.uk → sub.co.uk / co.uk.evil.com
+        origins = build_test_origins("https://a.b.example.co.uk")
+        self.assertIn("https://sub.example.co.uk", origins)
+        self.assertIn("https://example.co.uk.evil.com", origins)
+        self.assertIn("https://example.co.uk", origins)
+        self.assertNotIn("https://sub.co.uk", origins)
+        self.assertNotIn("https://co.uk.evil.com", origins)
+
+    def test_special_char_and_nodot_attacker_origins(self):
+        origins = build_test_origins(TARGET)
+        self.assertIn("https://evil_com", origins)
+        self.assertIn("https://evilcom", origins)
+
+    def test_local_origin_probes_included(self):
+        origins = build_test_origins(TARGET)
+        self.assertIn("http://localhost", origins)
+        self.assertIn("http://127.0.0.1", origins)
+
+    def test_third_party_free_host_origins(self):
+        origins = build_test_origins(TARGET)
+        for suffix in THIRD_PARTY_SUFFIXES[:2]:
+            self.assertIn(f"https://example.com.{suffix}", origins)
+
+    def test_ip_alternate_loopback_forms(self):
+        origins = build_test_origins("http://127.0.0.1:5555")
+        self.assertIn("http://127.1", origins)
+        self.assertIn("http://0.0.0.0", origins)
+        self.assertIn("http://[::1]", origins)
+        self.assertIn("http://2130706433", origins)
+
+    def test_matrix_capped_and_custom_first(self):
+        origins = build_test_origins(TARGET, custom_origin="https://my.origin")
+        self.assertLessEqual(len(origins), MAX_TEST_ORIGINS)
+        self.assertEqual(origins[0], "https://my.origin")
+        # Cap must never drop the core attacker origin
+        self.assertIn("https://evil.com", origins)
+        self.assertIn("null", origins)
+
+    def test_ipv6_target_origins_are_bracketed(self):
+        origins = build_test_origins("http://[::1]:5555")
+        self.assertTrue(any("[::1]" in o for o in origins))
+        self.assertFalse(any("http://::1" in o for o in origins))
         self.assertNotIn("https://sub.0.1", origins)
 
 
