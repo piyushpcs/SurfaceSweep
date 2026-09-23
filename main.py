@@ -48,6 +48,8 @@ def main():
     parser.add_argument("--cors-threads", type=int, default=6, help="CORS probe threads (default: 6)")
     parser.add_argument("--cors-timeout", type=float, default=5.0, help="CORS per-request timeout seconds (default: 5)")
     parser.add_argument("--jwt", action="store_true", help="Analyze JWTs found in scanned content (alg/none, weak HMAC, exp, claims)")
+    parser.add_argument("--jwt-wordlist", default=None, metavar="FILE", help="Extra newline-delimited secrets for offline HS* cracking")
+    parser.add_argument("--jwt-hashcat", default=None, metavar="FILE", help="Export HS* JWTs to FILE in hashcat mode 16500 format")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
     args = parser.parse_args()
 
@@ -269,7 +271,13 @@ def main():
 
     # JWT security analysis
     if args.jwt:
-        result["jwt"] = analyze_result_jwts(result, verbose=verbose)
+        result["jwt"] = analyze_result_jwts(
+            result,
+            verbose=verbose,
+            wordlist_path=args.jwt_wordlist,
+            target=args.target,
+            hashcat_path=args.jwt_hashcat,
+        )
         result["risk_summary"] = calculate_risk_summary(result)
         if verbose:
             print(

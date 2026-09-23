@@ -26,14 +26,30 @@ JWT_PATTERN = re.compile(
     r"\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{8,}(?:\.[A-Za-z0-9_\-]*)?"
 )
 
-# Secrets worth trying for offline HS* verification
+# Secrets worth trying for offline HS* verification (common JWT defaults +
+# jwt_tool/SecLists-style common secrets)
 WEAK_SECRETS = [
+    # Core defaults
     "secret", "password", "Password1", "123456", "12345678", "qwerty",
     "admin", "test", "changeme", "jwtsecret", "jwt-secret", "jwt_secret",
     "supersecret", "your-256-bit-secret", "your-secret-key", "mysecret",
     "dev", "development", "production", "private", "keyboard cat",
     "HS256", "abcdef", "secretkey", "secret_key", "app_secret",
     "please-change-me", "insecure", "default", "token", "auth",
+    # Common password / JWT wordlist entries
+    "password123", "admin123", "root", "qwerty123", "letmein", "welcome",
+    "monkey", "dragon", "master", "shadow", "login", "pass", "abc123",
+    "111111", "123123", "654321", "iloveyou", "princess", "football",
+    "baseball", "trustno1", "sunshine", "starwars", "whatever", "freedom",
+    "secret123", "key", "hmac", "changeme123", "Password1!", "P@ssw0rd",
+    "admin1", "test123", "demo", "sample", "example", "temp", "tmp",
+    "SECRET", "Secret", "SECRET_KEY", "JWT_SECRET", "APP_SECRET",
+    "AUTH_SECRET", "SESSION_SECRET", "SIGNING_KEY", "HMAC_KEY",
+    "devsecret", "prodsecret", "stage", "staging", "localhost",
+    "super-secret", "my-secret", "the-secret", "a-secret",
+    "123456789", "1234567890", "000000", "1111", "passw0rd",
+    "qwertyuiop", "asdfghjkl", "zxcvbnm", "1q2w3e4r", "1qaz2wsx",
+    "hunter2", "correcthorsebatterystaple", "you-shall-not-pass",
 ]
 
 SENSITIVE_CLAIM_KEYS = {
@@ -97,6 +113,80 @@ def _is_high_entropy_value(v):
     if v.startswith(("http://", "https://", "/", "eyJ")):
         return False
     return _shannon_entropy(v) >= 3.2
+
+
+def load_wordlist(path):
+    """Load newline-delimited secrets from a wordlist file (skips blanks/#)."""
+    candidates = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                s = line.strip()
+                if s and not s.startswith("#"):
+                    candidates.append(s)
+    except OSError:
+        return []
+    return candidates
+
+
+def target_mutations(target):
+    """
+    Derive likely HMAC secrets from a target URL's host labels.
+    e.g. https://app.example.com → example, app, appexample, examplesecret, ...
+    """
+    if not target:
+        return []
+    try:
+        host = urlparse(target if "//" in target else f"https://{target}").hostname or ""
+    except Exception:
+        return []
+    if not host:
+        return []
+    labels = [p for p in host.lower().replace("-", "").split(".") if p and p != "www"]
+    if not labels:
+        return []
+
+    bases = []
+    for lab in labels:
+        if lab not in ("com", "org", "net", "io", "co", "in", "gov", "edu"):
+            bases.append(lab)
+    if len(labels) >= 2:
+        bases.append(labels[0] + labels[1])
+    # unique, preserve order
+    bases = list(dict.fromkeys(bases))[:6]
+
+    suffixes = ["", "secret", "key", "123", "2024", "2025", "2026", "jwt", "auth"]
+    mutations = []
+    for b in bases:
+        for suf in suffixes:
+            mutations.append(f"{b}{suf}")
+        mutations.append(b.capitalize())
+        mutations.append(f"{b}-secret")
+        mutations.append(f"{b}_secret")
+    return list(dict.fromkeys(mutations))
+
+
+def export_hashcat(tokens, path):
+    """
+    Write JWTs in hashcat mode 16500 format (one full compact JWT per line).
+    Only HS* tokens are crackable in 16500 — filter to those.
+    Returns count written.
+    """
+    written = 0
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            for t in tokens or []:
+                d = decode_jwt(t)
+                if d.get("error"):
+                    continue
+                alg = (d.get("alg") or "").upper()
+                if alg not in ("HS256", "HS384", "HS512"):
+                    continue
+                fh.write(t.rstrip("\n") + "\n")
+                written += 1
+    except OSError:
+        return 0
+    return written
 
 
 def _b64url_decode(segment):
@@ -233,6 +323,33 @@ def _try_crack_hs(token, candidate_secrets=None):
         if verify_hs_signature(token, secret) is True:
             return secret
     return None
+
+
+def build_crack_candidates(result, wordlist_path=None, target=None):
+    """
+    Assemble the full offline crack candidate list:
+    built-in WEAK_SECRETS + in-scan secrets + optional wordlist file + target mutations.
+    Returns (candidates, meta) where meta records counts for reporting.
+    """
+    scan_secrets = collect_candidate_secrets(result)
+    wordlist = load_wordlist(wordlist_path) if wordlist_path else []
+    mutations = target_mutations(target)
+
+    seen = set()
+    candidates = []
+    for s in list(WEAK_SECRETS) + scan_secrets + wordlist + mutations:
+        if s and s not in seen:
+            seen.add(s)
+            candidates.append(s)
+
+    meta = {
+        "builtin": len(WEAK_SECRETS),
+        "scan_secrets": len(scan_secrets),
+        "wordlist": len(wordlist),
+        "target_mutations": len(mutations),
+        "total": len(candidates),
+    }
+    return candidates, meta
 
 
 def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None):
@@ -555,21 +672,38 @@ def scan_jwts(content, source="unknown", candidate_secrets=None):
 SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
 
 
-def analyze_result_jwts(result, verbose=True):
+def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
+                        hashcat_path=None):
     """
     Run JWT analysis over a full scan result.
+    Args:
+        wordlist_path: optional extra newline-delimited secret wordlist
+        target: target URL — derive host-based HMAC mutations
+        hashcat_path: if set, export HS* tokens in hashcat mode 16500 format
     Returns:
       {
         "tokens_analyzed": n,
         "findings": [analyze_jwt dicts...],
         "severity_counts": {...},
+        "candidate_secrets_tried": n,
+        "crack_meta": {...},   # when candidates were built
+        "hashcat_exported": n, # when hashcat_path set
       }
     """
     if verbose:
         print("[*] --- JWT Analysis ---")
 
-    candidates = collect_candidate_secrets(result)
+    candidates, crack_meta = build_crack_candidates(
+        result, wordlist_path=wordlist_path, target=target
+    )
+
     tokens = collect_jwts_from_result(result)
+
+    if hashcat_path and tokens:
+        hs_tokens = [t["token"] for t in tokens]
+        exported = export_hashcat(hs_tokens, hashcat_path)
+        if verbose and exported:
+            print(f"[+] Exported {exported} HS* JWT(s) for hashcat (-m 16500): {hashcat_path}")
 
     # Also re-extract from deobfuscation outputs and raw path strings if present
     # (full tokens often truncated in secrets.match — jwts_found preferred)
@@ -581,6 +715,7 @@ def analyze_result_jwts(result, verbose=True):
             "findings": [],
             "severity_counts": {},
             "candidate_secrets_tried": len(candidates),
+            "crack_meta": crack_meta,
         }
 
     analyses = []
@@ -616,17 +751,27 @@ def analyze_result_jwts(result, verbose=True):
         med = severity_counts.get("MEDIUM", 0)
         print(f"[+] JWT findings: {crit} critical, {high} high, {med} medium "
               f"({len(analyses)} token(s) analyzed)")
+        if crack_meta.get("total"):
+            print(f"[*] Crack candidates: {crack_meta['total']} "
+                  f"(builtin={crack_meta['builtin']}, scan={crack_meta['scan_secrets']}, "
+                  f"wordlist={crack_meta['wordlist']}, mutations={crack_meta['target_mutations']})")
         for a in analyses:
             if a["severity"] in ("CRITICAL", "HIGH"):
                 top = a["findings"][0]
                 print(f"    [!] {a['severity']:8s} {a['alg'] or '?':6s} {top['issue']}: {top['detail'][:90]}")
 
-    return {
+    out = {
         "tokens_analyzed": len(analyses),
         "findings": analyses,
         "severity_counts": severity_counts,
         "candidate_secrets_tried": len(candidates),
+        "crack_meta": crack_meta,
     }
+    if hashcat_path and tokens:
+        out["hashcat_exported"] = export_hashcat(
+            [t["token"] for t in tokens], hashcat_path
+        )
+    return out
 
 
 def jwt_risk_boost(jwt_result):

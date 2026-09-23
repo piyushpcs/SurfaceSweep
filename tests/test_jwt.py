@@ -11,12 +11,16 @@ from modules.extraction.risk import calculate_risk_summary, risk_level_for_score
 from modules.jwt_analyzer import (
     analyze_jwt,
     analyze_result_jwts,
+    build_crack_candidates,
     collect_candidate_secrets,
     collect_jwts_from_result,
     decode_jwt,
     deduplicate_jwts,
+    export_hashcat,
     extract_jwts,
     jwt_risk_boost,
+    load_wordlist,
+    target_mutations,
     verify_hs_signature,
 )
 
@@ -409,6 +413,98 @@ class TestExtractionWiring(unittest.TestCase):
         out = analyze_result_jwts(result, verbose=False)
         self.assertEqual(out["tokens_analyzed"], 1)
         self.assertEqual(out["findings"][0]["cracked_secret"], "secret")
+
+
+class TestCrackingStep4(unittest.TestCase):
+    """Step 4: wordlist, target mutations, hashcat export."""
+
+    def test_load_wordlist_skips_blanks_and_comments(self):
+        import tempfile, os
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+            fh.write("# comment\n\nsecret1\n  secret2  \n")
+            path = fh.name
+        try:
+            out = load_wordlist(path)
+            self.assertEqual(out, ["secret1", "secret2"])
+        finally:
+            os.unlink(path)
+
+    def test_load_wordlist_missing_file(self):
+        self.assertEqual(load_wordlist("/nonexistent/wordlist.txt"), [])
+
+    def test_target_mutations_from_host(self):
+        muts = target_mutations("https://app.example.com/login")
+        self.assertIn("example", muts)
+        self.assertIn("app", muts)
+        self.assertIn("examplesecret", muts)
+        self.assertIn("appexample", muts)
+
+    def test_target_mutations_empty(self):
+        self.assertEqual(target_mutations(""), [])
+        self.assertEqual(target_mutations(None), [])
+
+    def test_build_crack_candidates_combines_sources(self):
+        result = {"secrets_found": [{"type": "Generic Secret", "match": "scansecret99"}]}
+        cands, meta = build_crack_candidates(
+            result, wordlist_path=None, target="https://foo.example.com"
+        )
+        self.assertIn("secret", cands)          # builtin
+        self.assertIn("scansecret99", cands)     # scan
+        self.assertIn("example", cands)          # mutation
+        # total is after dedup — may be < sum of parts if sources overlap
+        self.assertLessEqual(meta["total"], meta["builtin"] + meta["scan_secrets"] + meta["target_mutations"])
+        self.assertGreaterEqual(meta["total"], meta["builtin"])
+        self.assertEqual(len(cands), len(set(cands)))
+
+    def test_analyze_with_target_mutations_cracks(self):
+        # Sign with a target-derived secret not in the builtin list
+        import base64, hashlib, hmac, json as _json
+        header = base64.urlsafe_b64encode(
+            _json.dumps({"alg": "HS256", "typ": "JWT"}, separators=(",", ":")).encode()
+        ).rstrip(b"=").decode()
+        payload = base64.urlsafe_b64encode(
+            _json.dumps({"sub": "u", "exp": 4102444800}, separators=(",", ":")).encode()
+        ).rstrip(b"=").decode()
+        sig = hmac.new(b"examplesecret", f"{header}.{payload}".encode(), hashlib.sha256).digest()
+        tok = f"{header}.{payload}.{base64.urlsafe_b64encode(sig).rstrip(b'=').decode()}"
+
+        a = analyze_jwt(tok, source="t", candidate_secrets=target_mutations("https://x.example.com"))
+        self.assertEqual(a["cracked_secret"], "examplesecret")
+
+    def test_export_hashcat_hs_only(self):
+        import tempfile, os
+        with tempfile.NamedTemporaryFile("r", suffix=".txt", delete=False) as fh:
+            path = fh.name
+        try:
+            n = export_hashcat([JWT_HS256_SECRET, JWT_RS256_NO_EXP, "garbage"], path)
+            self.assertEqual(n, 1)  # only HS256 written
+            with open(path) as fh2:
+                lines = [l.strip() for l in fh2 if l.strip()]
+            self.assertEqual(lines, [JWT_HS256_SECRET])
+        finally:
+            os.unlink(path)
+
+    def test_analyze_result_jwts_hashcat_export(self):
+        import tempfile, os
+        with tempfile.NamedTemporaryFile("r", suffix=".txt", delete=False) as fh:
+            path = fh.name
+        try:
+            result = {
+                "secrets_found": [
+                    {"type": "JWT", "match": JWT_HS256_SECRET, "sources": ["a"]},
+                ]
+            }
+            out = analyze_result_jwts(
+                result, verbose=False,
+                wordlist_path=None,
+                target="https://example.com",
+                hashcat_path=path,
+            )
+            self.assertEqual(out["hashcat_exported"], 1)
+            self.assertIn("crack_meta", out)
+            self.assertIn("total", out["crack_meta"])
+        finally:
+            os.unlink(path)
 
 
 class TestCollectHelpers(unittest.TestCase):
