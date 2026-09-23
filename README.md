@@ -50,7 +50,7 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **HTML report (Step 4):** severity/coverage stat cards, **Origin × URL matrix**, findings table (origins flagged, methods, hits, redirect final URL, evidence), JSON `schema_version`
 - **JSON shape:** `schema_version: 1`, top-level `findings` / `probe_hits` / `endpoints_tested` / `origins` / `severity_counts` / `summary`
 
-### ✅ Phase 3: JWT Security Analyzer (complete — Step 5+)
+### ✅ Phase 3: JWT Security Analyzer (complete — Steps 1–6)
 - Extracts compact JWTs (`header.payload.sig`) from JS/HTML scan results
 - **Step 3 pipeline wiring:** `extract_from_text` returns JWTs; `jwts_found` populated in static/browser/wayback/full scans and merged/deduped across modes
 - Decodes header/payload offline (stdlib base64/json — no network, no PyJWT)
@@ -58,10 +58,11 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - Offline HS256/384/512 crack attempt against a built-in weak wordlist + secrets found in the same scan
 - **Step 4 cracking:** expanded builtin wordlist (~100), `--jwt-wordlist FILE`, target-host mutations, hashcat `-m 16500` export via `--jwt-hashcat FILE`, `crack_meta` counts in report
 - **Step 5 reporting parity:** JSON `schema_version: 1` + `summary` (severity/issue/crack counts), HTML severity stat cards, HTML-escaped findings table, per-token NDJSON export via `--jwt-export FILE`
+- **Step 6 network (optional, `--jwt-network`):** SSRF-guarded `jku`/`x5u` JWKS fetch → RSA PEM; **RS256→HS256 key-confusion PoC** (offline re-sign with public key material — CRITICAL when forge succeeds); works offline too when `jwk` is embedded in the token
 - **Step 2 offline hardening:** embedded `jwk` object, `x5c` chain, `crit` header, empty/null signature, `alg=none` with leftover signature, placeholder/low-entropy signature, `kid` SQLi metacharacters, missing `iss`/`aud`, high-entropy payload claims (possible embedded secrets)
-- Severity: CRITICAL (alg none / cracked HMAC / empty signature) → HIGH → MEDIUM → LOW → INFO
+- Severity: CRITICAL (alg none / cracked HMAC / empty signature / key-confusion forge) → HIGH → MEDIUM → LOW → INFO
 - Risk boost: CRITICAL=25, HIGH=15, MEDIUM=8 per finding — **preserved across `--validate`/wayback/SPA recalculation** (Step 1)
-- Unit tests: `tests/test_jwt.py` (decode, crack, analysis, Steps 2–5, risk boost, report shape)
+- Unit tests: `tests/test_jwt.py` (decode, crack, analysis, Steps 2–6, risk boost, report shape)
 
 ### ⏳ Phase 4: Combined pipeline + reporting (planned)
 
@@ -129,6 +130,8 @@ python main.py https://target.com -f --validate --burp --zap --waf --html
 | `--jwt-wordlist` | Extra newline-delimited secrets for offline HS* cracking |
 | `--jwt-hashcat` | Export HS* JWTs to FILE in hashcat mode 16500 format |
 | `--jwt-export` | Write per-token JWT findings as NDJSON to FILE |
+| `--jwt-network` | Fetch jku/x5u JWKS over network for key-confusion checks (SSRF-guarded) |
+| `--jwt-network-timeout` | JWKS fetch timeout seconds (default: 5) |
 | `-q, --quiet` | Suppress progress output |
 
 ### Examples
@@ -161,8 +164,8 @@ python main.py https://target.com --spa --validate --html
 # CORS misconfiguration scan
 python main.py https://target.com --cors --cors-origin https://evil.com --html
 
-# JWT security analysis with custom wordlist + exports
-python main.py https://target.com --jwt --jwt-wordlist secrets.txt --jwt-hashcat hs_tokens.txt --jwt-export findings.ndjson --html
+# JWT security analysis with custom wordlist + exports + optional JWKS fetch
+python main.py https://target.com --jwt --jwt-wordlist secrets.txt --jwt-hashcat hs_tokens.txt --jwt-export findings.ndjson --jwt-network --html
 ```
 
 ## Project Structure
@@ -306,8 +309,7 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - ~~Library version + CVE detection~~ ✅ Done
 - ~~SPA route crawling~~ ✅ Done
 - ~~Phase 2: CORS misconfiguration scanner~~ ✅ Done (Steps 1–4)
-- ~~Phase 3: JWT security analyzer~~ ✅ Done (Steps 1–5)
-- Phase 3 continued: optional JWKS/key-confusion network checks (Step 6)
+- ~~Phase 3: JWT security analyzer~~ ✅ Done (Steps 1–6)
 - Phase 4: Combined pipeline + reporting
 - Diff mode to compare two scans of the same target over time
 - Secret-pattern false-positive tuning (Twilio SID / Telegram Bot Token seen on mintlify)

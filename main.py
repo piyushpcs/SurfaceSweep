@@ -51,6 +51,8 @@ def main():
     parser.add_argument("--jwt-wordlist", default=None, metavar="FILE", help="Extra newline-delimited secrets for offline HS* cracking")
     parser.add_argument("--jwt-hashcat", default=None, metavar="FILE", help="Export HS* JWTs to FILE in hashcat mode 16500 format")
     parser.add_argument("--jwt-export", default=None, metavar="FILE", help="Write per-token JWT findings as NDJSON to FILE")
+    parser.add_argument("--jwt-network", action="store_true", help="Fetch jku/x5u JWKS over network for RS256→HS256 key-confusion checks (SSRF-guarded)")
+    parser.add_argument("--jwt-network-timeout", type=float, default=5.0, help="JWKS fetch timeout seconds when --jwt-network is set (default: 5)")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
     args = parser.parse_args()
 
@@ -279,6 +281,8 @@ def main():
             target=args.target,
             hashcat_path=args.jwt_hashcat,
             export_path=args.jwt_export,
+            network=args.jwt_network,
+            network_timeout=args.jwt_network_timeout,
         )
         result["risk_summary"] = calculate_risk_summary(result)
         if verbose:
