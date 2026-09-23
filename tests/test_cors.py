@@ -444,6 +444,17 @@ class TestClassifyCors(unittest.TestCase):
         sev, detail = classify(EVIL, "*", "true", target_origin=TARGET)
         self.assertEqual(sev, "HIGH")
         self.assertIn("browsers block", detail)
+        self.assertIn("non-browser", detail)
+
+    def test_wildcard_notes_public_content_caveat(self):
+        sev, detail = classify(EVIL, "*", "", target_origin=TARGET)
+        self.assertEqual(sev, "MEDIUM")
+        self.assertIn("public unauthenticated", detail)
+
+    def test_null_creds_notes_sandboxed_iframe(self):
+        sev, detail = classify("null", "null", "true", target_origin=TARGET)
+        self.assertEqual(sev, "CRITICAL")
+        self.assertIn("sandboxed iframe", detail)
 
     def test_legitimate_target_origin_info(self):
         sev, _ = classify(

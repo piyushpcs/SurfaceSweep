@@ -2,6 +2,7 @@
 
 import unittest
 from argparse import Namespace
+from unittest import mock
 
 from datetime import datetime, timezone
 
@@ -758,6 +759,64 @@ class TestReportBuilder(unittest.TestCase):
         from modules.pipeline import stages
         src = inspect.getsource(stages)
         self.assertNotIn('args.output.replace(".json"', src)
+
+
+class TestStageCorsWafPacing(unittest.TestCase):
+    """Phase 2.1 Step 3: stage_cors applies WAF adjustments to scan_cors."""
+
+    def _ctx(self, waf_adjustments=None, **arg_overrides):
+        args = _args(cors=True, **arg_overrides)
+        ctx = ScanContext(args, verbose=False, headers={"Cookie": "a=b"})
+        ctx.result = _result(
+            in_scope_urls=["https://example.com/api/users"],
+        )
+        ctx.waf_adjustments = waf_adjustments
+        return ctx
+
+    @mock.patch("modules.pipeline.stages.calculate_risk_summary")
+    @mock.patch("modules.pipeline.stages.scan_cors")
+    def test_no_waf_uses_cli_settings(self, scan_mock, risk_mock):
+        from modules.pipeline.stages import stage_cors
+        scan_mock.return_value = {"severity_counts": {}, "findings": []}
+        risk_mock.return_value = {"level": "INFO", "score": 0}
+        ctx = self._ctx()
+        stage_cors(ctx)
+        kwargs = scan_mock.call_args.kwargs
+        self.assertEqual(kwargs["rate_limit"], 5.0)
+        self.assertEqual(kwargs["threads"], 6)
+        self.assertEqual(kwargs["headers"], {"Cookie": "a=b"})
+
+    @mock.patch("modules.pipeline.stages.calculate_risk_summary")
+    @mock.patch("modules.pipeline.stages.scan_cors")
+    def test_waf_slows_rate_caps_threads_sets_ua(self, scan_mock, risk_mock):
+        from modules.pipeline.stages import stage_cors
+        scan_mock.return_value = {"severity_counts": {}, "findings": []}
+        risk_mock.return_value = {"level": "INFO", "score": 0}
+        ctx = self._ctx(waf_adjustments={
+            "delay_multiplier": 3.0,
+            "max_threads": 2,
+            "user_agent": "WAF-UA/1.0",
+        })
+        stage_cors(ctx)
+        kwargs = scan_mock.call_args.kwargs
+        self.assertAlmostEqual(kwargs["rate_limit"], 5.0 / 3.0)
+        self.assertEqual(kwargs["threads"], 2)
+        self.assertEqual(kwargs["headers"]["User-Agent"], "WAF-UA/1.0")
+        self.assertEqual(kwargs["headers"]["Cookie"], "a=b")
+
+    @mock.patch("modules.pipeline.stages.calculate_risk_summary")
+    @mock.patch("modules.pipeline.stages.scan_cors")
+    def test_waf_thread_cap_never_raises(self, scan_mock, risk_mock):
+        from modules.pipeline.stages import stage_cors
+        scan_mock.return_value = {"severity_counts": {}, "findings": []}
+        risk_mock.return_value = {"level": "INFO", "score": 0}
+        ctx = self._ctx(
+            waf_adjustments={"delay_multiplier": 1.0, "max_threads": 20},
+            cors_threads=6,
+        )
+        stage_cors(ctx)
+        # min(6, 20) — WAF cap is an upper bound, not a floor
+        self.assertEqual(scan_mock.call_args.kwargs["threads"], 6)
 
 
 if __name__ == "__main__":

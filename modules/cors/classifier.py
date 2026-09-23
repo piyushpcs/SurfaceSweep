@@ -110,7 +110,11 @@ def classify_cors(origin, acao, acac, target_origin=None, registrable_domain=Non
         return "MEDIUM", f"Non-singleton ACAO (ACAO={acao})"
 
     if null_allowed and creds:
-        return "CRITICAL", "Null origin allowed with credentials (ACAO=null, ACAC=true)"
+        return (
+            "CRITICAL",
+            "Null origin allowed with credentials (ACAO=null, ACAC=true); "
+            "exploitable via sandboxed iframe / Origin: null clients",
+        )
 
     if reflected and creds:
         if related:
@@ -119,7 +123,11 @@ def classify_cors(origin, acao, acac, target_origin=None, registrable_domain=Non
                 f"Related (same-site) origin reflected with credentials "
                 f"(ACAO={acao}, ACAC=true)",
             )
-        return "CRITICAL", f"Arbitrary origin reflected with credentials (ACAO={acao}, ACAC=true)"
+        return (
+            "CRITICAL",
+            f"Arbitrary origin reflected with credentials "
+            f"(ACAO={acao}, ACAC=true); cross-origin data theft possible",
+        )
 
     if reflected:
         return "HIGH", f"Origin reflected (ACAO={acao})"
@@ -128,14 +136,23 @@ def classify_cors(origin, acao, acac, target_origin=None, registrable_domain=Non
         return (
             "HIGH",
             "Wildcard ACAO with Allow-Credentials: true "
-            "(invalid — browsers block this combination)",
+            "(invalid — browsers block this combination; "
+            "still a misconfig for non-browser clients)",
         )
 
     if is_wildcard:
-        return "MEDIUM", "Wildcard ACAO (*)"
+        return (
+            "MEDIUM",
+            "Wildcard ACAO (*) — acceptable for public unauthenticated "
+            "content, risky when cookies/auth are in play",
+        )
 
     if null_allowed:
-        return "MEDIUM", "Null origin allowed"
+        return (
+            "MEDIUM",
+            "Null origin allowed — sandboxed iframes and some redirects "
+            "send Origin: null",
+        )
 
     # Partial / suffix trust: e.g. host target.com.evil.com vs evil.com
     oh = origin_host(origin)

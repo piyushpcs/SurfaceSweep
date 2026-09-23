@@ -188,13 +188,36 @@ def stage_cors(ctx: ScanContext) -> None:
     js_origins = collect_js_origins(result, args.target)
     if ctx.verbose and js_origins:
         ctx.log(f"[*] CORS extra origins from scan: {', '.join(js_origins)}")
+
+    rate_limit = args.cors_rps
+    threads = args.cors_threads
+    headers = dict(ctx.headers) if ctx.headers else None
+
+    # Apply WAF pacing: slower RPS, fewer threads, WAF-friendly UA
+    if ctx.waf_adjustments:
+        delay = float(ctx.waf_adjustments.get("delay_multiplier") or 1.0)
+        if delay > 1.0 and rate_limit and rate_limit > 0:
+            rate_limit = max(0.2, rate_limit / delay)
+        max_threads = ctx.waf_adjustments.get("max_threads")
+        if max_threads:
+            threads = min(int(threads), int(max_threads))
+        waf_ua = ctx.waf_adjustments.get("user_agent")
+        if waf_ua:
+            headers = headers or {}
+            headers["User-Agent"] = waf_ua
+        if ctx.verbose and delay > 1.0:
+            ctx.log(
+                f"[*] CORS rate adjusted for WAF: {rate_limit:.2f} rps, "
+                f"{threads} thread(s)"
+            )
+
     result["cors"] = scan_cors(
         cors_endpoints, args.target,
         custom_origin=args.cors_origin, max_endpoints=args.cors_max,
-        threads=args.cors_threads, timeout=args.cors_timeout,
+        threads=threads, timeout=args.cors_timeout,
         verbose=ctx.verbose,
-        headers=ctx.headers if ctx.headers else None,
-        rate_limit=args.cors_rps, extra_origins=js_origins,
+        headers=headers,
+        rate_limit=rate_limit, extra_origins=js_origins,
     )
     result["risk_summary"] = calculate_risk_summary(result)
     if ctx.verbose and result["risk_summary"]["score"]:
