@@ -56,6 +56,8 @@ def _args(**overrides):
         jwt_network_timeout=5.0,
         graphql=False,
         graphql_timeout=5.0,
+        verify_secrets=False,
+        verify_secrets_timeout=5.0,
         quiet=False,
     )
     base.update(overrides)

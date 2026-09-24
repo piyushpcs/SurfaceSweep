@@ -155,6 +155,17 @@ def build_findings_feed(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             url=str(f.get("url", "")),
         ))
 
+    # --- Confirmed live secrets (Phase F4) ---
+    for f in (result.get("secret_verification") or {}).get("findings") or []:
+        if f.get("severity") in ("INFO", "ERROR"):
+            continue
+        feed.append(_finding(
+            f.get("severity", "HIGH"), "secrets",
+            "Confirmed live secret",
+            str(f.get("detail", ""))[:140],
+            source=str(f.get("vendor", "")),
+        ))
+
     feed.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9),
                              f["module"], f["title"]))
     return feed
@@ -201,6 +212,7 @@ def build_executive_summary(result: Dict[str, Any],
             "pii": len(result.get("pii_found") or []),
             "params": len(result.get("params_found") or []),
             "graphql_findings": len((result.get("graphql") or {}).get("findings") or []),
+            "secrets_confirmed": (result.get("secret_verification") or {}).get("confirmed", 0),
         },
     }
 

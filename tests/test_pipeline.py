@@ -71,6 +71,8 @@ def _args(**overrides):
         jwt_network_timeout=5.0,
         graphql=False,
         graphql_timeout=5.0,
+        verify_secrets=False,
+        verify_secrets_timeout=5.0,
         quiet=False,
         proxy=None,
         insecure=False,
@@ -93,12 +95,12 @@ class TestStageList(unittest.TestCase):
         names = stage_names(_args(
             waf=True, wayback=True, full=True, cve=True, spa=True,
             cors=True, jwt=True, validate=True, burp=True, zap=True,
-            graphql=True,
+            graphql=True, verify_secrets=True,
         ))
         self.assertEqual(names, [
             "waf_detect", "wayback_fetch", "scan", "wayback_merge",
             "waf_inject", "cve", "spa", "jwt", "validate", "graphql",
-            "cors", "export", "report",
+            "verify_secrets", "cors", "export", "report",
         ])
 
     def test_graphql_runs_after_validate_before_cors(self):
@@ -108,6 +110,16 @@ class TestStageList(unittest.TestCase):
 
     def test_graphql_off_by_default(self):
         self.assertNotIn("graphql", stage_names(_args()))
+
+    def test_verify_secrets_runs_after_graphql_before_cors(self):
+        names = stage_names(_args(
+            verify_secrets=True, graphql=True, validate=True, cors=True,
+        ))
+        self.assertLess(names.index("graphql"), names.index("verify_secrets"))
+        self.assertLess(names.index("verify_secrets"), names.index("cors"))
+
+    def test_verify_secrets_off_by_default(self):
+        self.assertNotIn("verify_secrets", stage_names(_args()))
 
     def test_cors_runs_after_validate(self):
         """Phase 2.2: CORS must probe post-validation (live endpoints only)."""

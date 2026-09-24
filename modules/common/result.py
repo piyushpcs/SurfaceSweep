@@ -58,6 +58,7 @@ class ScanResult(TypedDict, total=False):
     jwt: NotRequired[Dict[str, Any]]
     validation: NotRequired[Dict[str, Any]]
     graphql: NotRequired[Dict[str, Any]]
+    secret_verification: NotRequired[Dict[str, Any]]
 
     # Finalization (runner)
     schema_version: NotRequired[int]

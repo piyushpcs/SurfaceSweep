@@ -27,6 +27,7 @@ from modules.extraction import (
     is_static_asset,
     merge_results,
     run_extractor,
+    verify_secrets,
 )
 from modules.extraction.browser import run_browser_scan
 from modules.extraction.scope import normalize_scope_filter
@@ -405,6 +406,45 @@ def stage_graphql(ctx: ScanContext) -> None:
             ctx.log(f"[!] {n}/{tested} endpoint(s) expose GraphQL introspection")
         else:
             ctx.log(f"[*] {tested} endpoint(s) probed — no open introspection")
+
+
+def stage_verify_secrets(ctx: ScanContext) -> None:
+    """
+    Live-verify extracted secrets against vendor APIs (Phase F4, opt-in).
+
+    Read-only GETs only; runs after validate (path_status not required).
+    Writes result["secret_verification"] and recomputes risk_summary.
+    """
+    args = ctx.args
+    result = ctx.require_result()
+    secrets = result.get("secrets_found") or []
+    ctx.log("\n[*] --- Secret Verification ---")
+    if not secrets:
+        ctx.log("[*] No secrets to verify")
+        result["secret_verification"] = {
+            "results": [], "findings": [], "secrets_checked": 0,
+            "confirmed": 0, "rejected": 0, "errors": 0, "skipped": 0,
+            "summary": {"secrets_checked": 0, "confirmed": 0,
+                        "rejected": 0, "errors": 0, "skipped": 0},
+        }
+        result["risk_summary"] = calculate_risk_summary(result)
+        return
+
+    verification = verify_secrets(
+        secrets,
+        timeout=getattr(args, "verify_secrets_timeout", 5.0),
+        verbose=ctx.verbose,
+        headers=ctx.headers if ctx.headers else None,
+    )
+    result["secret_verification"] = verification
+    result["risk_summary"] = calculate_risk_summary(result)
+    if ctx.verbose:
+        n = verification.get("confirmed", 0)
+        checked = verification.get("secrets_checked", 0)
+        if n:
+            ctx.log(f"[!] {n}/{checked} secret(s) confirmed live")
+        else:
+            ctx.log(f"[*] {checked} secret(s) probed — none confirmed")
 
 
 def stage_export(ctx: ScanContext) -> None:

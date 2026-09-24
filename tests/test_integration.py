@@ -62,6 +62,8 @@ def _args(**overrides):
         jwt_network_timeout=5.0,
         graphql=False,
         graphql_timeout=5.0,
+        verify_secrets=False,
+        verify_secrets_timeout=5.0,
         quiet=True,
         proxy=None,
         insecure=False,
@@ -242,6 +244,12 @@ def _offline_patches():
             "summary": {"endpoints_tested": 0, "introspection_open": 0},
         },
         "collect_graphql_candidates": lambda *a, **k: [],
+        "verify_secrets": lambda *a, **k: {
+            "results": [], "findings": [], "secrets_checked": 0,
+            "confirmed": 0, "rejected": 0, "errors": 0, "skipped": 0,
+            "summary": {"secrets_checked": 0, "confirmed": 0,
+                        "rejected": 0, "errors": 0, "skipped": 0},
+        },
     }
 
 
@@ -277,12 +285,12 @@ class TestPipelineEndToEnd(unittest.TestCase):
             output="reports/it_all.json",
             waf=True, wayback=True, full=True, cve=True, spa=True,
             cors=True, jwt=True, validate=True, burp=True, zap=True, html=True,
-            graphql=True,
+            graphql=True, verify_secrets=True,
         ))
         expected = [
             "waf_detect", "wayback_fetch", "scan", "wayback_merge",
             "waf_inject", "cve", "spa", "jwt", "validate", "graphql",
-            "cors", "export", "report",
+            "verify_secrets", "cors", "export", "report",
         ]
         self.assertEqual(result["meta"]["stages_run"], expected)
         self.assertEqual(sorted(result["meta"]["stage_timings"]), sorted(expected))

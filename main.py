@@ -106,6 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--jwt-network-timeout", type=float, default=5.0, help="JWKS fetch timeout seconds when --jwt-network is set (default: 5)")
     parser.add_argument("--graphql", action="store_true", help="Probe discovered GraphQL endpoints for open introspection (Phase F3)")
     parser.add_argument("--graphql-timeout", type=float, default=5.0, help="GraphQL introspection probe timeout seconds (default: 5)")
+    parser.add_argument("--verify-secrets", action="store_true", help="Live-verify extracted secrets against vendor APIs (opt-in, read-only GETs)")
+    parser.add_argument("--verify-secrets-timeout", type=float, default=5.0, help="Per-secret verification timeout seconds (default: 5)")
     parser.add_argument("--proxy", default=None, metavar="URL", help="HTTP(S) proxy for all scan requests (e.g. http://127.0.0.1:8080)")
     parser.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification")
     parser.add_argument("--ua", default=None, metavar="STRING", help="Custom User-Agent for HTTP requests")

@@ -768,6 +768,52 @@ def render_graphql(graphql_result):
     return f"<h2>GraphQL Introspection</h2>{summary}{table}"
 
 
+def render_secret_verification(verification):
+    """Render live secret-verification section (Phase F4)."""
+    if not verification:
+        return ""
+    results = verification.get("results") or []
+    if not results and not verification.get("secrets_checked"):
+        return ""
+    summary = verification.get("summary") or verification
+    checked = summary.get("secrets_checked", verification.get("secrets_checked", 0))
+    confirmed = summary.get("confirmed", verification.get("confirmed", 0))
+    rejected = summary.get("rejected", verification.get("rejected", 0))
+    errors = summary.get("errors", verification.get("errors", 0))
+    stats = (
+        f'<div class="stats">'
+        f'{_stat(checked, "Probed")}'
+        f'{_stat(confirmed, "Confirmed", "#e74c3c" if confirmed else "#484f58")}'
+        f'{_stat(rejected, "Rejected", "#27ae60" if rejected else "#484f58")}'
+        f'{_stat(errors, "Errors", "#f39c12" if errors else "#484f58")}'
+        f"</div>"
+    )
+    if not results:
+        return f"<h2>Secret Verification</h2>{stats}<p class='muted'>No verifiable secrets probed</p>"
+
+    badge = {
+        "confirmed": '<span class="badge badge-critical">CONFIRMED</span>',
+        "rejected": '<span class="badge badge-live">REJECTED</span>',
+        "error": '<span class="badge badge-error">ERROR</span>',
+    }
+    rows = []
+    for r in results:
+        rows.append(
+            f'<tr>{badge.get(r.get("status"), "")}'
+            f'<td>{_esc(str(r.get("type", "")))}</td>'
+            f'<td>{_esc(str(r.get("vendor", "")))}</td>'
+            f'<td><code>{_esc(str(r.get("match", "")))}</code></td>'
+            f'<td>{_esc(str(r.get("http_status") or "—"))}</td>'
+            f'<td class="muted">{_esc(str(r.get("detail", ""))[:140])}</td></tr>'
+        )
+    table = (
+        '<table><thead><tr><th>Status</th><th>Type</th><th>Vendor</th>'
+        '<th>Match</th><th>HTTP</th><th>Detail</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+    return f"<h2>Secret Verification</h2>{stats}{table}"
+
+
 def _stat(n, label, color="#484f58"):
     return (
         f'<div class="stat"><div class="num" style="color:{color}">{n}</div>'
@@ -821,6 +867,7 @@ def build_html(result):
   <div class="stat"><div class="num">{len((result.get('cors') or {}).get('findings', []))}</div><div class="label">CORS Findings</div></div>
   <div class="stat"><div class="num">{(result.get('jwt') or {}).get('tokens_analyzed', 0)}</div><div class="label">JWTs Analyzed</div></div>
   <div class="stat"><div class="num">{(result.get('graphql') or {}).get('introspection_open', 0)}</div><div class="label">GraphQL Open</div></div>
+  <div class="stat"><div class="num">{(result.get('secret_verification') or {}).get('confirmed', 0)}</div><div class="label">Secrets Confirmed</div></div>
 </div>
 
 {render_executive_summary(result.get("executive_summary") or build_executive_summary(result, result.get("findings") or build_findings_feed(result)))}
@@ -857,6 +904,8 @@ def build_html(result):
 {render_jwt(result.get('jwt'))}
 
 {render_graphql(result.get('graphql') or {})}
+
+{render_secret_verification(result.get('secret_verification') or {})}
 
 <h2>Exposed Source Maps</h2>
 {render_list(result.get('source_maps_found', []), 'None found')}

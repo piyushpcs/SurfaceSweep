@@ -45,6 +45,7 @@ from modules.extraction.patterns import (
 )
 from modules.extraction.secrets import extract_secrets, deduplicate_secrets
 from modules.extraction.params import extract_params, deduplicate_params, PARAM_KINDS
+from modules.extraction.verify import verify_secret, verify_secrets
 from modules.extraction.http import (
     HttpClient,
     RateLimiter,
@@ -86,6 +87,7 @@ __all__ = [
     "is_noise", "is_static_asset", "find_internal_hosts",
     "extract_secrets", "deduplicate_secrets",
     "extract_params", "deduplicate_params", "PARAM_KINDS",
+    "verify_secret", "verify_secrets",
     "detect_sinks", "deduplicate_sinks",
     "detect_pii", "deduplicate_pii",
     "HttpClient", "RateLimiter", "fetch_with_retry", "get_page", "fetch_text",
