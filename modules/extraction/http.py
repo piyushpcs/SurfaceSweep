@@ -82,6 +82,24 @@ class RelaxedTLSAdapter(HTTPAdapter):
         kwargs["ssl_context"] = ctx
         super().init_poolmanager(*args, **kwargs)
 
+    def cert_verify(self, conn, url, verify, cert):
+        # urllib3 applies CERT_NONE to the shared external ssl_context, which
+        # raises ValueError while check_hostname is True. Disabling it here
+        # lets verify=False work; when verification is still on urllib3 does
+        # its own hostname matching instead.
+        if not verify:
+            ctx = None
+            for holder in (getattr(conn, "conn_kw", None),
+                           getattr(conn, "connection_pool_kw", None)):
+                if isinstance(holder, dict) and holder.get("ssl_context") is not None:
+                    ctx = holder["ssl_context"]
+                    break
+            if ctx is None:
+                ctx = getattr(conn, "ssl_context", None)
+            if ctx is not None and getattr(ctx, "check_hostname", False):
+                ctx.check_hostname = False
+        super().cert_verify(conn, url, verify, cert)
+
 
 _relaxed_local = threading.local()
 

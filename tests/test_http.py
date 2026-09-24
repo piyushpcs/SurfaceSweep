@@ -335,6 +335,50 @@ class TestTlsPolicyFallback(unittest.TestCase):
         self.assertEqual(proxies.get("https"), "http://127.0.0.1:8080")
 
 
+class TestRelaxedAdapterCertVerify(unittest.TestCase):
+    """verify=False must work on RelaxedTLSAdapter's external ssl_context."""
+
+    @staticmethod
+    def _pool(ctx):
+        conn = mock.MagicMock()
+        conn.conn_kw = {"ssl_context": ctx}
+        del conn.ssl_context  # only conn_kw carries it for pool connections
+        return conn
+
+    def test_insecure_disables_check_hostname(self):
+        from urllib3.util.ssl_ import create_urllib3_context
+
+        ctx = create_urllib3_context()
+        self.assertTrue(ctx.check_hostname)
+        adapter = RelaxedTLSAdapter()
+        conn = self._pool(ctx)
+        adapter.cert_verify(conn, "https://x.test/", False, None)
+        self.assertFalse(ctx.check_hostname)
+        # urllib3 applies CERT_NONE to the context during connect(); the
+        # critical contract is that check_hostname no longer blocks it.
+        self.assertEqual(conn.cert_reqs, "CERT_NONE")
+
+    def test_secure_leaves_check_hostname_enabled(self):
+        from urllib3.util.ssl_ import create_urllib3_context
+
+        ctx = create_urllib3_context()
+        adapter = RelaxedTLSAdapter()
+        adapter.cert_verify(self._pool(ctx), "https://x.test/", True, None)
+        self.assertTrue(ctx.check_hostname)
+        self.assertNotEqual(ctx.verify_mode, __import__("ssl").CERT_NONE)
+
+    def test_insecure_session_request_does_not_raise(self):
+        # Before the fix: ValueError "Cannot set verify_mode to CERT_NONE
+        # when check_hostname is enabled" on every request.
+        adapter = RelaxedTLSAdapter()
+        ctx = __import__("ssl").create_default_context()
+        conn = mock.MagicMock()
+        conn.conn_kw = {"ssl_context": ctx}
+        del conn.ssl_context
+        adapter.cert_verify(conn, "https://x.test/", False, None)
+        self.assertFalse(ctx.check_hostname)
+
+
 class TestHttpClient(unittest.TestCase):
     def test_configure_and_reset_roundtrip(self):
         client = HttpClient()
