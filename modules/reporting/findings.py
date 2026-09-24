@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from modules.common.constants import SEVERITY_ORDER, secret_severity
+from modules.common.constants import (
+    SEVERITY_ORDER,
+    internal_host_severity,
+    secret_severity,
+)
 
 __all__ = [
     "SEVERITY_ORDER",
@@ -60,11 +64,17 @@ def build_findings_feed(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             source=", ".join(str(x) for x in (s.get("sources") or [s.get("source", "")]) if x),
         ))
 
-    # --- Internal hosts ---
+    # --- Internal hosts (metadata IP → HIGH; other internals stay MEDIUM) ---
     for h in result.get("internal_hosts_found") or []:
+        sev = internal_host_severity(h)
+        title = (
+            "Cloud metadata reference (169.254.x)"
+            if sev == "HIGH"
+            else f"Internal reference ({h.get('kind', 'host')})"
+        )
         feed.append(_finding(
-            "MEDIUM", "internal_hosts",
-            f"Internal reference ({h.get('kind', 'host')})",
+            sev, "internal_hosts",
+            title,
             str(h.get("match", "")),
             source=str(h.get("source", "")),
         ))

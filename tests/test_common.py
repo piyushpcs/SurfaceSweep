@@ -407,6 +407,46 @@ class TestSecretSeverity(unittest.TestCase):
 
         self.assertEqual(exported("Private Key"), "CRITICAL")
 
+    def test_metadata_ip_is_high(self):
+        from modules.common.constants import internal_host_severity
+
+        self.assertEqual(
+            internal_host_severity(
+                {"match": "http://169.254.169.254/latest/meta-data", "kind": "internal_url"}
+            ),
+            "HIGH",
+        )
+        self.assertEqual(internal_host_severity({"match": "169.254.1.1"}), "HIGH")
+        self.assertEqual(internal_host_severity({"match": "10.0.0.1", "kind": "private_ip"}), "MEDIUM")
+        self.assertEqual(internal_host_severity(None), "MEDIUM")
+
+    def test_findings_metadata_high_vs_private_medium(self):
+        from modules.reporting.findings import build_findings_feed
+
+        result = {
+            "internal_hosts_found": [
+                {"kind": "internal_url", "match": "http://169.254.169.254/latest/meta-data", "source": "a.js"},
+                {"kind": "private_ip", "match": "10.0.0.5", "source": "b.js"},
+            ],
+        }
+        feed = build_findings_feed(result)
+        by_title = {f["title"]: f for f in feed if f["module"] == "internal_hosts"}
+        self.assertEqual(by_title["Cloud metadata reference (169.254.x)"]["severity"], "HIGH")
+        self.assertEqual(by_title["Internal reference (private_ip)"]["severity"], "MEDIUM")
+
+    def test_internal_host_risk_weights(self):
+        from modules.extraction.risk import calculate_risk_summary
+
+        base = calculate_risk_summary({"internal_hosts_found": []})["score"]
+        meta = calculate_risk_summary(
+            {"internal_hosts_found": [{"match": "http://169.254.169.254/", "kind": "internal_url"}]}
+        )["score"]
+        priv = calculate_risk_summary(
+            {"internal_hosts_found": [{"match": "10.0.0.5", "kind": "private_ip"}]}
+        )["score"]
+        self.assertEqual(meta - base, 6)
+        self.assertEqual(priv - base, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

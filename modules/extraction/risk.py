@@ -8,13 +8,16 @@ every recalculation (wayback, SPA, validation) preserves them.
 
 from modules.common.constants import (
     CVE_SEVERITY_WEIGHTS,
+    INTERNAL_HOST_RISK_WEIGHTS,
     RISK_THRESHOLDS,
     SECRETS_RISK_WEIGHTS,
+    internal_host_severity,
     secret_severity,
 )
 
 __all__ = [
     "CVE_SEVERITY_WEIGHTS",
+    "INTERNAL_HOST_RISK_WEIGHTS",
     "RISK_THRESHOLDS",
     "SECRETS_RISK_WEIGHTS",
     "calculate_risk_summary",
@@ -76,6 +79,20 @@ def _secrets_boost(result):
     return total
 
 
+def _internal_hosts_boost(result):
+    """
+    Weight internal hosts by severity ladder (Phase C).
+
+    Cloud metadata / link-local (169.254.x) scores HIGH; other internal
+    refs keep the historical MEDIUM weight of 3.
+    """
+    total = 0
+    for h in result.get("internal_hosts_found") or []:
+        sev = internal_host_severity(h)
+        total += INTERNAL_HOST_RISK_WEIGHTS.get(sev, INTERNAL_HOST_RISK_WEIGHTS["MEDIUM"])
+    return total
+
+
 def calculate_risk_summary(result):
     """
     Calculate risk score and level from scan results.
@@ -83,7 +100,7 @@ def calculate_risk_summary(result):
     Score weights:
       - secrets: by type severity (CRITICAL=25, HIGH=10, MEDIUM=5, LOW=2, INFO=0)
       - HIGH sinks: 4 each, MEDIUM: 2 each, LOW: 1 each
-      - internal hosts / private IPs: 3 each
+      - internal hosts: metadata/IP ladder (HIGH=6, MEDIUM=3)
       - source maps: 5 each
       - deobfuscation findings: 3 each
       - internal paths: 1 each
@@ -95,7 +112,7 @@ def calculate_risk_summary(result):
     score += len(result.get("source_maps_found", [])) * 5
     score += len(result.get("deobfuscation_findings", [])) * 3
     score += len(result.get("internal_paths", [])) * 1
-    score += len(result.get("internal_hosts_found", [])) * 3
+    score += _internal_hosts_boost(result)
     for s in result.get("sinks_found", []):
         score += {"HIGH": 4, "MEDIUM": 2, "LOW": 1}.get(s.get("severity", ""), 1)
 

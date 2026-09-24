@@ -6,12 +6,14 @@ __all__ = [
     "CVE_SEVERITY_WEIGHTS",
     "DEFAULT_SECRET_SEVERITY",
     "DEFAULT_USER_AGENT",
+    "INTERNAL_HOST_RISK_WEIGHTS",
     "RISK_THRESHOLDS",
     "SECRETS_RISK_WEIGHTS",
     "SEVERITY_ORDER",
     "SEVERITY_RANK",
     "SECRET_SEVERITY",
     "__version__",
+    "internal_host_severity",
     "secret_severity",
 ]
 
@@ -112,7 +114,30 @@ SECRET_SEVERITY = {
 # Risk points contributed by one secret of each severity.
 SECRETS_RISK_WEIGHTS = {"CRITICAL": 25, "HIGH": 10, "MEDIUM": 5, "LOW": 2, "INFO": 0}
 
+# Internal-host severity ladder (Phase C): cloud metadata / link-local
+# (169.254.x.x) is a direct credential-theft path → HIGH; other internal
+# refs keep the historical MEDIUM rating.
+INTERNAL_HOST_RISK_WEIGHTS = {"HIGH": 6, "MEDIUM": 3, "LOW": 1, "INFO": 0}
+
+DEFAULT_INTERNAL_HOST_SEVERITY = "MEDIUM"
+
 
 def secret_severity(secret_type: str) -> str:
     """Map a secret type label to CRITICAL/HIGH/MEDIUM/LOW/INFO."""
     return SECRET_SEVERITY.get(secret_type or "", DEFAULT_SECRET_SEVERITY)
+
+
+def internal_host_severity(host: dict | None) -> str:
+    """
+    Severity for one internal_hosts_found entry.
+
+    HIGH when the match hits a link-local / cloud-metadata range
+    (169.254.x.x, including 169.254.169.254); otherwise MEDIUM.
+    """
+    if not isinstance(host, dict):
+        return DEFAULT_INTERNAL_HOST_SEVERITY
+    match = str(host.get("match", ""))
+    kind = str(host.get("kind", ""))
+    if kind == "metadata" or "169.254." in match:
+        return "HIGH"
+    return DEFAULT_INTERNAL_HOST_SEVERITY
