@@ -8,7 +8,7 @@ Extract API endpoints and secrets from a target's JavaScript, validate what is l
 check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-532%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-707%20passing-brightgreen)](#testing)
 [![CI](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml/badge.svg)](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/piyushpcs/SurfaceSweep)](https://github.com/piyushpcs/SurfaceSweep/commits/main)
@@ -55,6 +55,7 @@ to build a single inventory of endpoints, then layers on checks that matter in a
 - **Source maps** — `sourceMappingURL` comments, inline base64 maps, `sourcesContent` re-scan for endpoints/secrets/sinks/JWTs
 - **Wayback Machine** — historical JS no longer linked from the live site
 - **SPA route discovery** — React/Vue/Angular routers via static analysis, DOM, router introspection, and BFS crawl
+- **robots.txt / sitemap.xml** — crawler manifests parsed for hidden paths
 
 ### Detection
 
@@ -65,15 +66,18 @@ to build a single inventory of endpoints, then layers on checks that matter in a
 - Potential **PII** (email, E.164 phone, Luhn payment cards, dashed SSNs) — recon signal only, not scored as a finding
 - Library versions (jQuery, Vue, Bootstrap, Lodash, …) and **CVEs** (local DB + optional OSV.dev)
 - **WAF detection** (Cloudflare, Akamai, AWS WAF, Imperva, …) with automatic pacing
+- Prototype-pollution gadgets (`__proto__`, `constructor.prototype`, recursive merges)
 
 ### Analysis & export
 
 - **Endpoint validation** — filters 404s, soft-404s, SPA shells, JSON fail-in-200
-- **CORS scanner** — origin matrix, non-singleton ACAO, redirect FP filter, rate limits, standalone PoC HTML
+- **CORS scanner** — origin matrix, non-singleton ACAO, Private Network Access (PNA) notes, redirect FP filter, rate limits, standalone PoC HTML
 - **JWT analyzer** — offline HS* cracking, wordlist/hashcat export, SSRF-guarded JWKS fetch for RS256→HS256 checks
 - Scope split: internal paths, in-scope URLs, out-of-scope URLs
 - Risk scoring summary per scan
-- **JSON** and **HTML** reports (`schema_version: 1`, executive summary, findings feed)
+- **JSON**, **HTML**, and **SARIF 2.1.0** reports (`schema_version: 1`, executive summary, findings feed)
+- **Scan diff** — compare two reports of the same target (`--diff` or `python -m modules.reporting.diff`)
+- **Multi-target batch** — `--targets hosts.txt` with per-host output files
 - **Burp Suite** / **OWASP ZAP** CSV export
 - Authenticated scans via cookies and custom headers
 - Rate limiting and retry with backoff
@@ -130,15 +134,27 @@ python main.py https://target.com --cors --cors-origin https://evil.com --html
 # JWT analysis + wordlist crack + hashcat/NDJSON exports + optional JWKS fetch
 python main.py https://target.com --jwt --jwt-wordlist secrets.txt \
   --jwt-hashcat hs_tokens.txt --jwt-export findings.ndjson --jwt-network --html
+
+# Diff this scan against a previous baseline
+python main.py https://target.com -f --validate --diff reports/baseline.json
+
+# SARIF for GitHub code scanning
+python main.py https://target.com --cve --cors --sarif
+
+# Batch scan a list of targets (one URL per line, # comments ok)
+python main.py --targets hosts.txt -o reports/batch.json --html --sarif
 ```
 
 Reports default to `reports/surfacesweep_report.json` (JSON) and, with `--html`, a sibling HTML file.
+Batch mode writes one JSON per host next to `-o` (e.g. `reports/batch_app.example.com.json`).
 `reports/` is gitignored.
 
 ### Options
 
 | Flag | Description |
 |------|-------------|
+| `target` | Target URL (omit when using `--targets`) |
+| `--targets FILE` | Batch mode: newline-delimited target URLs |
 | `-o, --output` | Output JSON file (default: `reports/surfacesweep_report.json`) |
 | `-t, --threads` | Concurrent fetch threads (default: 6) |
 | `-d, --depth` | Recursive JS depth: 0=HTML only, 1=JS from HTML, 2=JS from JS, … (default: 1) |
@@ -175,6 +191,8 @@ Reports default to `reports/surfacesweep_report.json` (JSON) and, with `--html`,
 | `--scope` | Limit results to this domain (e.g. `*.target.com`) |
 | `--html` | Also generate an HTML report |
 | `--html-only` | HTML report only (skip JSON) |
+| `--diff BASELINE` | Compare this scan to a baseline JSON; writes `*_diff.json` |
+| `--sarif` | Export findings as SARIF 2.1.0 (GitHub code scanning) |
 | `--no-deobf` | Skip JS deobfuscation |
 | `--regex-only` | Disable AST extraction, use regex only |
 | `--proxy` | HTTP(S) proxy for all scan requests (e.g. `http://127.0.0.1:8080`) |
@@ -199,13 +217,13 @@ SurfaceSweep/
 ├── main.py                 # CLI entry (args + headers only)
 ├── modules/
 │   ├── extraction/         # Regex/AST/browser extraction, secrets, source maps, risk
-│   ├── discovery/          # SPA routes, Wayback Machine
+│   ├── discovery/          # SPA routes, Wayback Machine, robots/sitemap
 │   ├── analysis/           # Validation, CVE/library, sinks, PII
 │   ├── recon/              # WAF detection
 │   ├── cors/               # Origin matrix, probes, classification, scanner
 │   ├── jwt/                # Decode, crack, JWKS, checks, scanner
 │   ├── pipeline/           # ScanContext, stages, merge helpers, runner
-│   └── reporting/          # HTML/JSON, findings feed, Burp/ZAP, CORS PoC
+│   └── reporting/          # HTML/JSON/SARIF, findings feed, Burp/ZAP, CORS PoC, diff
 ├── tests/                  # Unit + offline integration (unittest)
 ├── testbed/vuln_api.py     # Local vulnerable Flask app (:5555)
 └── reports/                # Generated output (gitignored)
@@ -216,14 +234,14 @@ SurfaceSweep/
 
 ```text
 modules/extraction/   engine · patterns · secrets · http · scope · risk · ast · browser · sourcemaps · enrich · deobfuscator
-modules/discovery/    spa · wayback
+modules/discovery/    spa · wayback · robots
 modules/analysis/     validator · libraries · sinks · pii
 modules/recon/        waf
 modules/cors/         origins · classifier · probe · scanner
 modules/jwt/          decode · crack · keys · checks · scanner
 modules/pipeline/     context · stages · merge · runner
-modules/reporting/    html · export · findings · builder · cors_poc
-tests/                test_cors · test_jwt · test_pipeline · test_integration · test_secrets · test_sourcemaps · test_enrich · test_validator · test_pii
+modules/reporting/    html · export · findings · builder · cors_poc · diff · sarif
+tests/                test_cors · test_jwt · test_pipeline · test_integration · test_secrets · test_sourcemaps · test_enrich · test_validator · test_pii · test_wayback · test_robots · test_sinks · test_patterns · test_spa_probe · test_diff · test_sarif · test_batch
 ```
 
 </details>
@@ -249,9 +267,10 @@ coverage run -m unittest discover -s tests -q
 coverage report -m
 ```
 
-- **532 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
-- Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation,
-  JWT decode/crack/JWKS, pipeline stage order, report schema (`schema_version: 1`), and finding feeds
+- **707 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
+- Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation/PNA,
+  JWT decode/crack/JWKS, pipeline stage order, report schema (`schema_version: 1`), finding feeds,
+  scan diff, SARIF export, and multi-target batch mode
 - **CI**: GitHub Actions runs the suite on Python 3.10 and 3.12 with coverage on every push/PR
 - Local vulnerable API for manual checks: `python testbed/vuln_api.py` (port **5555**)
 
@@ -271,10 +290,9 @@ Full phase notes, bug-fix history, and per-feature validation logs live in the
 
 ## Roadmap
 
-- Diff mode — compare two scans of the same target over time
 - Additional secret-pattern tuning as new FP reports arrive
-- SARIF export for code-scanning integrations
-- Multi-target batch scans
+- Baseline-aware scheduling helpers (cron examples for recurring `--diff` scans)
+- Optional HTML diff view alongside JSON `*_diff.json`
 
 ## Responsible use
 
