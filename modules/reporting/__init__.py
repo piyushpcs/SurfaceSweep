@@ -19,7 +19,14 @@ from modules.reporting.builder import (
     output_paths,
     write_reports,
 )
-from modules.reporting.diff import diff_results, load_result, print_diff, save_diff
+from modules.reporting.diff import (
+    build_diff_html,
+    diff_results,
+    load_result,
+    print_diff,
+    save_diff,
+    save_diff_html,
+)
 from modules.reporting.sarif import build_sarif, export_sarif
 
 __all__ = [
@@ -28,6 +35,7 @@ __all__ = [
     "render_executive_summary", "render_findings_feed",
     "export_burp_csv", "export_zap_csv", "export_wordlist", "build_wordlist",
     "build_report_plan", "ensure_parent_dir", "output_paths", "write_reports",
-    "diff_results", "load_result", "print_diff", "save_diff",
+    "build_diff_html", "diff_results", "load_result", "print_diff",
+    "save_diff", "save_diff_html",
     "build_sarif", "export_sarif",
 ]

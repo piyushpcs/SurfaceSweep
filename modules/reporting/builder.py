@@ -47,6 +47,7 @@ def output_paths(output: str) -> Dict[str, str]:
         "cors_poc": f"{base}_cors_poc.html",
         "sarif": f"{base}.sarif",
         "diff": f"{base}_diff.json",
+        "diff_html": f"{base}_diff.html",
         "wordlist": f"{base}_wordlist.txt",
     }
 

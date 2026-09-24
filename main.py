@@ -262,8 +262,10 @@ def _apply_diff(args, result, verbose: bool) -> int:
         baseline = load_result(args.diff)
         diff = diff_results(baseline, result)
         print_diff(diff, verbose=verbose)
-        diff_path = output_paths(args.output)["base"] + "_diff.json"
-        save_diff(diff, diff_path)
+        from modules.reporting.diff import save_diff_html
+        base = output_paths(args.output)["base"]
+        save_diff(diff, base + "_diff.json")
+        save_diff_html(diff, base + "_diff.html")
         return EXIT_OK
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         console_error(f"[!] Diff failed: {exc}")

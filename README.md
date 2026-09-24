@@ -8,7 +8,7 @@ Extract API endpoints and secrets from a target's JavaScript, validate what is l
 check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-815%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-820%20passing-brightgreen)](#testing)
 [![CI](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml/badge.svg)](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/piyushpcs/SurfaceSweep)](https://github.com/piyushpcs/SurfaceSweep/commits/main)
@@ -79,7 +79,7 @@ to build a single inventory of endpoints, then layers on checks that matter in a
 - Scope split: internal paths, in-scope URLs, out-of-scope URLs
 - Risk scoring summary per scan
 - **JSON**, **HTML**, and **SARIF 2.1.0** reports (`schema_version: 1`, executive summary, findings feed)
-- **Scan diff** — compare two reports of the same target (`--diff` or `python -m modules.reporting.diff`)
+- **Scan diff** — compare two reports of the same target (`--diff` or `python -m modules.reporting.diff`); writes JSON + HTML
 - **Multi-target batch** — `--targets hosts.txt` with per-host output files
 - **Burp Suite** / **OWASP ZAP** CSV export
 - **Path/parameter wordlist** — `--wordlist` for ffuf/content discovery (segments + param names)
@@ -125,6 +125,9 @@ python main.py https://target.com --cookie "session=abc123" -H "X-Api-Key: value
 
 # GraphQL introspection probe
 python main.py https://target.com --graphql --html
+
+# Compare two offline reports (JSON + HTML diff)
+python -m modules.reporting.diff old.json new.json -o reports/diff.json
 
 # Live-verify secrets (read-only vendor API GETs)
 python main.py https://target.com --verify-secrets --html
@@ -209,7 +212,7 @@ Batch mode writes one JSON per host next to `-o` (e.g. `reports/batch_app.exampl
 | `--scope` | Limit results to this domain (e.g. `*.target.com`) |
 | `--html` | Also generate an HTML report |
 | `--html-only` | HTML report only (skip JSON) |
-| `--diff BASELINE` | Compare this scan to a baseline JSON; writes `*_diff.json` |
+| `--diff BASELINE` | Compare this scan to a baseline JSON; writes `*_diff.json` + `*_diff.html` |
 | `--sarif` | Export findings as SARIF 2.1.0 (GitHub code scanning) |
 | `--wordlist [FILE]` | Export path/parameter wordlist (omit FILE → sibling of `-o`) |
 | `--no-deobf` | Skip JS deobfuscation |
@@ -286,10 +289,10 @@ coverage run -m unittest discover -s tests -q
 coverage report -m
 ```
 
-- **815 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
+- **820 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
 - Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation/PNA,
   JWT decode/crack/JWKS, GraphQL introspection probe, secret live-verification, pipeline stage order,
-  report schema (`schema_version: 1`), finding feeds,
+  report schema (`schema_version: 1`), finding feeds, scan diff (JSON + HTML),
   scan diff, SARIF export, and multi-target batch mode
 - **CI**: GitHub Actions runs the suite on Python 3.10 and 3.12 with coverage on every push/PR
 - Local vulnerable API for manual checks: `python testbed/vuln_api.py` (port **5555**)
@@ -308,11 +311,32 @@ coverage report -m
 Full phase notes, bug-fix history, and per-feature validation logs live in the
 [repository history](https://github.com/piyushpcs/SurfaceSweep/commits/main).
 
+## Scheduled scans
+
+Keep a rolling baseline and alert on regressions with cron + `--diff`:
+
+```bash
+# Nightly scan of an authorized target; rotate baseline weekly
+# crontab -e
+0 3 * * *  cd /opt/SurfaceSweep && ./venv/bin/python main.py https://target.example -f --validate --html -o reports/nightly.json --diff reports/baseline.json --fail-on high >> logs/nightly.log 2>&1
+
+# Monday: promote last good report to baseline (only when no regression)
+0 4 * * 1  cd /opt/SurfaceSweep && test -f reports/nightly.json && cp reports/nightly.json reports/baseline.json
+```
+
+- `--diff BASELINE.json` writes `*_diff.json` **and** a readable `*_diff.html` next to the scan report.
+- `--fail-on high` exits `1` when HIGH/CRITICAL findings appear — wire that into mail/webhook wrappers.
+- Offline baseline comparison (no network):
+
+```bash
+python -m modules.reporting.diff reports/baseline.json reports/nightly.json -o reports/nightly_diff.json
+# → reports/nightly_diff.json + reports/nightly_diff.html
+```
+
 ## Roadmap
 
 - Additional secret-pattern tuning as new FP reports arrive
-- Baseline-aware scheduling helpers (cron examples for recurring `--diff` scans)
-- Optional HTML diff view alongside JSON `*_diff.json`
+- Burp / ZAP / HAR import as alternate discovery sources
 
 ## Responsible use
 

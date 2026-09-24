@@ -6,11 +6,13 @@ import tempfile
 import unittest
 
 from modules.reporting.diff import (
+    build_diff_html,
     diff_results,
     load_result,
     print_diff,
     run_diff_cli,
     save_diff,
+    save_diff_html,
 )
 
 
@@ -117,6 +119,56 @@ class TestDiffIO(unittest.TestCase):
             d = run_diff_cli(old_p, new_p, output=out_p, verbose=False)
             self.assertEqual(d["endpoints"]["added"], ["/extra"])
             self.assertTrue(os.path.isfile(out_p))
+            # HTML sibling written by default (Phase F5)
+            self.assertTrue(os.path.isfile(os.path.join(tmp, "diff.html")))
+
+
+class TestDiffHtml(unittest.TestCase):
+    def test_build_html_contains_sections(self):
+        d = diff_results(
+            _result(internal_paths=["/login"]),
+            _result(internal_paths=["/login", "/new"]),
+        )
+        html = build_diff_html(d)
+        self.assertIn("Scan Diff", html)
+        self.assertIn("Endpoints", html)
+        self.assertIn("/new", html)
+        self.assertIn("Risk delta", html)
+        self.assertIn("NO REGRESSION", html)
+
+    def test_build_html_escapes_items(self):
+        d = diff_results(
+            _result(internal_paths=[]),
+            _result(internal_paths=["/<script>alert(1)</script>"]),
+        )
+        html = build_diff_html(d)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;", html)
+
+    def test_regression_badge(self):
+        old = _result(secrets_found=[], risk_summary={"score": 0, "level": "INFO"})
+        new = _result(
+            secrets_found=[{"type": "AWS Access Key", "match": "AKIAEXAMPLEKEY123"}],
+            risk_summary={"score": 35, "level": "HIGH", "severity_counts": {"HIGH": 1}},
+        )
+        html = build_diff_html(diff_results(old, new))
+        self.assertIn("REGRESSION", html)
+
+    def test_save_diff_html(self):
+        d = diff_results(_result(), _result(internal_paths=["/login", "/x"]))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "out", "diff.html")
+            self.assertTrue(save_diff_html(d, path))
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            self.assertIn("Scan Diff", text)
+            self.assertIn("/x", text)
+
+    def test_output_paths_include_diff_html(self):
+        from modules.reporting.builder import output_paths
+        p = output_paths("reports/scan.json")
+        self.assertEqual(p["diff"], "reports/scan_diff.json")
+        self.assertEqual(p["diff_html"], "reports/scan_diff.html")
 
 
 class TestDiffCliFlag(unittest.TestCase):
