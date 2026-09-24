@@ -9,12 +9,16 @@ import requests
 from modules.extraction.http import (
     HttpClient,
     RateLimiter,
+    RelaxedTLSAdapter,
     clear_text_cache,
     fetch_text,
     fetch_with_retry,
     get_page,
     get_cached_text,
+    is_tls_policy_error,
     parse_retry_after,
+    request_tls,
+    relaxed_session,
 )
 
 
@@ -210,6 +214,61 @@ class TestRateLimiterStillWorks(unittest.TestCase):
             limiter.wait()
         elapsed = time.monotonic() - t0
         self.assertGreaterEqual(elapsed, 0.05)
+
+
+class TestTlsPolicyFallback(unittest.TestCase):
+    def test_is_tls_policy_error_reset(self):
+        exc = requests.ConnectionError(
+            "('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))"
+        )
+        self.assertTrue(is_tls_policy_error(exc))
+
+    def test_is_tls_policy_error_refused_not_tls(self):
+        self.assertFalse(is_tls_policy_error(requests.ConnectionError("refused")))
+
+    def test_is_tls_policy_error_non_request_exception(self):
+        self.assertFalse(is_tls_policy_error(ValueError("connection reset")))
+
+    @mock.patch("modules.extraction.http.relaxed_session")
+    @mock.patch("modules.extraction.http.requests.request")
+    def test_request_tls_falls_back_on_reset(self, request_mock, relaxed_mock):
+        reset = requests.ConnectionError(
+            "('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))"
+        )
+        ok = _resp(200)
+        request_mock.side_effect = [reset, ok]
+        relaxed_mock.return_value.request.return_value = ok
+
+        resp = request_tls("GET", "https://legacy.test/")
+        self.assertEqual(resp.status_code, 200)
+        relaxed_mock.return_value.request.assert_called_once()
+
+    @mock.patch("modules.extraction.http.relaxed_session")
+    @mock.patch("modules.extraction.http.requests.request")
+    def test_request_tls_reraise_non_tls_error(self, request_mock, relaxed_mock):
+        request_mock.side_effect = requests.ConnectionError("refused")
+        with self.assertRaises(requests.ConnectionError):
+            request_tls("GET", "https://x.test/")
+        relaxed_mock.assert_not_called()
+
+    @mock.patch("modules.extraction.http.relaxed_session")
+    @mock.patch("modules.extraction.http.requests.get")
+    def test_fetch_retries_via_relaxed_session_on_tls_reset(self, get_mock, relaxed_mock):
+        reset = requests.ConnectionError(
+            "('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))"
+        )
+        get_mock.side_effect = reset
+        relaxed_mock.return_value.get.return_value = _resp(200)
+
+        resp = fetch_with_retry("https://legacy.test/a.js")
+        self.assertEqual(resp.status_code, 200)
+        relaxed_mock.return_value.get.assert_called_once()
+
+    def test_relaxed_session_mounts_adapter(self):
+        sess = relaxed_session()
+        self.assertIsInstance(sess, requests.Session)
+        adapter = sess.get_adapter("https://example.com/")
+        self.assertIsInstance(adapter, RelaxedTLSAdapter)
 
 
 class TestHttpClient(unittest.TestCase):

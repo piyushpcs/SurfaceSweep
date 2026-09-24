@@ -262,6 +262,8 @@ def scan_cors(
     raw_findings = []
     error_probes = 0
     session = requests.Session()
+    from modules.extraction.http import RelaxedTLSAdapter
+    session.mount("https://", RelaxedTLSAdapter())
     baselines = {}
     urls_with_acao = set()
     trusted_seeds = set()

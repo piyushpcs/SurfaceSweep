@@ -122,12 +122,22 @@ def probe_introspection(
     }
 
     try:
-        resp = http.post(
-            url,
-            json={"query": INTROSPECTION_QUERY},
-            timeout=timeout,
-            **kwargs,
-        )
+        if session is None:
+            from modules.extraction.http import request_tls
+            resp = request_tls(
+                "POST",
+                url,
+                json={"query": INTROSPECTION_QUERY},
+                timeout=timeout,
+                **kwargs,
+            )
+        else:
+            resp = http.post(
+                url,
+                json={"query": INTROSPECTION_QUERY},
+                timeout=timeout,
+                **kwargs,
+            )
     except _requests.RequestException as exc:
         result["error"] = str(exc) or exc.__class__.__name__
         return result

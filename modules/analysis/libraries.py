@@ -506,7 +506,9 @@ def query_osv(libraries, timeout=10):
         return {}
 
     try:
-        resp = requests.post(
+        from modules.extraction.http import request_tls
+        resp = request_tls(
+            "POST",
             "https://api.osv.dev/v1/querybatch",
             json={"queries": queries},
             timeout=timeout,

@@ -202,8 +202,8 @@ def verify_secret(
 
     try:
         if do_get is None:
-            import requests
-            resp = requests.get(url, **kwargs)
+            from modules.extraction.http import request_tls
+            resp = request_tls("GET", url, **kwargs)
         else:
             resp = do_get(url, **kwargs)
         code = int(getattr(resp, "status_code", 0) or 0)

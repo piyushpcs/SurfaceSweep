@@ -359,15 +359,25 @@ def probe_route(url, timeout=5, session=None):
     confirming status code, or None when the path does not look live.
     """
     import requests as _requests
-    http = session if session is not None else _requests
+    from modules.extraction.http import request_tls
+
     headers = {"User-Agent": "SurfaceSweep/1.0"}
+    # HEAD first (some stacks reject it with RST — fall through to GET)
     try:
-        r = http.head(url, timeout=timeout, allow_redirects=True, headers=headers)
+        if session is not None:
+            r = session.head(url, timeout=timeout, allow_redirects=True, headers=headers)
+        else:
+            r = request_tls("HEAD", url, timeout=timeout, allow_redirects=True, headers=headers)
         status = r.status_code
         if status in _PROBE_EXISTS_STATUSES and status not in (405, 501):
             return status
-        # HEAD inconclusive or method-not-allowed → confirm with GET
-        r = http.get(url, timeout=timeout, allow_redirects=True, headers=headers)
+    except _requests.RequestException:
+        pass
+    try:
+        if session is not None:
+            r = session.get(url, timeout=timeout, allow_redirects=True, headers=headers)
+        else:
+            r = request_tls("GET", url, timeout=timeout, allow_redirects=True, headers=headers)
         status = r.status_code
         if status in _PROBE_EXISTS_STATUSES:
             return status
@@ -422,7 +432,8 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
 
     # Get JS files from the page
     try:
-        resp = _requests.get(base_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})
+        from modules.extraction.http import request_tls as _request_tls
+        resp = _request_tls("GET", base_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})
         # Find script src
         for m in re.finditer(r'<script[^>]+src=["\']([^"\']+)["\']', resp.text, re.IGNORECASE):
             js_url = urljoin(base_url, m.group(1))
@@ -436,7 +447,8 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
         if scope and not is_same_scope(js_url, scope):
             continue
         try:
-            js_resp = _requests.get(js_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})
+            from modules.extraction.http import request_tls as _request_tls
+            js_resp = _request_tls("GET", js_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})
             routes = extract_routes_from_js(js_resp.text)
             for route in routes:
                 if add_route(route, "static"):

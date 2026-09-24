@@ -8,6 +8,7 @@ import requests
 
 from modules.cors.classifier import classify_cors, parse_acao_list
 from modules.cors.origins import origins_equal
+from modules.extraction.http import request_tls
 
 USER_AGENT = "SurfaceSweep/1.0"
 
@@ -98,7 +99,6 @@ def probe_baseline(url, timeout=8, headers=None, limiter=None, session=None):
     Returns dict with status/final_url/acao/acac/vary/acpn/error/static_acao.
     Cross-domain redirects yield empty ACAO (result belongs to another host).
     """
-    http = session if session is not None else requests
     req_headers = {"User-Agent": USER_AGENT}
     if headers:
         req_headers.update(headers)
@@ -107,9 +107,14 @@ def probe_baseline(url, timeout=8, headers=None, limiter=None, session=None):
     if limiter:
         limiter.wait()
     try:
-        resp = http.request(
-            "GET", url, timeout=timeout, headers=req_headers, allow_redirects=True
-        )
+        if session is not None:
+            resp = session.request(
+                "GET", url, timeout=timeout, headers=req_headers, allow_redirects=True
+            )
+        else:
+            resp = request_tls(
+                "GET", url, timeout=timeout, headers=req_headers, allow_redirects=True
+            )
         final_url = str(resp.url)
         if is_cross_domain_redirect(url, final_url):
             return {
@@ -166,7 +171,6 @@ def probe_endpoint(
     """
     results = []
     is_preflight = method.upper() == "OPTIONS"
-    http = session if session is not None else requests
 
     for origin in origins:
         if limiter:
@@ -180,13 +184,22 @@ def probe_endpoint(
         try:
             # Browsers follow redirects for CORS checks; ACAO is read from
             # the final response (e.g. apex → www often carries the headers).
-            resp = http.request(
-                method,
-                url,
-                timeout=timeout,
-                headers=req_headers,
-                allow_redirects=True,
-            )
+            if session is not None:
+                resp = session.request(
+                    method,
+                    url,
+                    timeout=timeout,
+                    headers=req_headers,
+                    allow_redirects=True,
+                )
+            else:
+                resp = request_tls(
+                    method,
+                    url,
+                    timeout=timeout,
+                    headers=req_headers,
+                    allow_redirects=True,
+                )
             final_url = str(resp.url)
             if is_cross_domain_redirect(url, final_url):
                 # Headers belong to the final host — not a finding for this URL

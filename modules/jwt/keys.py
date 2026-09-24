@@ -117,7 +117,9 @@ def _get_with_safe_redirects(url, timeout=5.0, max_redirects=3):
         if not is_safe_jwt_fetch_url(current):
             return None
         try:
-            resp = requests.get(
+            from modules.extraction.http import request_tls
+            resp = request_tls(
+                "GET",
                 current,
                 timeout=timeout,
                 allow_redirects=False,

@@ -263,7 +263,7 @@ class TestStep2OriginsAndProbe(unittest.TestCase):
         resp.url = url
         return resp
 
-    @mock.patch("modules.cors.probe.requests.request")
+    @mock.patch("modules.cors.probe.request_tls")
     def test_probe_endpoint_happy_path(self, request_mock):
         request_mock.return_value = self._mock_resp({
             "Access-Control-Allow-Origin": EVIL,
@@ -278,7 +278,7 @@ class TestStep2OriginsAndProbe(unittest.TestCase):
         self.assertEqual(results[0]["acpn"], "")
         self.assertNotIn("missing Vary", results[0]["detail"])
 
-    @mock.patch("modules.cors.probe.requests.request")
+    @mock.patch("modules.cors.probe.request_tls")
     def test_probe_endpoint_missing_vary_note(self, request_mock):
         request_mock.return_value = self._mock_resp({
             "Access-Control-Allow-Origin": EVIL,
@@ -289,7 +289,7 @@ class TestStep2OriginsAndProbe(unittest.TestCase):
         )
         self.assertIn("missing Vary: Origin", results[0]["detail"])
 
-    @mock.patch("modules.cors.probe.requests.request")
+    @mock.patch("modules.cors.probe.request_tls")
     def test_probe_endpoint_skips_cross_domain_redirect(self, request_mock):
         request_mock.return_value = self._mock_resp(
             headers={"Access-Control-Allow-Origin": EVIL},
@@ -300,7 +300,7 @@ class TestStep2OriginsAndProbe(unittest.TestCase):
         )
         self.assertEqual(results, [])
 
-    @mock.patch("modules.cors.probe.requests.request")
+    @mock.patch("modules.cors.probe.request_tls")
     def test_probe_endpoint_error_row(self, request_mock):
         import requests as requests_lib
 
@@ -309,7 +309,7 @@ class TestStep2OriginsAndProbe(unittest.TestCase):
         self.assertEqual(results[0]["severity"], "ERROR")
         self.assertEqual(results[0]["acpn"], "")
 
-    @mock.patch("modules.cors.probe.requests.request")
+    @mock.patch("modules.cors.probe.request_tls")
     def test_probe_baseline_omits_origin_header(self, request_mock):
         request_mock.return_value = self._mock_resp({
             "Access-Control-Allow-Origin": "*",
@@ -320,7 +320,7 @@ class TestStep2OriginsAndProbe(unittest.TestCase):
         self.assertTrue(out["static_acao"])
         self.assertEqual(out["acao"], "*")
 
-    @mock.patch("modules.cors.probe.requests.request")
+    @mock.patch("modules.cors.probe.request_tls")
     def test_probe_baseline_cross_domain_static_false(self, request_mock):
         request_mock.return_value = self._mock_resp(
             headers={"Access-Control-Allow-Origin": "*"},
@@ -331,7 +331,7 @@ class TestStep2OriginsAndProbe(unittest.TestCase):
         self.assertEqual(out["acao"], "")
         self.assertEqual(out["error"], "cross-domain redirect")
 
-    @mock.patch("modules.cors.probe.requests.request")
+    @mock.patch("modules.cors.probe.request_tls")
     def test_probe_endpoint_uses_shared_session(self, request_mock):
         session = mock.Mock()
         session.request.return_value = self._mock_resp({

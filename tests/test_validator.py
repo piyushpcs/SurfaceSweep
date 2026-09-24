@@ -172,7 +172,7 @@ class TestSoft404StillWorks(unittest.TestCase):
 
 
 class TestValidateEndpointUsesBodyNotes(unittest.TestCase):
-    @mock.patch("modules.analysis.validator.requests.request")
+    @mock.patch("modules.analysis.validator.request_tls")
     def test_spa_shell_downgrades_to_dead(self, request_mock):
         request_mock.return_value = _resp(
             '<!doctype html><div id="root"></div>', "text/html"
@@ -181,7 +181,7 @@ class TestValidateEndpointUsesBodyNotes(unittest.TestCase):
         self.assertEqual(result["status"], "dead")
         self.assertEqual(result.get("note"), "spa_shell")
 
-    @mock.patch("modules.analysis.validator.requests.request")
+    @mock.patch("modules.analysis.validator.request_tls")
     def test_json_auth_downgrades_to_restricted(self, request_mock):
         request_mock.return_value = _resp(
             '{"error":"invalid token"}', "application/json"
@@ -190,7 +190,7 @@ class TestValidateEndpointUsesBodyNotes(unittest.TestCase):
         self.assertEqual(result["status"], "restricted")
         self.assertEqual(result.get("note"), "json_auth")
 
-    @mock.patch("modules.analysis.validator.requests.request")
+    @mock.patch("modules.analysis.validator.request_tls")
     def test_non_200_ignores_body(self, request_mock):
         request_mock.return_value = _resp(
             '{"error":"not found"}', "application/json", status_code=404
@@ -199,7 +199,7 @@ class TestValidateEndpointUsesBodyNotes(unittest.TestCase):
         self.assertEqual(result["status"], "dead")
         self.assertNotIn("note", result)
 
-    @mock.patch("modules.analysis.validator.requests.request")
+    @mock.patch("modules.analysis.validator.request_tls")
     def test_plain_200_no_note(self, request_mock):
         request_mock.return_value = _resp('{"ok":true}', "application/json")
         result = validate_endpoint("https://x.test/api/v1/health")
@@ -255,7 +255,7 @@ class TestMethodAwareValidation(unittest.TestCase):
         self.assertEqual(mm["/health"], "GET")
         self.assertEqual(mm["/api/items/9/delete"], "OPTIONS")  # inferred DELETE → OPTIONS
 
-    @mock.patch("modules.analysis.validator.requests.request")
+    @mock.patch("modules.analysis.validator.request_tls")
     def test_validate_endpoints_uses_method_map(self, request_mock):
         request_mock.return_value = _resp('{"ok":true}', "application/json")
         validate_endpoints(
@@ -268,7 +268,7 @@ class TestMethodAwareValidation(unittest.TestCase):
         self.assertEqual(args[0], "POST")
         self.assertEqual(args[1], "https://x.test/api/orders")
 
-    @mock.patch("modules.analysis.validator.requests.request")
+    @mock.patch("modules.analysis.validator.request_tls")
     def test_ws_urls_skipped(self, request_mock):
         request_mock.return_value = _resp('{"ok":true}', "application/json")
         validate_endpoints(

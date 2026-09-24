@@ -8,11 +8,14 @@ instance so existing call sites and tests stay unchanged.
 
 from __future__ import annotations
 
+import threading
 import time
 from email.utils import parsedate_to_datetime
 from typing import Optional
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.ssl_ import create_urllib3_context
 
 from modules.common.constants import DEFAULT_USER_AGENT
 
@@ -20,6 +23,7 @@ __all__ = [
     "DEFAULT_USER_AGENT",
     "HttpClient",
     "RateLimiter",
+    "RelaxedTLSAdapter",
     "cache_text",
     "clear_text_cache",
     "configure_http",
@@ -28,12 +32,65 @@ __all__ = [
     "fetch_with_retry",
     "get_cached_text",
     "get_page",
+    "is_tls_policy_error",
     "parse_retry_after",
     "request_kwargs",
+    "request_tls",
     "reset_http_config",
+    "relaxed_session",
 ]
 
 _TEXT_CACHE_MAX = 512
+
+
+def is_tls_policy_error(exc: BaseException) -> bool:
+    """
+    True when a ConnectionError looks like a server rejecting our TLS
+    cipher policy (common on legacy gov/enterprise hosts that only offer
+    static-RSA / SECLEVEL≤1 suites while Python defaults to SECLEVEL=2).
+    """
+    if not isinstance(exc, requests.RequestException):
+        return False
+    text = str(exc).lower()
+    return "connection reset" in text or "connection aborted" in text
+
+
+class RelaxedTLSAdapter(HTTPAdapter):
+    """HTTPS adapter with OpenSSL security level 0 (legacy cipher suites)."""
+
+    def init_poolmanager(self, *args, **kwargs):
+        ctx = create_urllib3_context()
+        ctx.set_ciphers("DEFAULT@SECLEVEL=0")
+        kwargs["ssl_context"] = ctx
+        super().init_poolmanager(*args, **kwargs)
+
+
+_relaxed_local = threading.local()
+
+
+def relaxed_session() -> requests.Session:
+    """Thread-local Session mounted with RelaxedTLSAdapter (connection reuse)."""
+    sess = getattr(_relaxed_local, "session", None)
+    if sess is None:
+        sess = requests.Session()
+        sess.mount("https://", RelaxedTLSAdapter())
+        _relaxed_local.session = sess
+    return sess
+
+
+def request_tls(method: str, url: str, **kwargs):
+    """
+    HTTP request with automatic TLS-policy fallback.
+
+    Tries the default stack first; on a connection reset/abort that looks
+    like cipher-policy rejection, retries once via relaxed_session().
+    """
+    try:
+        return requests.request(method, url, **kwargs)
+    except requests.ConnectionError as exc:
+        if not is_tls_policy_error(exc):
+            raise
+        return relaxed_session().request(method, url, **kwargs)
 
 
 def parse_retry_after(value: Optional[str], default: float = 2.0, cap: float = 60.0) -> float:
@@ -188,12 +245,16 @@ class HttpClient:
         """
         req_headers = headers if headers is not None else self.default_headers()
 
+        used_relaxed = False
         for attempt in range(max_retries):
             if limiter:
                 limiter.wait()
             try:
                 kwargs = self.request_kwargs(headers=req_headers)
-                resp = requests.get(url, timeout=timeout, **kwargs)
+                if used_relaxed:
+                    resp = relaxed_session().get(url, timeout=timeout, **kwargs)
+                else:
+                    resp = requests.get(url, timeout=timeout, **kwargs)
                 if resp.status_code == 429:
                     if attempt >= max_retries - 1:
                         return None
@@ -213,7 +274,10 @@ class HttpClient:
                     time.sleep(2 ** attempt)
                     continue
                 raise
-            except requests.ConnectionError:
+            except requests.ConnectionError as exc:
+                if is_tls_policy_error(exc) and not used_relaxed:
+                    used_relaxed = True
+                    continue
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                     continue

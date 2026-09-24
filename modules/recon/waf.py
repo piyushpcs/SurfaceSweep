@@ -7,6 +7,7 @@ so the scanner can adjust speed and headers to avoid being blocked.
 
 import requests
 from modules.common.console import detail, ok, warn
+from modules.extraction.http import request_tls
 
 
 # WAF signatures: header name -> list of (value_pattern, waf_name)
@@ -84,7 +85,7 @@ def detect_waf(url, timeout=10, verbose=True):
     }
 
     try:
-        resp = requests.get(url, timeout=timeout, headers={"User-Agent": "SurfaceSweep/1.0"}, allow_redirects=True)
+        resp = request_tls("GET", url, timeout=timeout, headers={"User-Agent": "SurfaceSweep/1.0"}, allow_redirects=True)
         headers = {k.lower(): v.lower() for k, v in resp.headers.items()}
 
         matches = []

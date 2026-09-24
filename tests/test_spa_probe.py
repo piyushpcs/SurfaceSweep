@@ -54,7 +54,17 @@ class TestProbeRoute(unittest.TestCase):
     def test_network_error_returns_none(self):
         session = mock.Mock()
         session.head.side_effect = requests.ConnectionError("down")
+        session.get.side_effect = requests.ConnectionError("down")
         self.assertIsNone(probe_route("https://x.test/x", session=session))
+
+    def test_head_reset_falls_back_to_get(self):
+        session = mock.Mock()
+        session.head.side_effect = requests.ConnectionError(
+            "('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))"
+        )
+        session.get.return_value = _Resp(200)
+        self.assertEqual(probe_route("https://x.test/admin", session=session), 200)
+        session.get.assert_called_once()
 
 
 if __name__ == "__main__":

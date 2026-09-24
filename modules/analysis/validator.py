@@ -27,6 +27,7 @@ import requests
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from modules.common.console import detail, emit, info
+from modules.extraction.http import request_tls
 
 USER_AGENT = "SurfaceSweep/1.0"
 
@@ -325,7 +326,7 @@ def validate_endpoint(url, method="GET", timeout=10, allow_redirects=False, head
         headers = {"User-Agent": USER_AGENT}
 
     try:
-        resp = requests.request(
+        resp = request_tls(
             method,
             url,
             timeout=timeout,
