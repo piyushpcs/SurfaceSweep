@@ -141,6 +141,15 @@ class TestStageList(unittest.TestCase):
         self.assertIn("export", stage_names(_args(burp=True)))
         self.assertIn("export", stage_names(_args(zap=True)))
         self.assertIn("export", stage_names(_args(cors_poc=True)))
+        # SARIF/wordlist are report-stage artifacts — no separate export stage
+        self.assertNotIn("export", stage_names(_args(sarif=True)))
+        self.assertNotIn("export", stage_names(_args(wordlist="__default__")))
+
+    def test_cors_poc_implies_cors_stage(self):
+        """--cors-poc without --cors must still scan CORS (else no PoC data)."""
+        names = stage_names(_args(cors_poc=True))
+        self.assertIn("cors", names)
+        self.assertIn("export", names)
 
     def test_scan_always_present(self):
         self.assertIn("scan", stage_names(_args()))

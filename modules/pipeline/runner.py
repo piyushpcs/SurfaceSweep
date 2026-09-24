@@ -47,8 +47,8 @@ _STAGE_SPECS: List[Tuple[str, StageFn, Callable[[Namespace], bool]]] = [
     ("validate", stage_validate, lambda a: bool(a.validate)),
     ("graphql", stage_graphql, lambda a: bool(getattr(a, "graphql", False))),
     ("verify_secrets", stage_verify_secrets, lambda a: bool(getattr(a, "verify_secrets", False))),
-    ("cors", stage_cors, lambda a: bool(a.cors)),
-    ("export", stage_export, lambda a: bool(a.burp or a.zap or getattr(a, "cors_poc", False) or getattr(a, "sarif", False) or getattr(a, "wordlist", None))),
+    ("cors", stage_cors, lambda a: bool(a.cors or getattr(a, "cors_poc", False))),
+    ("export", stage_export, lambda a: bool(a.burp or a.zap or getattr(a, "cors_poc", False))),
     ("report", stage_report, lambda a: True),
 ]
 
