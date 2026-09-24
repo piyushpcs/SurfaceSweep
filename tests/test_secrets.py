@@ -299,5 +299,46 @@ class TestModernSecretPatterns(unittest.TestCase):
         self.assertGreaterEqual(len(SECRET_PATTERNS), 60)
 
 
+class TestFpGateHardening(unittest.TestCase):
+    """E2 — structural FP shapes + expanded placeholder vocabulary."""
+
+    def test_uuid_rejected(self):
+        self.assertFalse(is_likely_real_secret("550e8400-e29b-41d4-a716-446655440000"))
+
+    def test_email_rejected(self):
+        self.assertFalse(is_likely_real_secret("user@example-company.com"))
+
+    def test_relative_path_rejected(self):
+        self.assertFalse(is_likely_real_secret("/static/assets/config.json"))
+
+    def test_common_sample_tokens_rejected(self):
+        for sample in (
+            "deadbeefdeadbeefcafe",
+            "xxxxxxxxxxxxxxxxxxxx",
+            "foobarfoobarbazquux1",
+            "password1password1aa",
+            "your_api_key_here_xx",
+        ):
+            self.assertFalse(is_likely_real_secret(sample), sample)
+
+    def test_vendor_prefix_still_accepted_despite_uuidish_body(self):
+        # high-confidence prefixes are exempt from structural gates
+        self.assertTrue(is_likely_real_secret("AKIAEXAMPLE", label="AWS Access Key"))
+
+    def test_random_high_entropy_still_accepted(self):
+        self.assertTrue(is_likely_real_secret(_GENERIC_HIGH_ENTROPY))
+        self.assertTrue(is_likely_real_secret(_SECOND_HIGH_ENTROPY))
+
+    def test_bare_object_password_still_extracted(self):
+        found = extract_secrets('{ password: "smtp_secret_pass_123" }', "unit.js")
+        self.assertTrue(any(s["type"] == "Generic Password" for s in found))
+
+    def test_uuid_as_password_value_rejected(self):
+        found = extract_secrets(
+            '{ password: "550e8400-e29b-41d4-a716-446655440000" }', "unit.js"
+        )
+        self.assertFalse(any(s["type"] == "Generic Password" for s in found))
+
+
 if __name__ == "__main__":
     unittest.main()

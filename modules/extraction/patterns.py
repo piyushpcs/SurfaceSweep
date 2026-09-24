@@ -108,13 +108,18 @@ _PLACEHOLDER_SUBSTRINGS = (
     "example-key", "example_key", "example-token", "example_secret",
     "placeholder", "not-a-secret", "not_a_secret", "redacted",
     "insert-here", "insert_here", "put-here", "todo", "fixme",
+    "xxxx", "foobar", "foo-bar", "foo_bar", "deadbeef", "cafebabe",
+    "example.com", "example.org", "password1", "passw0rd",
+    "admin123", "qwerty", "letmein", "hunter2",
+    "secretsecret", "test123", "demo123",
 )
 
 _PLACEHOLDER_PREFIXES = (
     "your-", "your_", "my-key", "my_key", "example-",
     "sample-", "sample_", "dummy-", "dummy_", "fake-",
     "changeme", "placeholder", "redacted", "todo-", "fixme-",
-    "insert-", "replace-",
+    "insert-", "replace-", "test-", "test_", "demo-", "demo_",
+    "xxxx", "zzzz", "aaaa", "000000",
 )
 
 # ---- Private / internal network detection ----
@@ -260,6 +265,23 @@ def _is_repeated_char(value):
     return len(set(value)) == 1
 
 
+_UUID_RE = re.compile(
+    r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+_EMAILISH_RE = re.compile(r"(?i)^[^@\s]+@[^@\s]+\.[a-z]{2,}$")
+
+
+def _looks_structurally_bogus(value):
+    """Shapes that are never credential material (UUID / email / relative path)."""
+    if _UUID_RE.fullmatch(value):
+        return True
+    if _EMAILISH_RE.fullmatch(value):
+        return True
+    if value.startswith(("/", "./", "../")) and "://" not in value:
+        return True
+    return False
+
+
 def _is_modular_run(chars, mod):
     """True when every step is +1 or -1 modulo mod (1234567890, xyzabc…)."""
     if len(chars) < 8:
@@ -326,6 +348,8 @@ def is_likely_real_secret(value, label=None):
     if _is_repeated_char(candidate) or _is_sequential(candidate):
         return False
     high_confidence = label is not None and label in HIGH_CONFIDENCE_SECRET_LABELS
+    if _looks_structurally_bogus(candidate) and not candidate.startswith(("AKIA", "AIza", "ghp_", "sk-")):
+        return False
     if not high_confidence:
         if _looks_like_placeholder(candidate):
             return False
