@@ -82,9 +82,15 @@ def request_tls(method: str, url: str, **kwargs):
     """
     HTTP request with automatic TLS-policy fallback.
 
-    Tries the default stack first; on a connection reset/abort that looks
-    like cipher-policy rejection, retries once via relaxed_session().
+    Applies process-wide proxy/insecure config when the caller did not
+    override them, then tries the default stack first; on a connection
+    reset/abort that looks like cipher-policy rejection, retries once via
+    relaxed_session().
     """
+    if "verify" not in kwargs and _client.insecure:
+        kwargs["verify"] = False
+    if "proxies" not in kwargs and _client.proxy:
+        kwargs["proxies"] = {"http": _client.proxy, "https": _client.proxy}
     try:
         return requests.request(method, url, **kwargs)
     except requests.ConnectionError as exc:

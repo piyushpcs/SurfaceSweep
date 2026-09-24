@@ -11,6 +11,7 @@ from modules.extraction.http import (
     RateLimiter,
     RelaxedTLSAdapter,
     clear_text_cache,
+    configure_http,
     fetch_text,
     fetch_with_retry,
     get_page,
@@ -19,6 +20,7 @@ from modules.extraction.http import (
     parse_retry_after,
     request_tls,
     relaxed_session,
+    reset_http_config,
 )
 
 
@@ -217,6 +219,9 @@ class TestRateLimiterStillWorks(unittest.TestCase):
 
 
 class TestTlsPolicyFallback(unittest.TestCase):
+    def tearDown(self):
+        reset_http_config()
+
     def test_is_tls_policy_error_reset(self):
         exc = requests.ConnectionError(
             "('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))"
@@ -269,6 +274,32 @@ class TestTlsPolicyFallback(unittest.TestCase):
         self.assertIsInstance(sess, requests.Session)
         adapter = sess.get_adapter("https://example.com/")
         self.assertIsInstance(adapter, RelaxedTLSAdapter)
+
+    @mock.patch("modules.extraction.http.requests.request")
+    def test_request_tls_applies_insecure_config(self, request_mock):
+        request_mock.return_value = _resp(200)
+        reset_http_config()
+        request_tls("GET", "https://self-signed.test/")
+        self.assertNotIn("verify", request_mock.call_args.kwargs)
+        configure_http(insecure=True)
+        request_tls("GET", "https://self-signed.test/")
+        self.assertIs(request_mock.call_args.kwargs.get("verify"), False)
+
+    @mock.patch("modules.extraction.http.requests.request")
+    def test_request_tls_respects_caller_verify_override(self, request_mock):
+        request_mock.return_value = _resp(200)
+        configure_http(insecure=True)
+        request_tls("GET", "https://x.test/", verify=True)
+        self.assertIs(request_mock.call_args.kwargs.get("verify"), True)
+
+    @mock.patch("modules.extraction.http.requests.request")
+    def test_request_tls_applies_proxy_config(self, request_mock):
+        request_mock.return_value = _resp(200)
+        reset_http_config()
+        configure_http(proxy="http://127.0.0.1:8080")
+        request_tls("GET", "https://x.test/")
+        proxies = request_mock.call_args.kwargs.get("proxies")
+        self.assertEqual(proxies.get("https"), "http://127.0.0.1:8080")
 
 
 class TestHttpClient(unittest.TestCase):
