@@ -8,7 +8,7 @@ Extract API endpoints and secrets from a target's JavaScript, validate what is l
 check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-740%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-766%20passing-brightgreen)](#testing)
 [![CI](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml/badge.svg)](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/piyushpcs/SurfaceSweep)](https://github.com/piyushpcs/SurfaceSweep/commits/main)
@@ -60,6 +60,7 @@ to build a single inventory of endpoints, then layers on checks that matter in a
 ### Detection
 
 - Likely API endpoints and full URLs
+- **Request parameters** — query-string keys, `URLSearchParams`, axios `params: {}`, `FormData.append`, `searchParams.get`, path templates (`:id` / `${id}` / `{id}`)
 - Leaked secrets / API keys (AWS, OpenAI, Anthropic, Twilio, SendGrid, Stripe, GitHub, Firebase, private keys, SMTP, OAuth, Bearer/JWT, …) with type-aware dedup
 - Dangerous sinks (`innerHTML`, `eval`, `dangerouslySetInnerHTML`, open-redirect patterns) with severity
 - Internal / private hosts (localhost, RFC1918, `*.internal` / `*.corp`, dev & staging subdomains)
@@ -79,6 +80,7 @@ to build a single inventory of endpoints, then layers on checks that matter in a
 - **Scan diff** — compare two reports of the same target (`--diff` or `python -m modules.reporting.diff`)
 - **Multi-target batch** — `--targets hosts.txt` with per-host output files
 - **Burp Suite** / **OWASP ZAP** CSV export
+- **Path/parameter wordlist** — `--wordlist` for ffuf/content discovery (segments + param names)
 - Authenticated scans via cookies and custom headers
 - Rate limiting and retry with backoff
 
@@ -141,6 +143,10 @@ python main.py https://target.com -f --validate --diff reports/baseline.json
 # SARIF for GitHub code scanning
 python main.py https://target.com --cve --cors --sarif
 
+# Path/parameter wordlist for content discovery (ffuf -w …)
+python main.py https://target.com -f --wordlist
+python main.py https://target.com -f --wordlist reports/paths.txt
+
 # Batch scan a list of targets (one URL per line, # comments ok)
 python main.py --targets hosts.txt -o reports/batch.json --html --sarif
 ```
@@ -193,6 +199,7 @@ Batch mode writes one JSON per host next to `-o` (e.g. `reports/batch_app.exampl
 | `--html-only` | HTML report only (skip JSON) |
 | `--diff BASELINE` | Compare this scan to a baseline JSON; writes `*_diff.json` |
 | `--sarif` | Export findings as SARIF 2.1.0 (GitHub code scanning) |
+| `--wordlist [FILE]` | Export path/parameter wordlist (omit FILE → sibling of `-o`) |
 | `--no-deobf` | Skip JS deobfuscation |
 | `--regex-only` | Disable AST extraction, use regex only |
 | `--proxy` | HTTP(S) proxy for all scan requests (e.g. `http://127.0.0.1:8080`) |
@@ -216,7 +223,7 @@ waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve �
 SurfaceSweep/
 ├── main.py                 # CLI entry (args + headers only)
 ├── modules/
-│   ├── extraction/         # Regex/AST/browser extraction, secrets, source maps, risk
+│   ├── extraction/         # Regex/AST/browser extraction, params, secrets, source maps, risk
 │   ├── discovery/          # SPA routes, Wayback Machine, robots/sitemap
 │   ├── analysis/           # Validation, CVE/library, sinks, PII
 │   ├── recon/              # WAF detection
@@ -233,7 +240,7 @@ SurfaceSweep/
 <summary>Module map (collapsed)</summary>
 
 ```text
-modules/extraction/   engine · patterns · secrets · http · scope · risk · ast · browser · sourcemaps · enrich · deobfuscator
+modules/extraction/   engine · patterns · secrets · params · http · scope · risk · ast · browser · sourcemaps · enrich · deobfuscator
 modules/discovery/    spa · wayback · robots
 modules/analysis/     validator · libraries · sinks · pii
 modules/recon/        waf
@@ -241,7 +248,7 @@ modules/cors/         origins · classifier · probe · scanner
 modules/jwt/          decode · crack · keys · checks · scanner
 modules/pipeline/     context · stages · merge · runner
 modules/reporting/    html · export · findings · builder · cors_poc · diff · sarif
-tests/                test_cors · test_jwt · test_pipeline · test_integration · test_secrets · test_sourcemaps · test_enrich · test_validator · test_pii · test_wayback · test_robots · test_sinks · test_patterns · test_spa_probe · test_diff · test_sarif · test_batch
+tests/                test_cors · test_jwt · test_pipeline · test_integration · test_secrets · test_params_wordlist · test_sourcemaps · test_enrich · test_validator · test_pii · test_wayback · test_robots · test_sinks · test_patterns · test_spa_probe · test_diff · test_sarif · test_batch
 ```
 
 </details>
@@ -267,7 +274,7 @@ coverage run -m unittest discover -s tests -q
 coverage report -m
 ```
 
-- **740 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
+- **766 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
 - Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation/PNA,
   JWT decode/crack/JWKS, pipeline stage order, report schema (`schema_version: 1`), finding feeds,
   scan diff, SARIF export, and multi-target batch mode

@@ -42,7 +42,7 @@ _STAGE_SPECS: List[Tuple[str, StageFn, Callable[[Namespace], bool]]] = [
     ("jwt", stage_jwt, lambda a: bool(a.jwt)),
     ("validate", stage_validate, lambda a: bool(a.validate)),
     ("cors", stage_cors, lambda a: bool(a.cors)),
-    ("export", stage_export, lambda a: bool(a.burp or a.zap or getattr(a, "cors_poc", False))),
+    ("export", stage_export, lambda a: bool(a.burp or a.zap or getattr(a, "cors_poc", False) or getattr(a, "sarif", False) or getattr(a, "wordlist", None))),
     ("report", stage_report, lambda a: True),
 ]
 

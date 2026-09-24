@@ -76,6 +76,24 @@ def render_list(items, empty_msg="None found"):
     )
 
 
+def render_params(params):
+    """Render discovered request parameters table (escaped)."""
+    if not params:
+        return '<p class="muted">No parameters discovered</p>'
+    rows = []
+    for p in params:
+        sources = ", ".join(str(x) for x in p.get("sources") or [p.get("source", "")] if x)
+        rows.append(
+            f'<tr><td><code>{_esc(str(p.get("name", "")))}</code></td>'
+            f'<td><span class="badge badge-error">{_esc(str(p.get("kind", "")))}</span></td>'
+            f'<td class="muted">{_esc(sources)}</td></tr>'
+        )
+    return (
+        '<table><thead><tr><th>Name</th><th>Kind</th><th>Sources</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
 def render_secrets(secrets):
     """Render secrets table (escaped)."""
     if not secrets:
@@ -751,6 +769,7 @@ def build_html(result):
   <div class="stat"><div class="num">{len(result.get('sinks_found', []))}</div><div class="label">Dangerous Sinks</div></div>
   <div class="stat"><div class="num">{len(result.get('internal_hosts_found', []))}</div><div class="label">Internal Hosts</div></div>
   <div class="stat"><div class="num">{len(result.get('pii_found', []))}</div><div class="label">PII Items</div></div>
+  <div class="stat"><div class="num">{len(result.get('params_found', []))}</div><div class="label">Parameters</div></div>
   <div class="stat"><div class="num">{len((result.get('cors') or {}).get('findings', []))}</div><div class="label">CORS Findings</div></div>
   <div class="stat"><div class="num">{(result.get('jwt') or {}).get('tokens_analyzed', 0)}</div><div class="label">JWTs Analyzed</div></div>
 </div>
@@ -761,6 +780,9 @@ def build_html(result):
 
 <h2>Internal Paths</h2>
 {render_list(result.get('internal_paths', []), 'No internal paths discovered')}
+
+<h2>Parameters</h2>
+{render_params(result.get('params_found') or [])}
 
 <h2>In-Scope URLs</h2>
 {render_list(result.get('in_scope_urls', []), 'No in-scope URLs found')}

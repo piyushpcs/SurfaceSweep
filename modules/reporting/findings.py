@@ -188,6 +188,7 @@ def build_executive_summary(result: Dict[str, Any],
             "cves": len(result.get("library_vulnerabilities") or []),
             "spa_routes": len(result.get("spa_routes") or []),
             "pii": len(result.get("pii_found") or []),
+            "params": len(result.get("params_found") or []),
         },
     }
 

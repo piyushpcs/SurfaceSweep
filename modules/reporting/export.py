@@ -1,11 +1,13 @@
 """
 Export module for SurfaceSweep.
 
-Generates outputs compatible with Burp Suite and OWASP ZAP.
+Generates outputs compatible with Burp Suite and OWASP ZAP, plus
+target-derived path/parameter wordlists for content discovery.
 """
 
 import csv
 import os
+from urllib.parse import urlparse
 from modules.common.console import ok, warn
 
 
@@ -129,4 +131,71 @@ def export_zap_csv(result, filename="reports/surfacesweep_zap.csv"):
         return True
     except OSError as e:
         warn(f" Failed to export ZAP CSV: {e}")
+        return False
+
+
+def build_wordlist(result) -> list:
+    """
+    Build a target-derived path/parameter wordlist for content discovery.
+
+    Combines:
+      - path segments from discovered endpoints (api, v1, users, …)
+      - full relative paths (for path fuzzing / recursion)
+      - parameter names from params_found (query/body/URLSearchParams/path templates)
+    Returns a sorted unique list of strings (xnLinkFinder-style output).
+    """
+    words = set()
+
+    def _add_path(path: str) -> None:
+        if not path or not isinstance(path, str):
+            return
+        clean = path.split("?", 1)[0].split("#", 1)[0]
+        if not clean.startswith("/") and "://" not in clean:
+            clean = "/" + clean
+        if "://" in clean:
+            try:
+                clean = urlparse(clean).path or "/"
+            except ValueError:
+                return
+        clean = clean.strip("/")
+        if not clean:
+            return
+        words.add("/" + clean)
+        for seg in clean.split("/"):
+            seg = seg.strip()
+            if 1 < len(seg) < 80 and not seg.startswith("{"):
+                words.add(seg)
+
+    for p in result.get("internal_paths") or []:
+        _add_path(p)
+    for u in result.get("in_scope_urls") or []:
+        _add_path(u)
+    for e in result.get("intercepted_endpoints") or []:
+        if isinstance(e, dict) and e.get("url"):
+            _add_path(e["url"])
+    for r in result.get("spa_routes") or []:
+        _add_path(r)
+
+    for param in result.get("params_found") or []:
+        name = param.get("name") if isinstance(param, dict) else None
+        if name and 1 < len(name) < 80:
+            words.add(name)
+
+    return sorted(w for w in words if w and w != "/")
+
+
+def export_wordlist(result, filename="reports/surfacesweep_wordlist.txt"):
+    """Write the path/parameter wordlist to disk (one entry per line)."""
+    entries = build_wordlist(result)
+    try:
+        parent = os.path.dirname(filename)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(filename, "w", encoding="utf-8") as fh:
+            for entry in entries:
+                fh.write(entry + "\n")
+        ok(f" Wordlist exported: {filename} ({len(entries)} entries)")
+        return True
+    except OSError as e:
+        warn(f" Failed to export wordlist: {e}")
         return False

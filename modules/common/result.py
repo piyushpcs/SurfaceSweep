@@ -27,6 +27,7 @@ class ScanResult(TypedDict, total=False):
     sinks_found: List[Dict[str, Any]]
     internal_hosts_found: List[Dict[str, Any]]
     pii_found: List[Dict[str, Any]]
+    params_found: List[Dict[str, Any]]
     errors: List[str]
 
     # Scan-mode / depth
@@ -90,6 +91,7 @@ def new_scan_result(
         "sinks_found": [],
         "internal_hosts_found": [],
         "pii_found": [],
+        "params_found": [],
         "errors": [],
         "scan_depth": scan_depth,
     }

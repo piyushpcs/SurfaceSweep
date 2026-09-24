@@ -212,6 +212,8 @@ def run_browser_scan(
             result["jwts_found"].extend(jwts)
             result["sinks_found"].extend(sinks)
             result["pii_found"].extend(pii)
+            from modules.extraction.params import extract_params
+            result["params_found"].extend(extract_params(deobfed_content, js_url))
             for h in internal:
                 h["source"] = js_url
             result["internal_hosts_found"].extend(internal)
@@ -236,6 +238,8 @@ def run_browser_scan(
     result["jwts_found"].extend(dom_jwts)
     result["sinks_found"].extend(dom_sinks)
     result["pii_found"].extend(dom_pii)
+    from modules.extraction.params import extract_params, deduplicate_params
+    result["params_found"].extend(extract_params(deobfed_dom, "browser_dom"))
     for h in dom_internal:
         h["source"] = "browser_dom"
     result["internal_hosts_found"].extend(dom_internal)
@@ -244,6 +248,7 @@ def run_browser_scan(
     result["jwts_found"] = deduplicate_jwts(result["jwts_found"])
     result["sinks_found"] = deduplicate_sinks(result["sinks_found"])
     result["pii_found"] = deduplicate_pii(result["pii_found"])
+    result["params_found"] = deduplicate_params(result.get("params_found", []))
     seen_host = set()
     unique_hosts = []
     for h in result["internal_hosts_found"]:

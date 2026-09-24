@@ -66,6 +66,8 @@ def _args(**overrides):
         ua=None,
         fail_on="none",
         verify_tls=True,
+        wordlist=None,
+        sarif=False,
     )
     base.update(overrides)
     return Namespace(**base)

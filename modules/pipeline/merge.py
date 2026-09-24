@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Iterable, List, Optional, Sequence
 
 from modules.extraction import deduplicate_secrets, deduplicate_sinks, deduplicate_pii, is_static_asset
+from modules.extraction.params import deduplicate_params
 from modules.extraction.scope import is_same_scope, get_registrable_domain
 from modules.jwt import deduplicate_jwts
 
@@ -77,6 +78,21 @@ def merge_pii(result: dict, new_pii: Optional[Sequence[dict]]) -> None:
         else:
             flat.append(p)
     result["pii_found"] = deduplicate_pii(flat)
+
+
+def merge_params(result: dict, new_params: Optional[Sequence[dict]]) -> None:
+    """Append fragment parameter findings and dedupe by (name, kind)."""
+    if not new_params:
+        return
+    combined = list(result.get("params_found") or []) + list(new_params)
+    flat = []
+    for p in combined:
+        if "sources" in p and "source" not in p:
+            for src in p["sources"]:
+                flat.append({"name": p.get("name"), "kind": p.get("kind"), "source": src})
+        else:
+            flat.append(p)
+    result["params_found"] = deduplicate_params(flat)
 
 
 def merge_internal_hosts(result: dict, new_hosts: Optional[Sequence[dict]]) -> None:
@@ -200,6 +216,7 @@ def merge_wayback(result: dict, wb: dict, target: str) -> dict:
     merge_internal_hosts(result, wb.get("internal_hosts"))
     merge_jwts(result, wb.get("jwts"))
     merge_pii(result, wb.get("pii"))
+    merge_params(result, wb.get("params"))
 
     before_errors = len(result.get("errors") or [])
     merge_errors(result, wb.get("errors"))

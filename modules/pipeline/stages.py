@@ -372,12 +372,13 @@ def stage_export(ctx: ScanContext) -> None:
         write_burp=plan["write_burp"], write_zap=plan["write_zap"],
         write_cors_poc=plan["write_cors_poc"],
         write_sarif=plan["write_sarif"],
+        write_wordlist=False,
         verbose=ctx.verbose,
     )
 
 
 def stage_report(ctx: ScanContext) -> None:
-    """Save JSON and/or HTML reports via the unified report builder."""
+    """Save JSON, HTML, SARIF, and optional wordlist via the unified report builder."""
     args = ctx.args
     result = ctx.require_result()
     plan = build_report_plan(args)
@@ -386,5 +387,7 @@ def stage_report(ctx: ScanContext) -> None:
         write_json=plan["write_json"], write_html=plan["write_html"],
         write_burp=False, write_zap=False,
         write_sarif=plan["write_sarif"],
+        write_wordlist=plan.get("write_wordlist", False),
+        wordlist_path=plan.get("wordlist_path"),
         verbose=ctx.verbose,
     )
