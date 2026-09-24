@@ -148,17 +148,25 @@ def merge_endpoints(result: dict, endpoints: Iterable[str], target: str) -> int:
     return merge_paths(result, paths) + merge_in_scope_urls(result, urls, target)
 
 
-def collect_endpoints(result: dict) -> List[str]:
+def collect_endpoints(result: dict, target: Optional[str] = None) -> List[str]:
     """
     Canonical endpoint pool for CORS / validation:
     internal_paths + in_scope_urls + intercepted endpoint URLs (deduped, sorted).
+
+    When target is provided, absolute intercepted URLs outside the target's
+    registrable domain are excluded so third-party analytics/CDN calls are
+    never probed. Relative paths and same-scope absolute URLs are kept.
     """
     pool = set(result.get("internal_paths") or [])
     pool.update(result.get("in_scope_urls") or [])
+    scope_domain = get_registrable_domain(target) if target else None
     for e in result.get("intercepted_endpoints") or []:
         url = e.get("url") if isinstance(e, dict) else None
-        if url:
-            pool.add(url)
+        if not url:
+            continue
+        if scope_domain and url.startswith("http") and not is_same_scope(url, scope_domain):
+            continue
+        pool.add(url)
     return sorted(pool)
 
 

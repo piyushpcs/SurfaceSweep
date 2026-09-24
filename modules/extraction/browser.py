@@ -12,19 +12,17 @@ import re
 from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright
 from modules.extraction.deobfuscator import deobfuscate
+from modules.extraction.scope import (
+    get_registrable_domain,
+    is_same_scope,
+    normalize_scope_filter,
+)
 
 
 JS_REFERENCE_PATTERN = re.compile(
     r'''(?:src|import|require|from|chunk|loadScript|importScripts)\s*(?:\(|[=:]?\s*)['"]([^'"]+\.js(?:\?[^'"]*)?)['"]''',
     re.IGNORECASE
 )
-
-
-def is_same_scope(url, target_domain):
-    ext = __import__("tldextract").extract(url)
-    if ext.domain and ext.suffix:
-        return f"{ext.domain}.{ext.suffix}" == target_domain
-    return False
 
 
 def extract_endpoints_from_text(content, source_label):
@@ -43,21 +41,19 @@ def extract_endpoints_from_text(content, source_label):
     return endpoints
 
 
-def get_registrable_domain(url):
-    ext = __import__("tldextract").extract(url)
-    if ext.domain and ext.suffix:
-        return f"{ext.domain}.{ext.suffix}"
-    return ext.domain or urlparse(url).netloc
-
-
 def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     """
     Load a page in a headless browser, intercept all network traffic,
     and extract endpoints from both the DOM and network requests.
 
+    scope_filter is a raw --scope value (wildcard/URL OK); it is normalized
+    once here. Absolute intercepted URLs outside scope are kept for display
+    in out_of_scope_urls but excluded from the probe-oriented lists.
+
     Returns a dict compatible with the extractor's output format.
     """
     target_domain = get_registrable_domain(base_url)
+    scope = normalize_scope_filter(scope_filter) or target_domain
 
     result = {
         "target": base_url,
@@ -154,17 +150,19 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         parsed = urlparse(url)
         path = parsed.path
         if path and path != "/" and not is_static_asset(path):
-            if scope_filter is None or is_same_scope(url, scope_filter):
-                endpoint_urls.add(url)
+            if url.startswith("http") and not is_same_scope(url, scope):
+                continue
+            endpoint_urls.add(url)
 
     for req in intercepted_requests:
         if req["resource_type"] in ("xhr", "fetch"):
             url = req["url"]
-            if scope_filter is None or is_same_scope(url, scope_filter):
-                result["intercepted_endpoints"].append({
-                    "url": url,
-                    "method": req["method"]
-                })
+            if url.startswith("http") and not is_same_scope(url, scope):
+                continue
+            result["intercepted_endpoints"].append({
+                "url": url,
+                "method": req["method"]
+            })
 
     from modules.extraction.enrich import enrich_intercepted_endpoints
     enrich_intercepted_endpoints(result["intercepted_endpoints"])
@@ -172,7 +170,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     result["network_requests"] = intercepted_requests
 
     for js_url in js_files_found:
-        if scope_filter and not is_same_scope(js_url, scope_filter):
+        if not is_same_scope(js_url, scope):
             continue
         try:
             import requests
@@ -226,11 +224,11 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     ])
     result["in_scope_urls"] = sorted([
         e for e in endpoint_urls
-        if e.startswith("http") and is_same_scope(e, target_domain) and not is_static_asset(e)
+        if e.startswith("http") and is_same_scope(e, scope) and not is_static_asset(e)
     ])
     result["out_of_scope_urls"] = sorted([
         e for e in endpoint_urls
-        if e.startswith("http") and not is_same_scope(e, target_domain) and not is_static_asset(e)
+        if e.startswith("http") and not is_same_scope(e, scope) and not is_static_asset(e)
     ])
 
     if verbose:

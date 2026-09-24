@@ -357,6 +357,8 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
       - errors: list of errors
     """
     from modules.extraction.engine import get_registrable_domain, is_static_asset, is_same_scope
+    from modules.extraction.scope import normalize_scope_filter
+    scope = normalize_scope_filter(scope_filter)
 
     target_domain = get_registrable_domain(base_url)
     parsed_base = urlparse(base_url)
@@ -400,7 +402,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
     # Fetch and analyze each JS file
     static_count = 0
     for js_url in js_urls:
-        if scope_filter and not is_same_scope(js_url, scope_filter):
+        if scope and not is_same_scope(js_url, scope):
             continue
         try:
             js_resp = _requests.get(js_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})

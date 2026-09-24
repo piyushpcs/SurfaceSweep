@@ -22,6 +22,7 @@ from modules.extraction import (
     run_extractor,
 )
 from modules.extraction.browser import run_browser_scan
+from modules.extraction.scope import normalize_scope_filter
 from modules.jwt import analyze_result_jwts
 from modules.pipeline.context import ScanContext
 from modules.pipeline.merge import (
@@ -53,6 +54,7 @@ def stage_scan(ctx: ScanContext) -> None:
     """Run the core scan: static, browser, or full (static + browser merged)."""
     args = ctx.args
     verbose = ctx.verbose
+    scope = normalize_scope_filter(args.scope)
 
     if args.full:
         if verbose:
@@ -67,7 +69,7 @@ def stage_scan(ctx: ScanContext) -> None:
             print("\n[*] --- Phase 2: Browser scan ---")
         browser_result = run_browser_scan(
             args.target, timeout=args.timeout, verbose=verbose,
-            scope_filter=args.scope,
+            scope_filter=scope,
         )
         ctx.result = merge_results(static_result, browser_result)
         if verbose:
@@ -80,7 +82,7 @@ def stage_scan(ctx: ScanContext) -> None:
     elif args.browser:
         ctx.result = run_browser_scan(
             args.target, timeout=args.timeout, verbose=verbose,
-            scope_filter=args.scope,
+            scope_filter=scope,
         )
         ctx.result["scan_mode"] = "browser"
     else:
@@ -160,7 +162,7 @@ def stage_spa(ctx: ScanContext) -> None:
     spa_result = crawl_spa_routes(
         args.target, timeout=args.timeout, verbose=ctx.verbose,
         max_routes=args.max_routes, probe_common=not args.no_probe,
-        scope_filter=args.scope,
+        scope_filter=normalize_scope_filter(args.scope),
     )
     result["spa_routes"] = spa_result["routes"]
     result["spa_routes_from"] = spa_result["routes_from"]
@@ -183,7 +185,7 @@ def stage_cors(ctx: ScanContext) -> None:
     """Probe discovered endpoints for CORS misconfigurations."""
     args = ctx.args
     result = ctx.require_result()
-    cors_endpoints = collect_endpoints(result)
+    cors_endpoints = collect_endpoints(result, target=args.target)
     if not cors_endpoints:
         ctx.log("[*] No endpoints to CORS-test")
         return
@@ -252,7 +254,7 @@ def stage_validate(ctx: ScanContext) -> None:
     args = ctx.args
     result = ctx.require_result()
     ctx.log("\n[*] --- Endpoint Validation ---")
-    all_endpoints = collect_endpoints(result)
+    all_endpoints = collect_endpoints(result, target=args.target)
     if not all_endpoints:
         ctx.log("[*] No endpoints to validate")
         return
