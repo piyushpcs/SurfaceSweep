@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from argparse import Namespace
 from time import monotonic
-from typing import Any, Optional
+from typing import Optional
+
+from modules.common.result import ScanResult
 
 
 class ScanContext:
@@ -24,7 +26,7 @@ class ScanContext:
         self.args = args
         self.verbose = verbose
         self.headers = headers or {}
-        self.result: Optional[dict] = None
+        self.result: Optional[ScanResult] = None
         self.wayback_result: Optional[dict] = None
         self.waf_info: Optional[dict] = None
         self.waf_adjustments: Optional[dict] = None
@@ -36,7 +38,7 @@ class ScanContext:
         if self.verbose:
             print(msg)
 
-    def require_result(self) -> dict:
+    def require_result(self) -> ScanResult:
         if self.result is None:
             raise RuntimeError("pipeline: result not initialized (scan stage must run first)")
         return self.result

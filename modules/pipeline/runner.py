@@ -11,6 +11,7 @@ from __future__ import annotations
 from argparse import Namespace
 from typing import Callable, List, Tuple
 
+from modules.common.result import RESULT_SCHEMA_VERSION, ScanResult
 from modules.pipeline.context import ScanContext
 from modules.pipeline.stages import (
     stage_cors,
@@ -57,7 +58,7 @@ def stage_names(args: Namespace) -> List[str]:
 
 
 def run_pipeline(args: Namespace, verbose: bool = True,
-                 headers: dict | None = None) -> dict:
+                 headers: dict | None = None) -> ScanResult:
     """
     Execute all enabled stages against a fresh ScanContext.
     Stamps schema_version + meta + findings before the report stage so
@@ -119,7 +120,7 @@ def _stamp_meta(ctx: ScanContext, finished_at) -> None:
         if getattr(args, name, False)
     )
 
-    ctx.result["schema_version"] = 1
+    ctx.result["schema_version"] = RESULT_SCHEMA_VERSION
     ctx.result["meta"] = {
         "tool": "SurfaceSweep",
         "finished_at": finished_at.isoformat(),

@@ -17,6 +17,7 @@ from modules.extraction.scope import (
     is_same_scope,
     normalize_scope_filter,
 )
+from modules.common.result import new_scan_result
 
 
 JS_REFERENCE_PATTERN = re.compile(
@@ -67,22 +68,7 @@ def run_browser_scan(
     target_domain = get_registrable_domain(base_url)
     scope = normalize_scope_filter(scope_filter) or target_domain
 
-    result = {
-        "target": base_url,
-        "scan_mode": "browser",
-        "js_files_scanned": [],
-        "inline_scripts_scanned": 0,
-        "secrets_found": [],
-        "jwts_found": [],
-        "source_maps_found": [],
-        "network_requests": [],
-        "intercepted_endpoints": [],
-        "deobfuscation_findings": [],
-        "sinks_found": [],
-        "internal_hosts_found": [],
-        "pii_found": [],
-        "errors": []
-    }
+    result = new_scan_result(base_url, scan_mode="browser", browser_fields=True)
 
     if verbose:
         print(f"[*] Launching headless browser for {base_url}")

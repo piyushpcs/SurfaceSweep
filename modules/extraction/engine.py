@@ -24,6 +24,7 @@ from modules.extraction.sourcemaps import collect_source_map_sources, load_sourc
 from modules.analysis.sinks import detect_sinks, deduplicate_sinks
 from modules.analysis.pii import detect_pii, deduplicate_pii
 from modules.jwt import extract_jwts, deduplicate_jwts
+from modules.common.result import new_scan_result
 
 
 def get_js_sources(base_url, html):
@@ -192,20 +193,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
                1 = JS referenced from HTML, 2 = JS referenced from those JS files, etc.)
     use_ast: enable tree-sitter AST-based extraction (falls back to regex-only if unavailable)
     """
-    result = {
-        "target": base_url,
-        "js_files_scanned": [],
-        "inline_scripts_scanned": 0,
-        "secrets_found": [],
-        "jwts_found": [],
-        "source_maps_found": [],
-        "deobfuscation_findings": [],
-        "sinks_found": [],
-        "internal_hosts_found": [],
-        "pii_found": [],
-        "errors": [],
-        "scan_depth": max_depth
-    }
+    result = new_scan_result(base_url, scan_depth=max_depth)
 
     target_domain = get_registrable_domain(base_url)
     limiter = RateLimiter(requests_per_second=5)
@@ -352,23 +340,12 @@ def merge_results(static_result, browser_result):
     Combine results from static scan and browser scan into a single unified report.
     Deduplicates endpoints, secrets, and source maps across both modes.
     """
-    merged = {
-        "target": static_result.get("target", browser_result.get("target")),
-        "scan_mode": "full",
-        "js_files_scanned": [],
-        "inline_scripts_scanned": 0,
-        "secrets_found": [],
-        "jwts_found": [],
-        "source_maps_found": [],
-        "deobfuscation_findings": [],
-        "sinks_found": [],
-        "internal_hosts_found": [],
-        "pii_found": [],
-        "network_requests": [],
-        "intercepted_endpoints": [],
-        "errors": [],
-        "scan_depth": static_result.get("scan_depth", 0)
-    }
+    merged = new_scan_result(
+        static_result.get("target") or browser_result.get("target") or "",
+        scan_mode="full",
+        scan_depth=static_result.get("scan_depth", 0),
+        browser_fields=True,
+    )
 
     seen_js = set()
     for js in static_result.get("js_files_scanned", []) + browser_result.get("js_files_scanned", []):

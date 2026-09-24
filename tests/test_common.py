@@ -99,5 +99,75 @@ class TestUserAgent(unittest.TestCase):
         self.assertEqual(http_ua, DEFAULT_USER_AGENT)
 
 
+class TestScanResultSchema(unittest.TestCase):
+    CORE_KEYS = (
+        "target", "js_files_scanned", "inline_scripts_scanned",
+        "secrets_found", "jwts_found", "source_maps_found",
+        "deobfuscation_findings", "sinks_found", "internal_hosts_found",
+        "pii_found", "errors",
+    )
+
+    def test_schema_version(self):
+        from modules.common.result import RESULT_SCHEMA_VERSION
+
+        self.assertEqual(RESULT_SCHEMA_VERSION, 1)
+
+    def test_new_scan_result_core_keys(self):
+        from modules.common.result import new_scan_result
+
+        r = new_scan_result("https://x.test")
+        for key in self.CORE_KEYS:
+            self.assertIn(key, r)
+        self.assertEqual(r["target"], "https://x.test")
+        self.assertEqual(r["js_files_scanned"], [])
+        self.assertEqual(r["inline_scripts_scanned"], 0)
+        self.assertNotIn("scan_mode", r)
+        self.assertNotIn("network_requests", r)
+
+    def test_new_scan_result_browser_fields(self):
+        from modules.common.result import new_scan_result
+
+        r = new_scan_result("https://x.test", scan_mode="browser", browser_fields=True)
+        self.assertEqual(r["scan_mode"], "browser")
+        self.assertEqual(r["network_requests"], [])
+        self.assertEqual(r["intercepted_endpoints"], [])
+
+    def test_new_scan_result_extra_overrides(self):
+        from modules.common.result import new_scan_result
+
+        r = new_scan_result("https://x.test", scan_depth=2, errors=["boom"])
+        self.assertEqual(r["scan_depth"], 2)
+        self.assertEqual(r["errors"], ["boom"])
+
+    def test_extractor_uses_factory(self):
+        import inspect
+        from modules.extraction import engine
+
+        src = inspect.getsource(engine.run_extractor)
+        self.assertIn("new_scan_result", src)
+        self.assertNotIn('"secrets_found": []', src)
+
+    def test_browser_uses_factory(self):
+        import inspect
+        from modules.extraction import browser
+
+        src = inspect.getsource(browser.run_browser_scan)
+        self.assertIn("new_scan_result", src)
+
+    def test_merge_uses_factory(self):
+        import inspect
+        from modules.extraction import engine
+
+        src = inspect.getsource(engine.merge_results)
+        self.assertIn("new_scan_result", src)
+
+    def test_runner_stamps_schema_version_constant(self):
+        import inspect
+        from modules.pipeline import runner
+
+        src = inspect.getsource(runner._stamp_meta)
+        self.assertIn("RESULT_SCHEMA_VERSION", src)
+
+
 if __name__ == "__main__":
     unittest.main()
