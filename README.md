@@ -40,6 +40,13 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **Step 6 — tests + docs:** `test_secrets`, `test_sourcemaps`, `test_enrich`, `test_validator`; this README section; suite count **382 tests**
 - Research refs: js-surgeon, jsrip, LinkFinder/SecretFinder, mapxtractor, Invicti API FP reduction, OWASP ASTF
 
+### ✅ PII quick wins (complete — Steps 1–4)
+- **Step 1 — detectors:** `modules/analysis/pii.py` — email (SaaS/analytics denylist + local-part stopwords), phone **E.164** (`+` + 8–15 digits), payment card (**Luhn** + IIN shape + test-PAN denylist), SSN (dashed form only, SSA area/group rules + sample denylist); source-map/base64 line skip; severity INFO (email/phone) or LOW (card/SSN)
+- **Step 2 — pipeline wiring:** `extract_from_text` returns a **7-tuple** with PII; `pii_found` populated in static/browser/wayback/full scans; `fetch_and_extract` key `pii`; `merge_pii` for wayback fragments
+- **Step 3 — reporting:** PII block in findings feed + executive summary count; HTML **Potential PII** section + PII Items stat tile
+- **Step 4 — tests + docs:** `test_pii` + merge/render/feed coverage; this README section; suite count **416 tests**
+- Severity is recon signal only (PII shape alone rarely bounty on H1/BB unless bulk cross-user / authz combo)
+
 ### ✅ Phase 2: CORS Misconfiguration Scanner (complete — Steps 1–4)
 - Sends spoofed `Origin` headers to discovered endpoints (real preflight: `Access-Control-Request-Method`/`Headers` + GET/POST fallback)
 - Origin matrix: evil/null, path-bearing Origins, scheme/port flips on target host, subdomain/lookalike domains, custom origin
@@ -97,7 +104,7 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **Step 7 — report builder:** `modules/reporting/builder.py` — single path computation for JSON/HTML/Burp/ZAP outputs
 - **Step 8 — integration tests:** offline end-to-end pipeline tests (stage order, schema contract, on-disk reports) in `tests/test_integration.py`
 - Stage order: `waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve → spa → jwt → validate → cors → export → report`
-- Unit + integration suite: **382 tests** (`test_cors`, `test_jwt`, `test_pipeline`, `test_integration`, `test_secrets`, `test_sourcemaps`, `test_enrich`, `test_validator`)
+- Unit + integration suite: **416 tests** (`test_cors`, `test_jwt`, `test_pipeline`, `test_integration`, `test_secrets`, `test_sourcemaps`, `test_enrich`, `test_validator`, `test_pii`)
 
 ## Setup
 
@@ -230,7 +237,8 @@ SurfaceSweep/
 │   │   ├── __init__.py
 │   │   ├── validator.py          # Endpoint validation
 │   │   ├── libraries.py          # Library version + CVE detection
-│   │   └── sinks.py              # Dangerous JS sink detection (XSS/open-redirect patterns)
+│   │   ├── sinks.py              # Dangerous JS sink detection (XSS/open-redirect patterns)
+│   │   └── pii.py                # PII quick wins (email / E.164 phone / Luhn card / dashed SSN)
 │   ├── recon/                    # Target reconnaissance
 │   │   ├── __init__.py
 │   │   └── waf.py                # WAF detection
@@ -268,7 +276,8 @@ SurfaceSweep/
 │   ├── test_secrets.py           # Phase 1.1 Steps 1–2 (FP stack + structural)
 │   ├── test_sourcemaps.py        # Phase 1.1 Step 3
 │   ├── test_enrich.py            # Phase 1.1 Step 4
-│   └── test_validator.py         # Phase 1.1 Step 5
+│   ├── test_validator.py         # Phase 1.1 Step 5
+│   └── test_pii.py               # PII quick wins Steps 1–2
 ├── testbed/
 │   └── vuln_api.py               # Test Flask app
 └── reports/                      # Generated reports
@@ -297,6 +306,14 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 - Proximity gate: bare `AC…` / Telegram-shaped blobs without nearby keyword dropped; same values kept next to `accountSid` / `bot_token`
 - Source maps: last `sourceMappingURL` wins; inline base64 maps decode and `sourcesContent` rescanned for endpoints + secrets
 - Validation: API path + `#root`/`#__next` HTML shell → dead; `{"error":"unauthorized"}` on 200 → restricted; `{"error":"not found"}` → dead
+
+### PII quick wins (unit)
+- Suite after PII: **416 tests** (was 382)
+- Email: `alerts@sentry.io` / `noreply@…` / `…@example.com` dropped; `alice.smith@corp-target.io` kept
+- Phone: bare `4155552671` rejected; only strict E.164 `+14155552671`
+- Card: test PAN `4111…` denylisted; Luhn-valid `4532015112830366` reported (LOW); separators normalized
+- SSN: dashed only; `219-09-9999` / `123-45-6789` / area `000`/`666`/`9xx` rejected; bare 9 digits not SSN
+- `extract_from_text` now returns a 7-tuple ending in `pii`; reports get `pii_found` + HTML section
 
 ### CVE detection (gtec.ac.in)
 - Detected: jQuery 1.11.0, Vue.js 2.1.5, FancyBox 2.1.5
@@ -386,7 +403,7 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - ~~Phase 1.1: JS extraction hardening~~ ✅ Done (Steps 1–6)
 - Diff mode to compare two scans of the same target over time
 - ~~Secret-pattern false-positive tuning (Twilio SID / Telegram Bot Token seen on mintlify)~~ ✅ Done (Phase 1.1 Step 1)
-- PII quick wins
+- ~~PII quick wins~~ ✅ Done (Steps 1–4)
 
 ## Responsible use
 Built and tested only against intentionally vulnerable/legal test targets
