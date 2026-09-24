@@ -9,7 +9,7 @@ check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-416%20passing-brightgreen)](#testing)
-[![License](https://img.shields.io/badge/license-None-lightgrey)](#responsible-use)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/piyushpcs/SurfaceSweep)](https://github.com/piyushpcs/SurfaceSweep/commits/main)
 [![Standard Readme](https://img.shields.io/badge/readme-standard-brightgreen.svg)](https://github.com/RichardLitt/standard-readme)
 
@@ -19,7 +19,8 @@ check CORS and JWT issues, and export results for Burp Suite / ZAP.
 [Options](#options) ·
 [Architecture](#architecture) ·
 [Testing](#testing) ·
-[Roadmap](#roadmap)
+[Roadmap](#roadmap) ·
+[License](#license)
 
 </div>
 
@@ -280,5 +281,4 @@ Issues and pull requests are welcome.
 
 ## License
 
-No license file has been published yet. All rights reserved by the author until one is added.
-Please open an issue if you want to use this project under a specific license.
+Licensed under the [MIT License](LICENSE).
