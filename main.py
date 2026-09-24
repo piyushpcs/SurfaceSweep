@@ -6,12 +6,33 @@ through modules.pipeline.run_pipeline (Phase 4 Step 1).
 """
 
 import argparse
+import sys
 
+from modules import __version__
+from modules.extraction.http import configure_http
 from modules.pipeline import run_pipeline
+
+# Exit codes for scripting/CI:
+#   0 — success, findings below --fail-on (or --fail-on not set)
+#   1 — findings at or above --fail-on severity
+#   2 — usage error (argparse default)
+#   3 — unexpected runtime error
+EXIT_OK = 0
+EXIT_FINDINGS = 1
+EXIT_USAGE = 2
+EXIT_ERROR = 3
+
+_SEVERITY_RANK = {"INFO": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="SurfaceSweep — JS Endpoint Extractor")
+    parser = argparse.ArgumentParser(
+        description="SurfaceSweep — JS Endpoint Extractor",
+        epilog=(
+            "Exit codes: 0 success, 1 findings at/above --fail-on, "
+            "2 usage error, 3 runtime error"
+        ),
+    )
     parser.add_argument("target", help="Target URL, e.g. https://example.com")
     parser.add_argument("-o", "--output", default="reports/surfacesweep_report.json", help="Output JSON file")
     parser.add_argument("-t", "--threads", type=int, default=6, help="Concurrent fetch threads")
@@ -51,6 +72,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--jwt-export", default=None, metavar="FILE", help="Write per-token JWT findings as NDJSON to FILE")
     parser.add_argument("--jwt-network", action="store_true", help="Fetch jku/x5u JWKS over network for RS256→HS256 key-confusion checks (SSRF-guarded)")
     parser.add_argument("--jwt-network-timeout", type=float, default=5.0, help="JWKS fetch timeout seconds when --jwt-network is set (default: 5)")
+    parser.add_argument("--proxy", default=None, metavar="URL", help="HTTP(S) proxy for all scan requests (e.g. http://127.0.0.1:8080)")
+    parser.add_argument("--insecure", action="store_true", help="Disable TLS certificate verification")
+    parser.add_argument("--ua", default=None, metavar="STRING", help="Custom User-Agent for HTTP requests")
+    parser.add_argument(
+        "--fail-on",
+        dest="fail_on",
+        choices=("none", "low", "medium", "high", "critical"),
+        default="none",
+        help="Exit 1 when any finding is at/above this severity (default: none)",
+    )
+    parser.add_argument("--version", action="version", version=f"SurfaceSweep {__version__}")
     parser.add_argument("-q", "--quiet", action="store_true", help="Suppress progress output")
     return parser
 
@@ -63,7 +95,27 @@ def build_headers(args: argparse.Namespace) -> dict:
         if ":" in h:
             key, value = h.split(":", 1)
             headers[key.strip()] = value.strip()
+    if args.ua:
+        headers["User-Agent"] = args.ua
     return headers
+
+
+def exit_code_for_result(result, fail_on: str) -> int:
+    """Map scan findings + --fail-on to a process exit code."""
+    if not fail_on or fail_on == "none":
+        return EXIT_OK
+    threshold = _SEVERITY_RANK[fail_on.upper()]
+    counts = (result or {}).get("risk_summary", {}).get("severity_counts") or {}
+    # Prefer explicit severity buckets when present; fall back to risk level.
+    if counts:
+        for sev, n in counts.items():
+            if n and _SEVERITY_RANK.get(sev.upper(), -1) >= threshold:
+                return EXIT_FINDINGS
+        return EXIT_OK
+    level = (result or {}).get("risk_summary", {}).get("level", "INFO")
+    if _SEVERITY_RANK.get(str(level).upper(), -1) >= threshold:
+        return EXIT_FINDINGS
+    return EXIT_OK
 
 
 def main(argv=None):
@@ -71,8 +123,24 @@ def main(argv=None):
     args = parser.parse_args(argv)
     verbose = not args.quiet
     headers = build_headers(args)
-    return run_pipeline(args, verbose=verbose, headers=headers)
+    # Browser always tolerates bad certs by default; --insecure applies to requests.
+    args.verify_tls = not args.insecure
+    configure_http(proxy=args.proxy, insecure=args.insecure, user_agent=args.ua)
+    try:
+        result = run_pipeline(args, verbose=verbose, headers=headers)
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        print("\n[!] Interrupted", file=sys.stderr)
+        return EXIT_ERROR
+    except Exception as exc:
+        print(f"[!] Scan failed: {exc}", file=sys.stderr)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        return EXIT_ERROR
+    return exit_code_for_result(result, args.fail_on)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

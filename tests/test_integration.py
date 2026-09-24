@@ -61,6 +61,11 @@ def _args(**overrides):
         jwt_network=False,
         jwt_network_timeout=5.0,
         quiet=True,
+        proxy=None,
+        insecure=False,
+        ua=None,
+        fail_on="none",
+        verify_tls=True,
     )
     base.update(overrides)
     return Namespace(**base)

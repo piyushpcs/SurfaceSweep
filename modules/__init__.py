@@ -10,3 +10,5 @@ Architecture:
     cors/         — Phase 2: CORS misconfiguration scanner
     jwt/          — Phase 3: JWT security analyzer (complete)
 """
+
+__version__ = "1.0.0"

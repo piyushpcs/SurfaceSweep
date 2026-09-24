@@ -41,7 +41,16 @@ def extract_endpoints_from_text(content, source_label):
     return endpoints
 
 
-def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
+def run_browser_scan(
+    base_url,
+    timeout=30,
+    verbose=True,
+    scope_filter=None,
+    deobfuscate_content=True,
+    user_agent=None,
+    insecure=True,
+    proxy=None,
+):
     """
     Load a page in a headless browser, intercept all network traffic,
     and extract endpoints from both the DOM and network requests.
@@ -49,6 +58,9 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     scope_filter is a raw --scope value (wildcard/URL OK); it is normalized
     once here. Absolute intercepted URLs outside scope are kept for display
     in out_of_scope_urls but excluded from the probe-oriented lists.
+
+    deobfuscate_content: when False, skip JS deobfuscation (CLI --no-deobf).
+    user_agent / insecure / proxy: optional browser context overrides.
 
     Returns a dict compatible with the extractor's output format.
     """
@@ -78,11 +90,21 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     intercepted_requests = []
     js_files_found = set()
 
+    ua = user_agent or (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+    launch_kwargs = {"headless": True}
+    if proxy:
+        launch_kwargs["proxy"] = {"server": proxy}
+
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(**launch_kwargs)
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            ignore_https_errors=True
+            user_agent=ua,
+            # Browser mode historically ignores cert errors; only tighten
+            # when verify_tls is explicitly set False→True via CLI --insecure inverse.
+            ignore_https_errors=bool(insecure),
         )
         page = context.new_page()
 
@@ -169,17 +191,24 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
 
     result["network_requests"] = intercepted_requests
 
+    from modules.extraction.engine import extract_from_text
     for js_url in js_files_found:
         if not is_same_scope(js_url, scope):
             continue
         try:
             import requests
-            resp = requests.get(js_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})
-            deobfed_content, deobf_findings = deobfuscate(resp.text)
+            from modules.extraction.http import request_kwargs
+            resp = requests.get(js_url, timeout=10, **request_kwargs())
+            if deobfuscate_content:
+                deobfed_content, deobf_findings = deobfuscate(resp.text)
+            else:
+                deobfed_content, deobf_findings = resp.text, []
             eps = extract_endpoints_from_text(deobfed_content, js_url)
             endpoint_urls.update(eps)
-            from modules.extraction.engine import extract_from_text
-            _, secrets, _, sinks, internal, jwts, pii = extract_from_text(deobfed_content, js_url)
+            # Already deobfuscated above — do not run deobfuscate a second time.
+            _, secrets, _, sinks, internal, jwts, pii = extract_from_text(
+                deobfed_content, js_url, do_deobfuscate=False,
+            )
             result["secrets_found"].extend(secrets)
             result["jwts_found"].extend(jwts)
             result["sinks_found"].extend(sinks)
@@ -192,13 +221,18 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         except Exception:
             pass
 
-    deobfed_dom, dom_deobf = deobfuscate(dom_content)
+    if deobfuscate_content:
+        deobfed_dom, dom_deobf = deobfuscate(dom_content)
+    else:
+        deobfed_dom, dom_deobf = dom_content, []
     inline_eps = extract_endpoints_from_text(deobfed_dom, "browser_dom")
     endpoint_urls.update(inline_eps)
 
-    from modules.extraction.engine import extract_from_text, deduplicate_secrets, deduplicate_sinks, deduplicate_pii
+    from modules.extraction.engine import deduplicate_secrets, deduplicate_sinks, deduplicate_pii
     from modules.jwt import deduplicate_jwts
-    _, dom_secrets, _, dom_sinks, dom_internal, dom_jwts, dom_pii = extract_from_text(deobfed_dom, "browser_dom")
+    _, dom_secrets, _, dom_sinks, dom_internal, dom_jwts, dom_pii = extract_from_text(
+        deobfed_dom, "browser_dom", do_deobfuscate=False,
+    )
     result["secrets_found"].extend(dom_secrets)
     result["jwts_found"].extend(dom_jwts)
     result["sinks_found"].extend(dom_sinks)

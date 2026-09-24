@@ -54,6 +54,14 @@ def stage_scan(ctx: ScanContext) -> None:
     args = ctx.args
     verbose = ctx.verbose
     scope = normalize_scope_filter(args.scope)
+    deobf = not getattr(args, "no_deobf", False)
+    browser_kwargs = dict(
+        scope_filter=scope,
+        deobfuscate_content=deobf,
+        user_agent=getattr(args, "ua", None),
+        insecure=not getattr(args, "verify_tls", True),
+        proxy=getattr(args, "proxy", None),
+    )
 
     if args.full:
         if verbose:
@@ -61,14 +69,14 @@ def stage_scan(ctx: ScanContext) -> None:
             print("[*] --- Phase 1: Static scan ---")
         static_result = run_extractor(
             args.target, threads=args.threads, verbose=verbose,
-            max_depth=args.depth, deobfuscate=not args.no_deobf,
+            max_depth=args.depth, deobfuscate=deobf,
             use_ast=not args.regex_only,
         )
         if verbose:
             print("\n[*] --- Phase 2: Browser scan ---")
         browser_result = run_browser_scan(
             args.target, timeout=args.timeout, verbose=verbose,
-            scope_filter=scope,
+            **browser_kwargs,
         )
         ctx.result = merge_results(static_result, browser_result)
         if verbose:
@@ -81,13 +89,13 @@ def stage_scan(ctx: ScanContext) -> None:
     elif args.browser:
         ctx.result = run_browser_scan(
             args.target, timeout=args.timeout, verbose=verbose,
-            scope_filter=scope,
+            **browser_kwargs,
         )
         ctx.result["scan_mode"] = "browser"
     else:
         ctx.result = run_extractor(
             args.target, threads=args.threads, verbose=verbose,
-            max_depth=args.depth, deobfuscate=not args.no_deobf,
+            max_depth=args.depth, deobfuscate=deobf,
             use_ast=not args.regex_only,
         )
         ctx.result["scan_mode"] = "static"
@@ -127,11 +135,12 @@ def stage_cve(ctx: ScanContext) -> None:
         ctx.log("[*] No JS files to scan for libraries")
         return
 
+    from modules.extraction.http import request_kwargs
     import requests as _requests
     content_map = {}
     for js_url in js_files:
         try:
-            resp = _requests.get(js_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})
+            resp = _requests.get(js_url, timeout=10, **request_kwargs())
             content_map[js_url] = resp.text
         except _requests.RequestException:
             pass

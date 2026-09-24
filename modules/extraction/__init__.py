@@ -41,7 +41,16 @@ from modules.extraction.patterns import (
     find_internal_hosts,
 )
 from modules.extraction.secrets import extract_secrets, deduplicate_secrets
-from modules.extraction.http import RateLimiter, fetch_with_retry, get_page
+from modules.extraction.http import (
+    RateLimiter,
+    configure_http,
+    default_headers,
+    fetch_with_retry,
+    get_page,
+    parse_retry_after,
+    request_kwargs,
+    reset_http_config,
+)
 from modules.extraction.scope import (
     get_registrable_domain,
     is_same_scope,
@@ -69,6 +78,8 @@ __all__ = [
     "detect_sinks", "deduplicate_sinks",
     "detect_pii", "deduplicate_pii",
     "RateLimiter", "fetch_with_retry", "get_page",
+    "configure_http", "reset_http_config", "request_kwargs",
+    "default_headers", "parse_retry_after",
     "get_registrable_domain", "is_same_scope", "normalize_scope_filter",
     "calculate_risk_summary",
     "risk_level_for_score",

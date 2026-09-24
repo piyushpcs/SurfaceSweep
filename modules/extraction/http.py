@@ -1,5 +1,5 @@
 """
-HTTP utilities: rate limiting, retry, fetching.
+HTTP utilities: rate limiting, retry, fetching, and process-wide client config.
 """
 
 from __future__ import annotations
@@ -9,6 +9,52 @@ from email.utils import parsedate_to_datetime
 from typing import Optional
 
 import requests
+
+DEFAULT_USER_AGENT = "SurfaceSweep/1.0"
+
+# Process-wide defaults applied by fetch_with_retry / get_page when the
+# caller does not override headers. Configured once from CLI flags.
+_http_config: dict = {
+    "proxy": None,
+    "insecure": False,
+    "user_agent": DEFAULT_USER_AGENT,
+}
+
+
+def configure_http(
+    proxy: Optional[str] = None,
+    insecure: bool = False,
+    user_agent: Optional[str] = None,
+) -> None:
+    """Set process-wide HTTP defaults (proxy, TLS verify, User-Agent)."""
+    _http_config["proxy"] = proxy or None
+    _http_config["insecure"] = bool(insecure)
+    if user_agent:
+        _http_config["user_agent"] = user_agent
+
+
+def reset_http_config() -> None:
+    """Restore defaults (tests)."""
+    _http_config["proxy"] = None
+    _http_config["insecure"] = False
+    _http_config["user_agent"] = DEFAULT_USER_AGENT
+
+
+def default_headers() -> dict:
+    return {"User-Agent": _http_config["user_agent"]}
+
+
+def request_kwargs(headers: Optional[dict] = None) -> dict:
+    """Build kwargs for requests.get/post from the process-wide config."""
+    kwargs: dict = {"headers": headers if headers is not None else default_headers()}
+    if _http_config["proxy"]:
+        kwargs["proxies"] = {
+            "http": _http_config["proxy"],
+            "https": _http_config["proxy"],
+        }
+    if _http_config["insecure"]:
+        kwargs["verify"] = False
+    return kwargs
 
 
 class RateLimiter:
@@ -74,14 +120,14 @@ def fetch_with_retry(url, timeout=10, max_retries=3, limiter=None, headers=None)
     after retries are exhausted. Returns None only if the 429/5xx retry budget
     is fully consumed without a non-retryable response.
     """
-    if headers is None:
-        headers = {"User-Agent": "SurfaceSweep/1.0"}
+    req_headers = headers if headers is not None else default_headers()
 
     for attempt in range(max_retries):
         if limiter:
             limiter.wait()
         try:
-            resp = requests.get(url, timeout=timeout, headers=headers)
+            kwargs = request_kwargs(headers=req_headers)
+            resp = requests.get(url, timeout=timeout, **kwargs)
             if resp.status_code == 429:
                 if attempt >= max_retries - 1:
                     return None
