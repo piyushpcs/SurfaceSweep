@@ -7,6 +7,7 @@ from modules.extraction.patterns import (
     PROXIMITY_GATED_SECRET_TYPES,
     is_likely_real_secret,
     near_secret_context,
+    shannon_entropy,
 )
 
 
@@ -28,6 +29,8 @@ _SECRET_TYPE_RANK = {
     "CSRF Token": 30,
     "Bearer Token": 40,
     "Session Cookie": 40,
+    # Unlabeled high-entropy only wins when nothing more specific claimed it.
+    "High-Entropy String": 50,
 }
 
 
@@ -81,12 +84,55 @@ SECRET_PATTERNS = {
     "Shopify API Key":      re.compile(r'(?i)shpss_[a-f0-9]{32}'),
     "Cloudinary URL":       re.compile(r'cloudinary://[^\s"\']+'),
     "Mapbox Token":         re.compile(r'pk\.eyJ1Ijoi[A-Za-z0-9_\-]+'),
+    "Mapbox Secret Token":  re.compile(r'sk\.eyJ1Ijoi[A-Za-z0-9_\-]+'),
     "Algolia API Key":      re.compile(r'(?i)["\'](?:algolia[_-]?(?:api[_-]?)?key|application[_-]?id)["\']\s*[:=]\s*["\']([a-z0-9]{10,})["\']'),
+    "Algolia Admin Key":    re.compile(r'(?i)["\']algolia[_-]?(?:admin[_-]?)?(?:api[_-]?)?key["\']\s*[:=]\s*["\']([a-f0-9]{32})["\']'),
     "Elasticsearch URL":    re.compile(r'(?i)elastic(?:search)?://[^\s"\']+'),
     "Datadog API Key":      re.compile(r'(?i)["\']datadog[_-]?api[_-]?key["\']\s*[:=]\s*["\']([a-f0-9]{32})["\']'),
+    "Datadog App Key":      re.compile(r'(?i)["\']datadog[_-]?app[_-]?key["\']\s*[:=]\s*["\']([a-f0-9]{40})["\']'),
     "New Relic Key":        re.compile(r'(?i)NRAK-[A-Z0-9]{27}'),
     "Segment Write Key":    re.compile(r'(?i)["\']segment[_-]?write[_-]?key["\']\s*[:=]\s*["\']([a-zA-Z0-9_\-]{20,})["\']'),
     "Braintree GraphQL":    re.compile(r'(?i)["\']authorization["\']\s*:\s*["\']([a-f0-9]{64})["\']'),
+    "Sentry DSN":           re.compile(r'https://[0-9a-f]{32}@o\d+\.ingest\.sentry\.io/\d+'),
+    "Sentry Auth Token":    re.compile(r'(?i)["\']sentry[_-]?auth[_-]?token["\']\s*[:=]\s*["\']([a-f0-9]{32,})["\']'),
+    "HubSpot Private App":  re.compile(r'pat-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12,}'),
+    "Intercom Token":       re.compile(r'(?i)["\']intercom[_-]?(?:api[_-]?key|token|app[_-]?id)["\']\s*[:=]\s*["\']([a-f0-9]{32,})["\']'),
+    "Contentful CMA Token": re.compile(r'CFPAT-[A-Za-z0-9_\-]{20,}'),
+    "Sanity Token":         re.compile(r'sk[ENVYD][A-Za-z0-9_\-]{20,}'),
+    "Resend API Key":       re.compile(r're_[A-Za-z0-9]{32,}'),
+    "Cloudflare API Token": re.compile(r'(?i)["\']cloudflare[_-]?(?:api[_-]?)?token["\']\s*[:=]\s*["\']([A-Za-z0-9_\-]{20,})["\']'),
+    "Cloudflare Global Key": re.compile(r'(?i)["\'](?:cf[_-]?global[_-]?api[_-]?key|cloudflare[_-]?global[_-]?api[_-]?key)["\']\s*[:=]\s*["\']([a-f0-9]{37})["\']'),
+    "Infura Project Secret": re.compile(r'(?i)["\']infura[_-]?(?:project[_-]?)?(?:secret|api[_-]?key)["\']\s*[:=]\s*["\']([a-f0-9]{32,})["\']'),
+    "Alchemy API Key":      re.compile(r'(?i)["\']alchemy[_-]?api[_-]?key["\']\s*[:=]\s*["\']([A-Za-z0-9_\-]{20,})["\']'),
+    "Etherscan API Key":    re.compile(r'(?i)(?:["\']etherscan[_-]?api[_-]?key["\']|etherscan[_-]?api[_-]?key)\s*[:=]\s*["\']([A-Za-z0-9]{16,})["\']'),
+    "Polygonscan API Key":  re.compile(r'(?i)(?:["\']polygonscan[_-]?api[_-]?key["\']|polygonscan[_-]?api[_-]?key)\s*[:=]\s*["\']([A-Za-z0-9]{16,})["\']'),
+    "BscScan API Key":      re.compile(r'(?i)(?:["\']bscscan[_-]?api[_-]?key["\']|bscscan[_-]?api[_-]?key)\s*[:=]\s*["\']([A-Za-z0-9]{16,})["\']'),
+    "Moralis API Key":      re.compile(r'(?i)["\']moralis[_-]?api[_-]?key["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{20,})["\']'),
+    "Upstash Redis REST":   re.compile(r'(?i)["\']upstash[_-]?(?:redis[_-]?)?(?:rest[_-]?)?(?:token|key)["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{20,})["\']'),
+    "Neon API Key":         re.compile(r'(?i)["\']neon[_-]?api[_-]?key["\']\s*[:=]\s*["\']([a-f0-9]{32,})["\']'),
+    "Fly.io API Key":       re.compile(r'(?i)["\']fly[_-]?api[_-]?key["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{20,})["\']'),
+    "Railway Token":        re.compile(r'(?i)["\']railway[_-]?token["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{20,})["\']'),
+    "PlanetScale Password": re.compile(r'(?i)["\']planetscale[_-]?(?:password|token)["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{20,})["\']'),
+    "Vercel Token":         re.compile(r'(?i)["\']vercel[_-]?(?:api[_-]?key|token)["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{20,})["\']'),
+    "Netlify Token":        re.compile(r'(?i)["\']netlify[_-]?(?:auth[_-]?token|token)["\']\s*[:=]\s*["\']([A-Za-z0-9_\-]{20,})["\']'),
+    "Appwrite API Key":     re.compile(r'(?i)["\']appwrite[_-]?(?:api[_-]?key|project)["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{16,})["\']'),
+    "Convex API Key":       re.compile(r'(?i)["\']convex[_-]?api[_-]?key["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{20,})["\']'),
+    "Xata API Key":         re.compile(r'(?i)["\']xata[_-]?api[_-]?key["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{20,})["\']'),
+    "Turso Token":          re.compile(r'(?i)["\']turso[_-]?(?:api[_-]?key|token)["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{20,})["\']'),
+    "Razorpay Live Key":    re.compile(r'rzp_live_[A-Za-z0-9]{16,}'),
+    "Paystack Secret":      re.compile(r'(?i)["\']paystack[_-]?secret[_-]?key["\']\s*[:=]\s*["\']([a-z0-9_\-]{20,})["\']'),
+    "Mollie API Key":       re.compile(r'(?<![\w-])live_[A-Za-z0-9]{20,}'),
+    "Ably API Key":         re.compile(r'(?i)["\']ably[_-]?(?:api[_-]?key|admin[_-]?key)["\']\s*[:=]\s*["\']([A-Za-z0-9_\-\.]{20,})["\']'),
+    "Pusher Secret":        re.compile(r'(?i)["\']pusher[_-]?secret["\']\s*[:=]\s*["\']([A-Za-z0-9]{20,})["\']'),
+    "Twilio API Key SID":   re.compile(r'SK[0-9a-fA-F]{32}'),
+    "Vonage API Key":       re.compile(r'(?i)["\']vonage[_-]?(?:api[_-]?key|api[_-]?key)["\']\s*[:=]\s*["\']([a-f0-9]{8,})["\']'),
+    "MessageBird Key":      re.compile(r'(?i)["\']messagebird[_-]?(?:api[_-]?key|auth[_-]?key)["\']\s*[:=]\s*["\']([A-Za-z0-9]{20,})["\']'),
+    "Postmark Server Token": re.compile(r'(?i)["\']postmark[_-]?(?:server[_-]?api[_-]?token|api[_-]?token)["\']\s*[:=]\s*["\']([A-Za-z0-9]{8,}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{12})["\']'),
+    "Mailchimp API Key":    re.compile(r'(?i)["\']mailchimp[_-]?api[_-]?key["\']\s*[:=]\s*["\']([a-f0-9]{32}-us\d+)["\']'),
+    "Linear API Key":       re.compile(r'(?i)["\']linear[_-]?api[_-]?key["\']\s*[:=]\s*["\']lin_api_[A-Za-z0-9]{20,}["\']'),
+    "LaunchDarkly SDK Key": re.compile(r'(?i)["\']launchdarkly[_-]?(?:sdk|client)[_-]?key["\']\s*[:=]\s*["\']([a-f0-9]{32})["\']'),
+    "PagerDuty API Key":    re.compile(r'(?i)["\']pagerduty[_-]?api[_-]?key["\']\s*[:=]\s*["\']([A-Za-z0-9_\-]{20,})["\']'),
+    "Plaid Secret":         re.compile(r'(?i)["\']plaid[_-]?secret["\']\s*[:=]\s*["\']([a-f0-9]{32})["\']'),
 
     # ---- Messaging / chat ----
     "Slack Token":          re.compile(r'xox[baprs]-[0-9a-zA-Z]{10,48}'),
@@ -99,7 +145,12 @@ SECRET_PATTERNS = {
     "GitHub Token":         re.compile(r'gh[po]_[a-zA-Z0-9]{36,}'),
     "GitHub PAT (classic)": re.compile(r'ghp_[a-zA-Z0-9]{36}'),
     "GitHub PAT (fine-grained)": re.compile(r'github_pat_[A-Za-z0-9_]{22,}'),
+    "GitHub OAuth Token":   re.compile(r'gho_[a-zA-Z0-9]{36}'),
+    "GitHub Upload Token":  re.compile(r'ghu_[a-zA-Z0-9]{36}'),
+    "GitHub Server Token":  re.compile(r'ghs_[a-zA-Z0-9]{36}'),
+    "GitHub Refresh Token": re.compile(r'ghr_[a-zA-Z0-9]{36}'),
     "GitLab Token":         re.compile(r'glpat-[a-zA-Z0-9_\-]{20}'),
+    "GitLab Runner Token":  re.compile(r'glrt-[a-zA-Z0-9_\-]{20,}'),
     "Bitbucket App PW":     re.compile(r'(?i)bbdc_[A-Za-z0-9_\-]{20,}'),
     "NPM Token":            re.compile(r'npm_[a-zA-Z0-9]{36}'),
     "PyPI Token":           re.compile(r'pypi-[A-Za-z0-9_\-]{60,}'),
@@ -149,11 +200,62 @@ SECRET_PATTERNS = {
 }
 
 
+# Quoted high-entropy blobs that no labeled pattern claimed (Phase F2).
+# Secret-context gated in extract_secrets to keep minified JS noise down.
+HIGH_ENTROPY_STRING_PATTERN = re.compile(
+    r"""["']([A-Za-z0-9+/=_\-]{32,96})["']"""
+)
+
+# Minimum Shannon entropy (bits/char) for unlabeled candidates (hex ceiling ~4.0).
+HIGH_ENTROPY_MIN = 3.8
+
+
+def extract_high_entropy_secrets(content, source_label, claimed=None):
+    """
+    Phase F2: flag high-entropy string literals with no vendor pattern hit.
+
+    Only candidates that pass is_likely_real_secret, sit near a secret-related
+    keyword, and clear HIGH_ENTROPY_MIN entropy are reported as
+    {type: "High-Entropy String", ...}.
+    """
+    if not content:
+        return []
+    claimed = list(claimed or [])
+    found = []
+    seen = set()
+    for m in HIGH_ENTROPY_STRING_PATTERN.finditer(content):
+        if _overlaps_claimed(claimed, m.start(), m.end()):
+            continue
+        value = m.group(1)
+        if value in seen:
+            continue
+        if not is_likely_real_secret(value):
+            continue
+        if not near_secret_context(content, m.start(), m.end()):
+            continue
+        if shannon_entropy(value) < HIGH_ENTROPY_MIN:
+            continue
+        # Class-aware floor: pure hex maxes at 4.0, pure digits ~3.32
+        if re.fullmatch(r"[0-9a-fA-F]+", value) and shannon_entropy(value) < 3.5:
+            continue
+        if re.fullmatch(r"[0-9]+", value):
+            continue
+        seen.add(value)
+        claimed.append((m.start(), m.end()))
+        found.append({
+            "type": "High-Entropy String",
+            "match": value[:80],
+            "source": source_label,
+        })
+    return found
+
+
 def extract_secrets(content, source_label):
     """
     Extract potential secrets from content.
     Returns list of {type, match, source}.
     Overlapping pattern hits keep the most specific type (span priority).
+    Phase F2 appends unlabeled high-entropy strings after labeled patterns.
     """
     secrets = []
     claimed = []
@@ -182,6 +284,8 @@ def extract_secrets(content, source_label):
                 "match": match_text,
                 "source": source_label
             })
+
+    secrets.extend(extract_high_entropy_secrets(content, source_label, claimed))
     return secrets
 
 

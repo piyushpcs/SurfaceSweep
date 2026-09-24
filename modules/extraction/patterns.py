@@ -106,14 +106,21 @@ HIGH_CONFIDENCE_SECRET_LABELS = frozenset({
     "OpenAI API Key", "OpenAI Project Key", "Anthropic API Key", "SendGrid API Key",
     "Hugging Face Token",
     "Postman API Key", "Shopify Token", "Shopify API Key",
-    "Mapbox Token", "New Relic Key",
+    "Mapbox Token", "Mapbox Secret Token", "New Relic Key",
     "Slack Token", "Slack Webhook", "Discord Webhook",
-    "GitHub Token", "GitHub PAT (classic)", "GitHub PAT (fine-grained)", "GitLab Token",
+    "GitHub Token", "GitHub PAT (classic)", "GitHub PAT (fine-grained)",
+    "GitHub OAuth Token", "GitHub Upload Token", "GitHub Server Token",
+    "GitHub Refresh Token",
+    "GitLab Token", "GitLab Runner Token",
     "Bitbucket App PW", "NPM Token", "PyPI Token",
     "JWT", "JWT Secret", "Private Key",
     "Database URL", "MongoDB SRV", "Redis URL", "AMQP URL",
     "Elasticsearch URL", "Elasticsearch Auth",
     "Cloudinary URL", "Heroku API Key",
+    # Phase F2 vendor prefixes / structures
+    "Resend API Key", "Contentful CMA Token", "Sanity Token",
+    "Cloudflare Global Key", "Sentry DSN", "HubSpot Private App",
+    "Razorpay Live Key", "Twilio API Key SID",
 })
 
 # Bare / high-FP shapes that only count near an explicit secret-related keyword

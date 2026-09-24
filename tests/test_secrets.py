@@ -295,8 +295,8 @@ class TestModernSecretPatterns(unittest.TestCase):
     def test_pattern_catalog_size_above_readme_claim(self):
         from modules.extraction.secrets import SECRET_PATTERNS
 
-        # README claims "60+ patterns" — keep the claim true.
-        self.assertGreaterEqual(len(SECRET_PATTERNS), 60)
+        # README claims "120+ patterns" — keep the claim true.
+        self.assertGreaterEqual(len(SECRET_PATTERNS), 120)
 
 
 class TestFpGateHardening(unittest.TestCase):
@@ -338,6 +338,103 @@ class TestFpGateHardening(unittest.TestCase):
             '{ password: "550e8400-e29b-41d4-a716-446655440000" }', "unit.js"
         )
         self.assertFalse(any(s["type"] == "Generic Password" for s in found))
+
+
+class TestVendorPatternExpansion(unittest.TestCase):
+    """F2 — modern vendor formats (Resend, chain explorers, HubSpot, …)."""
+
+    def test_resend_key(self):
+        found = extract_secrets(f'const k = "re_{"a" * 40}";', "unit.js")
+        self.assertIn("Resend API Key", [s["type"] for s in found])
+
+    def test_contentful_pat(self):
+        tok = "CFPAT-" + "A" * 40
+        found = extract_secrets(f'const t = "{tok}";', "unit.js")
+        self.assertIn("Contentful CMA Token", [s["type"] for s in found])
+
+    def test_sentry_dsn(self):
+        dsn = "https://" + "a" * 32 + "@o123.ingest.sentry.io/456"
+        found = extract_secrets(f'const dsn = "{dsn}";', "unit.js")
+        self.assertIn("Sentry DSN", [s["type"] for s in found])
+
+    def test_hubspot_pat(self):
+        pat = "pat-a1b2-c3d4-e5f6-7890-abcdef123456"
+        found = extract_secrets(f'const t = "{pat}";', "unit.js")
+        self.assertIn("HubSpot Private App", [s["type"] for s in found])
+
+    def test_razorpay_live_key(self):
+        found = extract_secrets('const k = "rzp_live_aB3xY9mN2pQ7rS5t";', "unit.js")
+        self.assertIn("Razorpay Live Key", [s["type"] for s in found])
+
+    def test_twilio_api_key_sid(self):
+        sid = "SK" + "a" * 32
+        found = extract_secrets(f'const k = "{sid}";', "unit.js")
+        self.assertIn("Twilio API Key SID", [s["type"] for s in found])
+
+    def test_github_oauth_token(self):
+        tok = "gho_" + "A" * 36
+        found = extract_secrets(f'const t = "{tok}";', "unit.js")
+        self.assertIn("GitHub OAuth Token", [s["type"] for s in found])
+
+    def test_mapbox_secret_token(self):
+        tok = "sk.eyJ1IjoiYWJjZGVmZ2hpamtsbW5vcCIsImEiOiJjbSJ9"
+        found = extract_secrets(f'const t = "{tok}";', "unit.js")
+        self.assertIn("Mapbox Secret Token", [s["type"] for s in found])
+
+    def test_etherscan_labeled_key(self):
+        found = extract_secrets(
+            'const cfg = { etherscan_api_key: "ABCDEF0123456789ABCDEF" };',
+            "unit.js",
+        )
+        self.assertIn("Etherscan API Key", [s["type"] for s in found])
+
+    def test_catalog_grew_beyond_phase_c(self):
+        from modules.extraction.secrets import SECRET_PATTERNS
+
+        self.assertGreaterEqual(len(SECRET_PATTERNS), 100)
+        for label in ("Resend API Key", "Sentry DSN", "Neon API Key", "Vercel Token"):
+            self.assertIn(label, SECRET_PATTERNS)
+
+
+class TestHighEntropyUnlabeled(unittest.TestCase):
+    """F2 — high-entropy string literals with no vendor pattern."""
+
+    def test_high_entropy_near_secret_keyword(self):
+        entropy = "aB3xY9mN2pQ7rS5tU8vW1xY4zA6bC9dEfGh12"
+        content = f'const config = {{ secret_key: "{entropy}" }};'
+        found = extract_secrets(content, "unit.js")
+        self.assertIn("High-Entropy String", [s["type"] for s in found])
+
+    def test_high_entropy_without_context_skipped(self):
+        entropy = "aB3xY9mN2pQ7rS5tU8vW1xY4zA6bC9dEfGh12"
+        content = "x" * 200 + f' "{entropy}" ' + "y" * 200
+        found = extract_secrets(content, "unit.js")
+        self.assertFalse(
+            any(s["type"] == "High-Entropy String" for s in found),
+            found,
+        )
+
+    def test_low_entropy_string_skipped(self):
+        content = 'const password = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";'
+        found = extract_secrets(content, "unit.js")
+        self.assertFalse(any(s["type"] == "High-Entropy String" for s in found))
+
+    def test_labeled_pattern_wins_over_high_entropy(self):
+        aws = "AKIA" + "ABCDEFGHIJKLMNOP"
+        content = f'const api_key = "{aws}";'
+        found = extract_secrets(content, "unit.js")
+        types = [s["type"] for s in found]
+        self.assertIn("AWS Access Key", types)
+        self.assertNotIn("High-Entropy String", types)
+
+    def test_high_entropy_helper_direct(self):
+        from modules.extraction.secrets import extract_high_entropy_secrets
+
+        entropy = "Zq7Wn4Kp2Xr8Vt5Yc1Bm6Hd3Lf9Gj0Sa8HiKo"
+        content = f'secret_token: "{entropy}"'
+        found = extract_high_entropy_secrets(content, "unit.js")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["type"], "High-Entropy String")
 
 
 if __name__ == "__main__":
