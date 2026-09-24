@@ -151,6 +151,38 @@ def _registrable_domain(host, scheme="https"):
         return ".".join(parts[-2:]) if len(parts) >= 2 else host
 
 
+# Cap for one trusted-seed expansion (per-scan second pass budget)
+MAX_SEED_LOOKALIKES = 5
+MAX_TRUSTED_SEEDS = 3
+
+
+def build_seed_lookalikes(seed_origin, limit=MAX_SEED_LOOKALIKES):
+    """
+    Lookalike Origins for a trusted/static ACAO seed (not the scan target).
+
+    Covers suffix trust, path-bearing contains(), and subdomain confusion
+    against the *allowed third-party* host seen in ACAO.
+    """
+    seed_n = normalize_origin(seed_origin)
+    if seed_n in ("", "null", "*"):
+        return []
+    host = origin_host(seed_n)
+    if not host or is_ip_host(host) or host == "localhost":
+        return []
+    scheme = urlparse(seed_n).scheme or "https"
+    registrable = _registrable_domain(host, scheme)
+    base = registrable or host
+
+    candidates = [
+        f"https://sub.{base}",
+        f"https://{base}.evil.com",
+        f"https://evil.{base}",
+        f"https://{base}/path",
+        f"https://{host}/path",
+    ]
+    return _dedupe(candidates)[: max(0, int(limit))]
+
+
 def build_test_origins(target_url, custom_origin=None):
     """
     Build list of Origin values to probe (capped at MAX_TEST_ORIGINS).

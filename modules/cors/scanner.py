@@ -7,9 +7,15 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
-from modules.cors.classifier import SEVERITY_ORDER
-from modules.cors.origins import build_test_origins, normalize_origin
-from modules.cors.probe import probe_baseline, probe_endpoint
+from modules.cors.classifier import SEVERITY_ORDER, parse_acao_list
+from modules.cors.origins import (
+    MAX_TRUSTED_SEEDS,
+    build_seed_lookalikes,
+    build_test_origins,
+    normalize_origin,
+    origins_equal,
+)
+from modules.cors.probe import is_reflected_acao, probe_baseline, probe_endpoint
 from modules.extraction.http import RateLimiter
 from modules.extraction.scope import get_registrable_domain
 
@@ -255,11 +261,35 @@ def scan_cors(
     raw_findings = []
     error_probes = 0
     session = requests.Session()
+    baselines = {}
+    urls_with_acao = set()
+    trusted_seeds = set()
 
-    def _probe(url, method, request_method="GET", static_acao=False):
+    def _record_trusted(row):
+        """Collect static/third-party ACAO seeds (not reflection, not target)."""
+        acao = (row.get("acao") or "").strip()
+        if not acao or acao in ("*", "null"):
+            return
+        probe_origin = row.get("origin") or ""
+        for item in parse_acao_list(acao):
+            if item in ("*", "null"):
+                continue
+            if origins_equal(item, probe_origin):
+                continue  # pure reflection — matrix already covers
+            if target_origin and origins_equal(item, target_origin):
+                continue  # legitimate target allowlist
+            if is_reflected_acao(probe_origin, item) and origins_equal(
+                item, probe_origin
+            ):
+                continue
+            norm = normalize_origin(item)
+            if norm and norm not in ("", "null", "*"):
+                trusted_seeds.add(norm)
+
+    def _probe(url, method, request_method="GET", static_acao=False, origin_list=None):
         return probe_endpoint(
             url,
-            origins,
+            origin_list if origin_list is not None else origins,
             timeout=timeout,
             method=method,
             headers=headers,
@@ -282,6 +312,7 @@ def scan_cors(
         baseline = probe_baseline(
             url, timeout=timeout, headers=headers, limiter=limiter, session=session
         )
+        baselines[url] = baseline
         static_acao = bool(baseline.get("static_acao"))
 
         # Escalate only when no *finding-worthy* ACAO on preflight.
@@ -305,20 +336,59 @@ def scan_cors(
 
         return url, get_results, baseline
 
+    def _ingest(url, results):
+        for r in results:
+            _record_trusted(r)
+            if r.get("acao"):
+                urls_with_acao.add(url)
+            if r["severity"] == "ERROR":
+                nonlocal error_probes
+                error_probes += 1
+                continue
+            if r["severity"] == "INFO":
+                continue
+            finding = dict(r)
+            finding["url"] = url
+            raw_findings.append(finding)
+
     try:
         with ThreadPoolExecutor(max_workers=max(1, int(threads))) as pool:
             futures = {pool.submit(_scan_one, url): url for url in resolved}
             for future in as_completed(futures):
                 url, results, _baseline = future.result()
-                for r in results:
-                    if r["severity"] == "ERROR":
-                        error_probes += 1
-                        continue
-                    if r["severity"] == "INFO":
-                        continue
-                    finding = dict(r)
-                    finding["url"] = url
-                    raw_findings.append(finding)
+                _ingest(url, results)
+
+        # --- Trusted-seed second pass -------------------------------------
+        seed_origins = []
+        for seed in sorted(trusted_seeds)[:MAX_TRUSTED_SEEDS]:
+            for look in build_seed_lookalikes(seed):
+                if look not in origins and look not in seed_origins:
+                    seed_origins.append(look)
+        seed_urls = sorted(urls_with_acao)
+        if seed_origins and seed_urls:
+            if verbose:
+                print(
+                    f"[*] Trusted-seed re-probe: {len(seed_origins)} origin(s) "
+                    f"on {len(seed_urls)} URL(s)"
+                )
+
+            def _scan_seeds(url):
+                static_acao = bool((baselines.get(url) or {}).get("static_acao"))
+                opt_results = _probe(
+                    url, "OPTIONS", static_acao=static_acao, origin_list=seed_origins
+                )
+                if _has_finding_acao(opt_results):
+                    return url, opt_results
+                get_results = _probe(
+                    url, "GET", static_acao=static_acao, origin_list=seed_origins
+                )
+                return url, get_results
+
+            with ThreadPoolExecutor(max_workers=max(1, int(threads))) as pool:
+                futures = {pool.submit(_scan_seeds, url): url for url in seed_urls}
+                for future in as_completed(futures):
+                    url, results = future.result()
+                    _ingest(url, results)
     finally:
         session.close()
 

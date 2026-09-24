@@ -15,7 +15,13 @@ from modules.cors.classifier import (
     is_multi_origin_acao,
     parse_acao_list,
 )
-from modules.cors.origins import build_test_origins, normalize_origin, origins_equal
+from modules.cors.origins import (
+    MAX_TEST_ORIGINS,
+    build_seed_lookalikes,
+    build_test_origins,
+    normalize_origin,
+    origins_equal,
+)
 from modules.cors.probe import (
     build_evidence,
     is_cross_domain_redirect,
@@ -38,6 +44,8 @@ __all__ = [
     "cors_risk_boost",
     "classify_cors",
     "build_test_origins",
+    "build_seed_lookalikes",
+    "MAX_TEST_ORIGINS",
     "normalize_origin",
     "origins_equal",
     "parse_acao_list",

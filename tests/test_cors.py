@@ -20,7 +20,11 @@ from modules.cors import (
     probe_endpoint,
 )
 from modules.cors.classifier import classify_cors as classify
-from modules.cors.origins import MAX_TEST_ORIGINS, THIRD_PARTY_SUFFIXES
+from modules.cors.origins import (
+    MAX_TEST_ORIGINS,
+    THIRD_PARTY_SUFFIXES,
+    build_seed_lookalikes,
+)
 from modules.cors.probe import build_evidence, build_probe_headers, extract_cors_headers
 from modules.cors.scanner import cors_risk_boost, resolve_endpoints, scan_cors
 
@@ -387,6 +391,117 @@ class TestRateLimiter(unittest.TestCase):
         holder.join(timeout=2)
         self.assertTrue(acquired_during and acquired_during[0],
                         "lock must not be held while wait() sleeps")
+
+
+class TestSeedLookalikes(unittest.TestCase):
+    """Phase 2.2 Step 2: trusted-seed expansion."""
+
+    def test_seed_builds_suffix_and_subdomain(self):
+        looks = build_seed_lookalikes("https://cdn.partner.com")
+        self.assertIn("https://sub.partner.com", looks)
+        self.assertIn("https://partner.com.evil.com", looks)
+        self.assertIn("https://evil.partner.com", looks)
+        self.assertIn("https://cdn.partner.com/path", looks)
+
+    def test_seed_rejects_null_star_empty(self):
+        self.assertEqual(build_seed_lookalikes("null"), [])
+        self.assertEqual(build_seed_lookalikes("*"), [])
+        self.assertEqual(build_seed_lookalikes(""), [])
+
+    def test_seed_rejects_ip_host(self):
+        self.assertEqual(build_seed_lookalikes("https://10.0.0.5"), [])
+
+    def test_seed_respects_limit(self):
+        looks = build_seed_lookalikes("https://cdn.partner.com", limit=2)
+        self.assertEqual(len(looks), 2)
+
+    @mock.patch("modules.cors.scanner.requests.Session")
+    @mock.patch("modules.cors.scanner.probe_baseline")
+    @mock.patch("modules.cors.scanner.probe_endpoint")
+    def test_second_pass_when_trusted_acao_seen(
+        self, probe_mock, baseline_mock, session_cls
+    ):
+        baseline_mock.return_value = {"static_acao": False, "acao": ""}
+        # First pass: INFO with static third-party ACAO (trusted seed)
+        # No finding on first pass for simplicity — seed still collected
+        info_row = {
+            "origin": "https://evil.com",
+            "method": "OPTIONS",
+            "status": 200,
+            "final_url": "https://example.com/api",
+            "redirected": False,
+            "severity": "INFO",
+            "detail": "static allowlist",
+            "evidence": "",
+            "static_acao": False,
+            "acao": "https://cdn.partner.com",
+            "acac": "",
+            "vary": "",
+            "acpn": "",
+        }
+        # Second pass: seed lookalike reflects + creds → CRITICAL
+        seed_crit = dict(info_row)
+        seed_crit.update({
+            "origin": "https://evil.partner.com",
+            "severity": "CRITICAL",
+            "acao": "https://evil.partner.com",
+            "acac": "true",
+            "method": "GET",
+        })
+
+        # OPTIONS pass 1 (INFO), GET pass 1 (INFO) — then seed OPTIONS/GET
+        probe_mock.side_effect = [
+            [info_row],  # OPTIONS pass 1
+            [info_row],  # GET pass 1
+            [seed_crit],  # seed OPTIONS
+        ]
+        out = scan_cors(
+            ["/about"], TARGET, verbose=False, threads=1, rate_limit=0
+        )
+        self.assertGreaterEqual(probe_mock.call_count, 3)
+        origin_lists = [
+            c.args[1] for c in probe_mock.call_args_list if len(c.args) >= 2
+        ]
+        seed_lists = [
+            o for o in origin_lists
+            if any("evil.partner.com" in (x or "") for x in o)
+        ]
+        self.assertTrue(seed_lists, "second pass must probe seed lookalikes")
+        self.assertEqual(out["severity_counts"].get("CRITICAL"), 1)
+
+    @mock.patch("modules.cors.scanner.requests.Session")
+    @mock.patch("modules.cors.scanner.probe_baseline")
+    @mock.patch("modules.cors.scanner.probe_endpoint")
+    def test_no_second_pass_without_trusted_seed(
+        self, probe_mock, baseline_mock, session_cls
+    ):
+        baseline_mock.return_value = {"static_acao": False, "acao": ""}
+        crit = {
+            "origin": "https://evil.com",
+            "method": "OPTIONS",
+            "status": 200,
+            "final_url": "https://example.com/api",
+            "redirected": False,
+            "severity": "CRITICAL",
+            "detail": "reflected",
+            "evidence": "",
+            "static_acao": False,
+            "acao": "https://evil.com",
+            "acac": "true",
+            "vary": "Origin",
+            "acpn": "",
+        }
+        probe_mock.return_value = [crit]
+        scan_cors(["/api/users"], TARGET, verbose=False, threads=1, rate_limit=0)
+        # Only first-pass probes — no seed lookalike origins passed through
+        origin_lists = [
+            c.args[1] for c in probe_mock.call_args_list if len(c.args) >= 2
+        ]
+        seed_lists = [
+            o for o in origin_lists
+            if any("evil.partner.com" in (x or "") for x in o)
+        ]
+        self.assertEqual(seed_lists, [])
 
 
 class TestScannerEscalationAndErrors(unittest.TestCase):
