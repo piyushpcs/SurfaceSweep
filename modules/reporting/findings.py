@@ -62,6 +62,16 @@ def build_findings_feed(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             source=str(h.get("source", "")),
         ))
 
+    # --- PII quick wins (severity from detector: INFO/LOW) ---
+    for p in result.get("pii_found") or []:
+        sources = p.get("sources") or [p.get("source", "")]
+        feed.append(_finding(
+            p.get("severity", "INFO"), "pii",
+            f"Potential PII ({p.get('kind', 'unknown')})",
+            str(p.get("match", ""))[:80],
+            source=", ".join(str(x) for x in sources if x),
+        ))
+
     # --- Source maps ---
     for m in result.get("source_maps_found") or []:
         feed.append(_finding(
@@ -160,6 +170,7 @@ def build_executive_summary(result: Dict[str, Any],
             "jwt_tokens": (result.get("jwt") or {}).get("tokens_analyzed", 0),
             "cves": len(result.get("library_vulnerabilities") or []),
             "spa_routes": len(result.get("spa_routes") or []),
+            "pii": len(result.get("pii_found") or []),
         },
     }
 

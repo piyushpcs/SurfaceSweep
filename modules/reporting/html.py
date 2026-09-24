@@ -290,6 +290,35 @@ def render_sinks(sinks):
     )
 
 
+def render_pii(items):
+    """Render PII quick-win findings section (escaped)."""
+    if not items:
+        return ""
+    kind_label = {
+        "email": "Email",
+        "phone_e164": "Phone (E.164)",
+        "credit_card": "Payment card",
+        "ssn": "SSN",
+    }
+    rows = []
+    for p in items:
+        sources = ", ".join(str(x) for x in p.get("sources", [p.get("source", "unknown")]))
+        kind = str(p.get("kind", ""))
+        label = kind_label.get(kind, kind)
+        rows.append(
+            f'<tr><td>{_sev_badge(p.get("severity", ""))}</td>'
+            f'<td>{_esc(label)}</td>'
+            f'<td><code>{_esc(str(p.get("match", "")))}</code></td>'
+            f'<td>{_esc(str(p.get("description", "")))}</td>'
+            f'<td class="muted">{_esc(sources)}</td></tr>'
+        )
+    return (
+        f'<h2>Potential PII ({len(items)})</h2>'
+        '<table><thead><tr><th>Severity</th><th>Type</th><th>Value</th><th>Description</th><th>Sources</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+
+
 def render_internal_hosts(hosts):
     """Render internal/private host findings section (escaped)."""
     if not hosts:
@@ -721,6 +750,7 @@ def build_html(result):
   <div class="stat"><div class="num">{len(result.get('spa_routes', []))}</div><div class="label">SPA Routes</div></div>
   <div class="stat"><div class="num">{len(result.get('sinks_found', []))}</div><div class="label">Dangerous Sinks</div></div>
   <div class="stat"><div class="num">{len(result.get('internal_hosts_found', []))}</div><div class="label">Internal Hosts</div></div>
+  <div class="stat"><div class="num">{len(result.get('pii_found', []))}</div><div class="label">PII Items</div></div>
   <div class="stat"><div class="num">{len((result.get('cors') or {}).get('findings', []))}</div><div class="label">CORS Findings</div></div>
   <div class="stat"><div class="num">{(result.get('jwt') or {}).get('tokens_analyzed', 0)}</div><div class="label">JWTs Analyzed</div></div>
 </div>
@@ -746,6 +776,8 @@ def build_html(result):
 {render_secrets(result.get('secrets_found', []))}
 
 {render_sinks(result.get('sinks_found', []))}
+
+{render_pii(result.get('pii_found', []))}
 
 {render_internal_hosts(result.get('internal_hosts_found', []))}
 

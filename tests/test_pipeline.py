@@ -568,6 +568,45 @@ class TestHtmlHardening(unittest.TestCase):
         }])
         self.assertIn("badge-critical", html)
 
+    def test_render_pii_section(self):
+        from modules.reporting.html import render_pii
+        html = render_pii([{
+            "kind": "email", "match": "alice@corp-target.io",
+            "severity": "INFO", "description": "Email",
+            "sources": ["a.js"],
+        }])
+        self.assertIn("Potential PII", html)
+        self.assertIn("alice@corp-target.io", html)
+        self.assertIn("a.js", html)
+
+    def test_render_pii_escapes_match(self):
+        from modules.reporting.html import render_pii
+        html = render_pii([{
+            "kind": "email", "match": "<script>alert(1)</script>@x.io",
+            "severity": "INFO", "description": "Email", "source": "a.js",
+        }])
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertIn("&lt;script&gt;", html)
+
+    def test_render_pii_empty(self):
+        from modules.reporting.html import render_pii
+        self.assertEqual(render_pii([]), "")
+        self.assertEqual(render_pii(None), "")
+
+    def test_build_html_has_pii_stat_and_section(self):
+        from modules.reporting.html import build_html
+        html = build_html({
+            "target": "https://example.com",
+            "pii_found": [{
+                "kind": "credit_card", "match": "4532015112830366",
+                "severity": "LOW", "description": "Payment card",
+                "source": "a.js",
+            }],
+        })
+        self.assertIn("PII Items", html)
+        self.assertIn("Potential PII", html)
+        self.assertIn("Payment card", html)
+
     def test_waf_section_present(self):
         from modules.reporting.html import build_html
         html = build_html({
@@ -654,6 +693,11 @@ class TestFindingsFeed(unittest.TestCase):
             },
             "internal_hosts_found": [],
             "source_maps_found": [],
+            "pii_found": [{
+                "kind": "credit_card", "match": "4532015112830366",
+                "severity": "LOW", "description": "Payment card",
+                "sources": ["a.js"],
+            }],
         }
 
     def test_feed_sorted_by_severity(self):
@@ -667,7 +711,15 @@ class TestFindingsFeed(unittest.TestCase):
         from modules.reporting.findings import build_findings_feed
         feed = build_findings_feed(self._result())
         modules = {f["module"] for f in feed}
-        self.assertLessEqual({"secrets", "sinks", "cve", "cors", "jwt"}, modules)
+        self.assertLessEqual({"secrets", "sinks", "cve", "cors", "jwt", "pii"}, modules)
+
+    def test_feed_includes_pii_entry(self):
+        from modules.reporting.findings import build_findings_feed
+        feed = build_findings_feed(self._result())
+        pii = [f for f in feed if f["module"] == "pii"]
+        self.assertEqual(len(pii), 1)
+        self.assertEqual(pii[0]["severity"], "LOW")
+        self.assertIn("credit_card", pii[0]["title"])
 
     def test_executive_summary_shape(self):
         from modules.reporting.findings import build_executive_summary, build_findings_feed
