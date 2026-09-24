@@ -231,6 +231,7 @@ def _offline_patches():
         "scan_cors": lambda *a, **k: dict(_CORS_RESULT),
         "analyze_result_jwts": lambda *a, **k: dict(_JWT_RESULT),
         "validate_endpoints": _fake_validate,
+        "discover_robots_and_sitemap": lambda *a, **k: {"paths": [], "urls": []},
     }
 
 

@@ -219,11 +219,14 @@ class TestNoDeobfThreading(unittest.TestCase):
         )
         ctx = ScanContext(args, verbose=False)
         orig = stages_mod.run_extractor
+        orig_robots = stages_mod.discover_robots_and_sitemap
         stages_mod.run_extractor = fake_run_extractor
+        stages_mod.discover_robots_and_sitemap = lambda *a, **k: {"paths": [], "urls": []}
         try:
             stages_mod.stage_scan(ctx)
         finally:
             stages_mod.run_extractor = orig
+            stages_mod.discover_robots_and_sitemap = orig_robots
         self.assertIn("static", captured)
         self.assertIs(captured["static"]["deobfuscate"], False)
 

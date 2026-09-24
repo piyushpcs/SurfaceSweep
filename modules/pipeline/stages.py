@@ -15,7 +15,7 @@ from modules.analysis import (
 from modules.analysis.validator import build_method_map
 from modules.common.console import emit, ok
 from modules.cors import collect_js_origins, scan_cors
-from modules.discovery import crawl_spa_routes, get_wayback_endpoints
+from modules.discovery import crawl_spa_routes, discover_robots_and_sitemap, get_wayback_endpoints
 from modules.extraction import (
     calculate_risk_summary,
     is_static_asset,
@@ -101,6 +101,30 @@ def stage_scan(ctx: ScanContext) -> None:
             use_ast=not args.regex_only,
         )
         ctx.result["scan_mode"] = "static"
+
+    _merge_robots_sitemap(ctx)
+
+
+def _merge_robots_sitemap(ctx: ScanContext) -> None:
+    """Pull paths from robots.txt / sitemap.xml into the live result."""
+    if ctx.result is None:
+        return
+    result = ctx.require_result()
+    discovery = discover_robots_and_sitemap(
+        ctx.args.target,
+        timeout=getattr(ctx.args, "timeout", 10) or 10,
+        verbose=ctx.verbose,
+    )
+    endpoints = list(discovery.get("paths") or []) + list(discovery.get("urls") or [])
+    if not endpoints:
+        return
+    before = len(result.get("internal_paths", []))
+    added = merge_endpoints(result, endpoints, ctx.args.target)
+    if added:
+        result["risk_summary"] = calculate_risk_summary(result)
+        if ctx.verbose:
+            net = len(result.get("internal_paths", [])) - before
+            ctx.log(f"[+] robots/sitemap: +{added} endpoint(s) (+{net} path(s))")
 
 
 def stage_wayback_merge(ctx: ScanContext) -> None:
