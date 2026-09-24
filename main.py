@@ -7,7 +7,11 @@ through modules.pipeline.run_pipeline (Phase 4 Step 1).
 
 import argparse
 import json
+import os
+import re
 import sys
+from typing import List
+from urllib.parse import urlparse
 
 from modules import __version__
 from modules.common.console import configure_console, error as console_error
@@ -35,7 +39,18 @@ def build_parser() -> argparse.ArgumentParser:
             "2 usage error, 3 runtime error"
         ),
     )
-    parser.add_argument("target", help="Target URL, e.g. https://example.com")
+    parser.add_argument(
+        "target",
+        nargs="?",
+        default=None,
+        help="Target URL, e.g. https://example.com (omit when using --targets)",
+    )
+    parser.add_argument(
+        "--targets",
+        default=None,
+        metavar="FILE",
+        help="Batch mode: newline-delimited target URLs (one per line, # comments ok)",
+    )
     parser.add_argument("-o", "--output", default="reports/surfacesweep_report.json", help="Output JSON file")
     parser.add_argument("-t", "--threads", type=int, default=6, help="Concurrent fetch threads")
     parser.add_argument("-d", "--depth", type=int, default=1, help="Recursive JS depth (0=HTML only, 1=JS from HTML, 2=JS from JS, ...)")
@@ -113,6 +128,63 @@ def build_headers(args: argparse.Namespace) -> dict:
     return headers
 
 
+def load_targets_file(path: str) -> List[str]:
+    """
+    Read a batch target list: one URL per line, blank lines and ``#``
+    comments ignored. Raises OSError / ValueError on bad input.
+    """
+    with open(path, "r", encoding="utf-8") as fh:
+        raw = fh.read().splitlines()
+    targets: List[str] = []
+    seen = set()
+    for line in raw:
+        url = line.strip()
+        if not url or url.startswith("#"):
+            continue
+        if url not in seen:
+            seen.add(url)
+            targets.append(url)
+    return targets
+
+
+def resolve_targets(args: argparse.Namespace, parser: argparse.ArgumentParser) -> List[str]:
+    """Collect scan targets from positional and/or --targets; enforce presence."""
+    targets: List[str] = []
+    if args.target:
+        targets.append(args.target)
+    if args.targets:
+        try:
+            targets.extend(load_targets_file(args.targets))
+        except OSError as exc:
+            parser.error(f"cannot read --targets file: {exc}")
+        except ValueError as exc:
+            parser.error(str(exc))
+    # Dedupe preserving order
+    ordered: List[str] = []
+    seen = set()
+    for t in targets:
+        if t not in seen:
+            seen.add(t)
+            ordered.append(t)
+    if not ordered:
+        parser.error("target URL required (or provide --targets FILE)")
+    return ordered
+
+
+def batch_output_path(base_output: str, target_url: str) -> str:
+    """
+    Derive a per-target JSON path from the primary -o path.
+
+    reports/out.json + https://app.example.com → reports/out_app.example.com.json
+    """
+    from modules.reporting.builder import output_paths
+
+    base = output_paths(base_output)["base"]
+    host = urlparse(target_url).netloc or target_url
+    host = re.sub(r"[^\w.-]+", "_", host).strip("._") or "target"
+    return f"{base}_{host}.json"
+
+
 def _aggregate_severity_counts(result) -> dict:
     """
     Collect severity counts from every findings surface on the result.
@@ -171,6 +243,47 @@ def exit_code_for_result(result, fail_on: str) -> int:
     return EXIT_OK
 
 
+def _apply_diff(args, result, verbose: bool) -> int:
+    """Optional --diff against baseline; returns EXIT_OK or EXIT_ERROR."""
+    if not getattr(args, "diff", None):
+        return EXIT_OK
+    try:
+        from modules.reporting.builder import output_paths
+        from modules.reporting.diff import diff_results, load_result, print_diff, save_diff
+
+        baseline = load_result(args.diff)
+        diff = diff_results(baseline, result)
+        print_diff(diff, verbose=verbose)
+        diff_path = output_paths(args.output)["base"] + "_diff.json"
+        save_diff(diff, diff_path)
+        return EXIT_OK
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        console_error(f"[!] Diff failed: {exc}")
+        return EXIT_ERROR
+
+
+def _scan_one(args, verbose: bool, headers: dict) -> int:
+    """Run pipeline for the current args.target; return process exit code."""
+    try:
+        result = run_pipeline(args, verbose=verbose, headers=headers)
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        console_error("\n[!] Interrupted")
+        return EXIT_ERROR
+    except Exception as exc:
+        console_error(f"[!] Scan failed for {args.target}: {exc}")
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        return EXIT_ERROR
+
+    diff_code = _apply_diff(args, result, verbose)
+    if diff_code != EXIT_OK:
+        return diff_code
+    return exit_code_for_result(result, args.fail_on)
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -180,35 +293,35 @@ def main(argv=None):
     # Browser always tolerates bad certs by default; --insecure applies to requests.
     args.verify_tls = not args.insecure
     configure_http(proxy=args.proxy, insecure=args.insecure, user_agent=args.ua)
-    try:
-        result = run_pipeline(args, verbose=verbose, headers=headers)
-    except SystemExit:
-        raise
-    except KeyboardInterrupt:
-        console_error("\n[!] Interrupted")
-        return EXIT_ERROR
-    except Exception as exc:
-        console_error(f"[!] Scan failed: {exc}")
+
+    targets = resolve_targets(args, parser)
+    if len(targets) == 1:
+        args.target = targets[0]
+        return _scan_one(args, verbose, headers)
+
+    # ---- Batch mode: one pipeline run per target, per-target outputs ----
+    base_output = args.output
+    baseline = args.diff  # same baseline applied to every target if set
+    codes: List[int] = []
+    if verbose:
+        from modules.common.console import info
+        info(f" --- Batch scan: {len(targets)} target(s) ---")
+
+    for i, target in enumerate(targets, 1):
         if verbose:
-            import traceback
-            traceback.print_exc()
+            from modules.common.console import info
+            info(f"[{i}/{len(targets)}] {target}")
+        args.target = target
+        args.output = batch_output_path(base_output, target)
+        args.diff = baseline
+        codes.append(_scan_one(args, verbose, headers))
+
+    # Aggregate: any runtime error → 3; else any findings → 1; else 0
+    if any(c == EXIT_ERROR for c in codes):
         return EXIT_ERROR
-
-    if getattr(args, "diff", None):
-        try:
-            from modules.reporting.builder import output_paths
-            from modules.reporting.diff import diff_results, load_result, print_diff, save_diff
-
-            baseline = load_result(args.diff)
-            diff = diff_results(baseline, result)
-            print_diff(diff, verbose=verbose)
-            diff_path = output_paths(args.output)["base"] + "_diff.json"
-            save_diff(diff, diff_path)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            console_error(f"[!] Diff failed: {exc}")
-            return EXIT_ERROR
-
-    return exit_code_for_result(result, args.fail_on)
+    if any(c == EXIT_FINDINGS for c in codes):
+        return EXIT_FINDINGS
+    return EXIT_OK
 
 
 if __name__ == "__main__":
