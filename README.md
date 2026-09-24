@@ -98,6 +98,13 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
+Optional editable install (exposes a `surfacesweep` console command):
+
+```bash
+pip install -e . --no-deps
+surfacesweep --version
+```
+
 `tree-sitter` and `tree-sitter-javascript` install from prebuilt wheels (no compiler needed).
 If the AST stack is unavailable, SurfaceSweep automatically falls back to regex-only extraction.
 
@@ -348,13 +355,20 @@ You are responsible for complying with applicable laws, program rules, and rate 
 
 ## Contributing
 
-Issues and pull requests are welcome.
+Issues and pull requests are welcome. By participating you agree to the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 1. Fork and create a feature branch
 2. Keep changes focused; match existing code style
 3. Add or update tests — `python -m unittest discover -s tests -q` must stay green
 4. Use conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`)
 5. Open a PR describing the problem and the approach
+
+## Security
+
+Report vulnerabilities privately via
+[GitHub Security Advisories](https://github.com/piyushpcs/SurfaceSweep/security/advisories/new)
+— see [SECURITY.md](SECURITY.md).
 
 ## License
 
