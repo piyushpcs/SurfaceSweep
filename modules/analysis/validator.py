@@ -5,6 +5,12 @@ Confirms discovered endpoints are live by making HTTP requests.
 Filters out false positives (404s, soft-404s, SPA index shells, JSON
 fail-in-200 bodies, redirects to homepage).
 
+Method-aware validation (Phase C7):
+- Observed browser methods are reused so POST-only APIs are not probed with GET.
+- Path-inferred methods (…/create → POST, …/delete → DELETE) are applied.
+- Inferred DELETE is sent as OPTIONS (existence probe) so validation never
+  mutates state when the verb was only guessed from the path.
+
 Status classification:
 - 200: LIVE
 - 201/202/204: LIVE (created/accepted/no content)
@@ -23,6 +29,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from modules.common.console import detail, emit, info
 
 USER_AGENT = "SurfaceSweep/1.0"
+
+# Schemes we can (and should) skip during HTTP validation
+NON_HTTP_SCHEMES = ("ws://", "wss://", "data:", "javascript:", "mailto:")
 
 # Status codes that indicate the endpoint exists
 LIVE_STATUSES = {200, 201, 202, 204, 206, 301, 302, 304, 307, 308}
@@ -267,6 +276,47 @@ def classify_200_body(response, original_url):
     return "live", None
 
 
+def resolve_validation_method(url, observed=None):
+    """
+    Choose the HTTP method for a validation probe.
+
+    Returns (method, source) where source is observed | inferred | default.
+    Observed methods (real browser traffic) are always used. Path-inferred
+    methods are used except DELETE, which is downgraded to OPTIONS so a
+    guessed path never issues a destructive request.
+    """
+    from modules.extraction.enrich import resolve_method
+
+    method, source = resolve_method(url, observed)
+    method = (method or "GET").upper()
+    if method == "DELETE" and source == "inferred":
+        return "OPTIONS", "inferred"
+    return method, source
+
+
+def build_method_map(urls, intercepted=None):
+    """
+    Map each validation URL to the method used to probe it.
+
+    intercepted: list of {url, method} dicts from browser/network capture.
+    Observed non-GET verbs win; otherwise path inference applies.
+    """
+    observed_by_url = {}
+    for ep in intercepted or []:
+        if not isinstance(ep, dict):
+            continue
+        u = ep.get("url")
+        m = ep.get("method")
+        if u and m:
+            observed_by_url[u] = m
+
+    method_map = {}
+    for url in urls or []:
+        method, _source = resolve_validation_method(url, observed_by_url.get(url))
+        method_map[url] = method
+    return method_map
+
+
 def validate_endpoint(url, method="GET", timeout=10, allow_redirects=False, headers=None):
     """
     Validate a single endpoint. Returns dict with validation details.
@@ -318,7 +368,8 @@ def validate_endpoint(url, method="GET", timeout=10, allow_redirects=False, head
         return {"url": url, "status_code": None, "status": "error", "error": str(e), "method": method}
 
 
-def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True, headers=None):
+def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True,
+                       headers=None, method_map=None):
     """
     Validate multiple endpoints concurrently.
 
@@ -329,18 +380,25 @@ def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True, hea
         timeout: per-request timeout
         verbose: print progress
         headers: custom headers to include
+        method_map: optional {url: method} — probe with the right verb.
+            Built by build_method_map() when omitted at the stage level.
 
     Returns:
         dict with validated endpoints categorized by status
     """
-    resolved = []
+    resolved = []  # list of (original, full_url)
     for url in urls:
+        if any(str(url).lower().startswith(s) for s in NON_HTTP_SCHEMES):
+            continue
         if url.startswith("http"):
-            resolved.append(url)
+            full = url
         elif url.startswith("/"):
-            resolved.append(urljoin(base_url, url))
+            full = urljoin(base_url, url)
         else:
-            resolved.append(urljoin(base_url + "/", url))
+            full = urljoin(base_url + "/", url)
+        resolved.append((url, full))
+
+    method_map = method_map or {}
 
     if verbose:
         info(f" Validating {len(resolved)} endpoints...")
@@ -360,10 +418,13 @@ def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True, hea
     all_results = []
 
     with ThreadPoolExecutor(max_workers=threads) as pool:
-        futures = {
-            pool.submit(validate_endpoint, url, timeout=timeout, headers=headers): url
-            for url in resolved
-        }
+        futures = {}
+        for original, full_url in resolved:
+            method = method_map.get(original) or method_map.get(full_url) or "GET"
+            futures[
+                pool.submit(validate_endpoint, full_url, method=method,
+                            timeout=timeout, headers=headers)
+            ] = full_url
         for future in as_completed(futures):
             url = futures[future]
             try:
@@ -379,8 +440,9 @@ def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True, hea
 
             if verbose:
                 code = result.get("status_code", "ERR")
+                method = result.get("method", "GET")
                 marker = {"live": "+", "restricted": "!", "dead": "-"}.get(status, "?")
-                detail(f"[{marker}] {code} {result['url'][:80]}")
+                detail(f"[{marker}] {code} {method} {result['url'][:80]}")
 
     live_count = len(results["live"])
     dead_count = len(results["dead"])

@@ -5,12 +5,15 @@ import unittest
 from unittest import mock
 
 from modules.analysis.validator import (
+    build_method_map,
     classify_200_body,
     classify_status,
     is_soft_404,
     is_spa_shell,
     looks_like_api_path,
+    resolve_validation_method,
     validate_endpoint,
+    validate_endpoints,
 )
 
 
@@ -210,6 +213,73 @@ class TestClassifyStatusUnchanged(unittest.TestCase):
         self.assertEqual(classify_status(401), "restricted")
         self.assertEqual(classify_status(404), "dead")
         self.assertEqual(classify_status(500), "server_error")
+
+
+class TestMethodAwareValidation(unittest.TestCase):
+    def test_observed_post_wins(self):
+        method, source = resolve_validation_method(
+            "https://x.test/api/orders", observed="POST"
+        )
+        self.assertEqual(method, "POST")
+        self.assertEqual(source, "observed")
+
+    def test_path_inferred_post(self):
+        method, source = resolve_validation_method("https://x.test/api/users/create")
+        self.assertEqual(method, "POST")
+        self.assertEqual(source, "inferred")
+
+    def test_inferred_delete_downgraded_to_options(self):
+        method, source = resolve_validation_method("https://x.test/api/items/1/delete")
+        self.assertEqual(method, "OPTIONS")
+        self.assertEqual(source, "inferred")
+
+    def test_observed_delete_kept(self):
+        method, source = resolve_validation_method(
+            "https://x.test/api/items/1", observed="DELETE"
+        )
+        self.assertEqual(method, "DELETE")
+        self.assertEqual(source, "observed")
+
+    def test_default_get(self):
+        method, source = resolve_validation_method("https://x.test/health")
+        self.assertEqual(method, "GET")
+        self.assertEqual(source, "default")
+
+    def test_build_method_map(self):
+        mm = build_method_map(
+            ["/api/orders", "/api/users/create", "/health", "/api/items/9/delete"],
+            intercepted=[{"url": "/api/orders", "method": "POST"}],
+        )
+        self.assertEqual(mm["/api/orders"], "POST")
+        self.assertEqual(mm["/api/users/create"], "POST")
+        self.assertEqual(mm["/health"], "GET")
+        self.assertEqual(mm["/api/items/9/delete"], "OPTIONS")  # inferred DELETE → OPTIONS
+
+    @mock.patch("modules.analysis.validator.requests.request")
+    def test_validate_endpoints_uses_method_map(self, request_mock):
+        request_mock.return_value = _resp('{"ok":true}', "application/json")
+        validate_endpoints(
+            ["/api/orders"],
+            "https://x.test",
+            verbose=False,
+            method_map={"/api/orders": "POST"},
+        )
+        args, kwargs = request_mock.call_args
+        self.assertEqual(args[0], "POST")
+        self.assertEqual(args[1], "https://x.test/api/orders")
+
+    @mock.patch("modules.analysis.validator.requests.request")
+    def test_ws_urls_skipped(self, request_mock):
+        request_mock.return_value = _resp('{"ok":true}', "application/json")
+        validate_endpoints(
+            ["wss://ws.example.com/socket", "/health"],
+            "https://x.test",
+            verbose=False,
+        )
+        request_mock.assert_called_once()
+        called_url = request_mock.call_args[0][1]
+        self.assertNotIn("wss://", called_url)
+        self.assertEqual(called_url, "https://x.test/health")
 
 
 if __name__ == "__main__":

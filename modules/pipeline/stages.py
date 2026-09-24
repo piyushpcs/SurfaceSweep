@@ -12,6 +12,7 @@ from modules.analysis import (
     scan_for_libraries,
     validate_endpoints,
 )
+from modules.analysis.validator import build_method_map
 from modules.common.console import emit, ok
 from modules.cors import collect_js_origins, scan_cors
 from modules.discovery import crawl_spa_routes, get_wayback_endpoints
@@ -272,10 +273,14 @@ def stage_validate(ctx: ScanContext) -> None:
         ctx.log("[*] No endpoints to validate")
         return
 
+    method_map = build_method_map(
+        all_endpoints, result.get("intercepted_endpoints") or []
+    )
     validation = validate_endpoints(
         all_endpoints, args.target,
         threads=args.vt, timeout=args.vtimeout, verbose=ctx.verbose,
         headers=ctx.headers if ctx.headers else None,
+        method_map=method_map,
     )
     result["validation"] = validation
 
