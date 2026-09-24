@@ -20,6 +20,7 @@ from modules.extraction.scope import get_registrable_domain, is_same_scope
 from modules.extraction.risk import calculate_risk_summary
 from modules.extraction.deobfuscator import deobfuscate
 from modules.extraction.ast import extract_endpoints_ast, ast_is_available
+from modules.extraction.sourcemaps import collect_source_map_sources, load_source_map
 from modules.analysis.sinks import detect_sinks, deduplicate_sinks
 from modules.jwt import extract_jwts, deduplicate_jwts
 
@@ -39,7 +40,7 @@ def get_js_sources(base_url, html):
 
 
 def check_source_map(js_url, timeout=8, limiter=None):
-    """Check if a source map exists for a JS file."""
+    """Check if a source map exists for a JS file (presence probe only)."""
     map_url = js_url + ".map"
     try:
         resp = fetch_with_retry(map_url, timeout=timeout, limiter=limiter)
@@ -142,7 +143,23 @@ def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
             endpoints, secrets, deobf, sinks, internal, jwts = extract_from_text(text, js_url, use_ast=use_ast)
         else:
             endpoints, secrets, deobf, sinks, internal, jwts = set(), [], [], [], [], []
-        source_map = check_source_map(js_url, limiter=limiter)
+
+        # Source map: comment / data: URI / conventional .map — then rescan sourcesContent
+        source_map = None
+        map_obj, map_report = load_source_map(js_url, text or None, limiter=limiter)
+        if map_obj is not None:
+            source_map = map_report
+            for label, original_source in collect_source_map_sources(map_obj, js_url):
+                o_eps, o_secrets, o_deobf, o_sinks, o_internal, o_jwts = extract_from_text(
+                    original_source, label, use_ast=use_ast
+                )
+                endpoints |= o_eps
+                secrets.extend(o_secrets)
+                deobf.extend(o_deobf)
+                sinks.extend(o_sinks)
+                internal.extend(o_internal)
+                jwts.extend(o_jwts)
+
         linked_js = discover_js_chunks(text, js_url) if text else set()
 
         return {

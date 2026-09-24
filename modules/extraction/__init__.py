@@ -15,6 +15,13 @@ from modules.extraction.engine import (
     check_source_map,
     discover_js_chunks,
 )
+from modules.extraction.sourcemaps import (
+    parse_source_mapping_url,
+    resolve_source_map_url,
+    decode_inline_sourcemap,
+    load_source_map,
+    collect_source_map_sources,
+)
 from modules.extraction.patterns import (
     ENDPOINT_PATTERN,
     GENERIC_PATH_PATTERN,
@@ -36,6 +43,9 @@ from modules.reporting.html import save_report, save_html_report
 __all__ = [
     "run_extractor", "merge_results", "extract_from_text", "fetch_and_extract",
     "get_js_sources", "check_source_map", "discover_js_chunks",
+    "parse_source_mapping_url", "resolve_source_map_url",
+    "decode_inline_sourcemap", "load_source_map",
+    "collect_source_map_sources",
     "ENDPOINT_PATTERN", "GENERIC_PATH_PATTERN", "FULL_URL_PATTERN", "CALL_PATTERN",
     "is_noise", "is_static_asset", "find_internal_hosts",
     "extract_secrets", "deduplicate_secrets",
