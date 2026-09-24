@@ -339,5 +339,74 @@ class TestFoundationContracts(unittest.TestCase):
         self.assertIsNot(a["errors"], b["errors"])
 
 
+class TestSecretSeverity(unittest.TestCase):
+    def test_critical_crown_jewels(self):
+        from modules.common.constants import secret_severity
+
+        for t in ("Private Key", "AWS Secret Key", "GCP Service Account", "Database URL"):
+            self.assertEqual(secret_severity(t), "CRITICAL", t)
+
+    def test_publishable_and_public_info(self):
+        from modules.common.constants import secret_severity
+
+        for t in ("Stripe Publishable", "PayPal Client ID", "Firebase URL", "Mapbox Token"):
+            self.assertEqual(secret_severity(t), "INFO", t)
+
+    def test_csrf_is_low(self):
+        from modules.common.constants import secret_severity
+
+        self.assertEqual(secret_severity("CSRF Token"), "LOW")
+
+    def test_unknown_defaults_high(self):
+        from modules.common.constants import DEFAULT_SECRET_SEVERITY, secret_severity
+
+        self.assertEqual(secret_severity("Some Vendor Key"), DEFAULT_SECRET_SEVERITY)
+        self.assertEqual(secret_severity(""), "HIGH")
+        self.assertEqual(secret_severity(None), "HIGH")
+
+    def test_generic_secret_is_medium(self):
+        from modules.common.constants import secret_severity
+
+        self.assertEqual(secret_severity("Generic Secret"), "MEDIUM")
+
+    def test_findings_use_type_severity(self):
+        from modules.reporting.findings import build_findings_feed
+
+        result = {
+            "secrets_found": [
+                {"type": "AWS Access Key", "match": "AKIA...", "sources": ["a"]},
+                {"type": "Stripe Publishable", "match": "pk_live...", "sources": ["b"]},
+                {"type": "Private Key", "match": "-----BEGIN...", "sources": ["c"]},
+            ],
+        }
+        feed = build_findings_feed(result)
+        by_type = {f["title"]: f["severity"] for f in feed if f["module"] == "secrets"}
+        self.assertEqual(by_type["Potential secret (AWS Access Key)"], "HIGH")
+        self.assertEqual(by_type["Potential secret (Stripe Publishable)"], "INFO")
+        self.assertEqual(by_type["Potential secret (Private Key)"], "CRITICAL")
+
+    def test_risk_weights_by_type(self):
+        from modules.extraction.risk import calculate_risk_summary
+
+        base = calculate_risk_summary({"secrets_found": []})["score"]
+        crit = calculate_risk_summary(
+            {"secrets_found": [{"type": "Private Key", "match": "x"}]}
+        )["score"]
+        info = calculate_risk_summary(
+            {"secrets_found": [{"type": "Stripe Publishable", "match": "pk_live_x"}]}
+        )["score"]
+        high = calculate_risk_summary(
+            {"secrets_found": [{"type": "AWS Access Key", "match": "AKIA..."}]}
+        )["score"]
+        self.assertEqual(crit - base, 25)
+        self.assertEqual(high - base, 10)
+        self.assertEqual(info - base, 0)
+
+    def test_secret_severity_exported_from_common(self):
+        from modules.common import secret_severity as exported
+
+        self.assertEqual(exported("Private Key"), "CRITICAL")
+
+
 if __name__ == "__main__":
     unittest.main()

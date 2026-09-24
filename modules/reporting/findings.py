@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from modules.common.constants import SEVERITY_ORDER
+from modules.common.constants import SEVERITY_ORDER, secret_severity
 
 __all__ = [
     "SEVERITY_ORDER",
@@ -41,11 +41,11 @@ def build_findings_feed(result: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
     feed: List[Dict[str, Any]] = []
 
-    # --- Secrets ---
+    # --- Secrets (type-aware severity: publishable ≠ AWS key) ---
     for s in result.get("secrets_found") or []:
         sources = s.get("sources") or [s.get("source", "")]
         feed.append(_finding(
-            "HIGH", "secrets",
+            secret_severity(s.get("type", "")), "secrets",
             f"Potential secret ({s.get('type', 'unknown')})",
             str(s.get("match", ""))[:80],
             source=", ".join(str(x) for x in sources if x),

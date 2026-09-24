@@ -6,9 +6,20 @@ Analysis boosts (CORS, JWT) are applied inside the same calculation so
 every recalculation (wayback, SPA, validation) preserves them.
 """
 
-from modules.common.constants import CVE_SEVERITY_WEIGHTS, RISK_THRESHOLDS
+from modules.common.constants import (
+    CVE_SEVERITY_WEIGHTS,
+    RISK_THRESHOLDS,
+    SECRETS_RISK_WEIGHTS,
+    secret_severity,
+)
 
-__all__ = ["CVE_SEVERITY_WEIGHTS", "RISK_THRESHOLDS", "calculate_risk_summary", "risk_level_for_score"]
+__all__ = [
+    "CVE_SEVERITY_WEIGHTS",
+    "RISK_THRESHOLDS",
+    "SECRETS_RISK_WEIGHTS",
+    "calculate_risk_summary",
+    "risk_level_for_score",
+]
 
 
 def risk_level_for_score(score):
@@ -51,12 +62,26 @@ def _cve_boost(result):
     )
 
 
+def _secrets_boost(result):
+    """
+    Weight secrets by type severity (Phase C).
+
+    CRITICAL (private keys, AWS secret, DB URLs) count far more than
+    publishable/CSRF tokens; unmapped vendor keys keep the old HIGH weight.
+    """
+    total = 0
+    for s in result.get("secrets_found") or []:
+        sev = secret_severity(s.get("type", ""))
+        total += SECRETS_RISK_WEIGHTS.get(sev, SECRETS_RISK_WEIGHTS["HIGH"])
+    return total
+
+
 def calculate_risk_summary(result):
     """
     Calculate risk score and level from scan results.
 
     Score weights:
-      - secrets: 10 each
+      - secrets: by type severity (CRITICAL=25, HIGH=10, MEDIUM=5, LOW=2, INFO=0)
       - HIGH sinks: 4 each, MEDIUM: 2 each, LOW: 1 each
       - internal hosts / private IPs: 3 each
       - source maps: 5 each
@@ -66,7 +91,7 @@ def calculate_risk_summary(result):
       - CORS / JWT analysis boosts (when result["cors"] / result["jwt"] set)
     """
     score = 0
-    score += len(result.get("secrets_found", [])) * 10
+    score += _secrets_boost(result)
     score += len(result.get("source_maps_found", [])) * 5
     score += len(result.get("deobfuscation_findings", [])) * 3
     score += len(result.get("internal_paths", [])) * 1
