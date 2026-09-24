@@ -68,7 +68,7 @@ class TestProbeRoute(unittest.TestCase):
 
 
 class TestCrawlSpaHangHardening(unittest.TestCase):
-    """BFS crawl must not use networkidle (hangs on long-poll/SSE apps)."""
+    """SPA loads and BFS crawl must not use networkidle (hangs on long-poll/SSE)."""
 
     def test_bfs_crawl_uses_domcontentloaded(self):
         import inspect
@@ -76,7 +76,25 @@ class TestCrawlSpaHangHardening(unittest.TestCase):
 
         src = inspect.getsource(spa.crawl_spa_routes)
         self.assertIn('wait_until="domcontentloaded"', src)
-        self.assertNotIn('wait_until="networkidle", timeout=10000', src)
+        self.assertNotIn('wait_until="networkidle"', src)
+
+    def test_crawl_deadline_is_bounded(self):
+        """Deadline must not scale as timeout*max_routes*0.5 (750s default)."""
+        import inspect
+        from modules.discovery import spa
+
+        src = inspect.getsource(spa.crawl_spa_routes)
+        self.assertIn("crawl_deadline", src)
+        self.assertNotIn("float(timeout) * float(max_routes)", src)
+        self.assertIn("min(60.0", src)
+
+    def test_browser_nav_uses_domcontentloaded(self):
+        import inspect
+        from modules.extraction import browser
+
+        src = inspect.getsource(browser.run_browser_scan)
+        self.assertIn('wait_until="domcontentloaded"', src)
+        self.assertNotIn('wait_until="networkidle"', src)
 
 
 if __name__ == "__main__":

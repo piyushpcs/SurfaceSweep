@@ -501,7 +501,9 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
         page.on("request", handle_request)
 
         try:
-            page.goto(base_url, wait_until="networkidle", timeout=timeout * 1000)
+            # domcontentloaded: networkidle never settles on long-poll/SSE
+            # apps and was observed hanging the initial SPA load too.
+            page.goto(base_url, wait_until="domcontentloaded", timeout=timeout * 1000)
             page.wait_for_timeout(2000)
         except Exception as e:
             result["errors"].append(f"Navigation error: {e}")
@@ -562,9 +564,10 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
         queue = list(all_routes.keys())
         visited = set()
         crawled = 0
-        # Overall budget so a chatty site cannot hang the crawl indefinitely
+        # Hard wall-clock budget so a chatty site cannot hang the crawl.
+        # (timeout * max_routes * 0.5 defaulted to 750s with stock flags.)
         import time as _time
-        crawl_deadline = _time.monotonic() + max(15.0, float(timeout) * float(max_routes) * 0.5)
+        crawl_deadline = _time.monotonic() + min(60.0, max(15.0, float(timeout)))
 
         while queue and crawled < max_routes and _time.monotonic() < crawl_deadline:
             route = queue.pop(0)

@@ -136,7 +136,8 @@ def run_browser_scan(
         page.on("response", handle_response)
 
         try:
-            page.goto(base_url, wait_until="networkidle", timeout=timeout * 1000)
+            # domcontentloaded: networkidle hangs on long-poll/SSE apps
+            page.goto(base_url, wait_until="domcontentloaded", timeout=timeout * 1000)
             page.wait_for_timeout(2000)
         except Exception as e:
             result["errors"].append(f"Browser navigation error: {e}")
