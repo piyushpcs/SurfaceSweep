@@ -1,9 +1,9 @@
 """
 Pipeline runner — builds the ordered stage list from CLI flags and executes it.
 
-Stage order matches the original main.py sequence exactly:
+Stage order (Phase 2.2: CORS runs after validate so probes hit live endpoints):
   waf_detect → wayback_fetch → scan → wayback_merge → waf_inject →
-  cve → spa → cors → jwt → validate → export → report
+  cve → spa → jwt → validate → cors → export → report
 """
 
 from __future__ import annotations
@@ -38,9 +38,9 @@ _STAGE_SPECS: List[Tuple[str, StageFn, Callable[[Namespace], bool]]] = [
     ("waf_inject", stage_waf_inject, lambda a: bool(a.waf)),
     ("cve", stage_cve, lambda a: bool(a.cve or a.osv)),
     ("spa", stage_spa, lambda a: bool(a.spa)),
-    ("cors", stage_cors, lambda a: bool(a.cors)),
     ("jwt", stage_jwt, lambda a: bool(a.jwt)),
     ("validate", stage_validate, lambda a: bool(a.validate)),
+    ("cors", stage_cors, lambda a: bool(a.cors)),
     ("export", stage_export, lambda a: bool(a.burp or a.zap)),
     ("report", stage_report, lambda a: True),
 ]

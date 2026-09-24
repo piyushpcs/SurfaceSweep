@@ -85,9 +85,19 @@ class TestStageList(unittest.TestCase):
         ))
         self.assertEqual(names, [
             "waf_detect", "wayback_fetch", "scan", "wayback_merge",
-            "waf_inject", "cve", "spa", "cors", "jwt", "validate",
+            "waf_inject", "cve", "spa", "jwt", "validate", "cors",
             "export", "report",
         ])
+
+    def test_cors_runs_after_validate(self):
+        """Phase 2.2: CORS must probe post-validation (live endpoints only)."""
+        names = stage_names(_args(cors=True, validate=True, jwt=True))
+        self.assertLess(names.index("validate"), names.index("cors"))
+
+    def test_cors_without_validate_still_after_jwt(self):
+        names = stage_names(_args(cors=True, jwt=True))
+        self.assertLess(names.index("jwt"), names.index("cors"))
+        self.assertNotIn("validate", names)
 
     def test_cve_or_osv_enables_cve_stage(self):
         self.assertIn("cve", stage_names(_args(cve=True)))

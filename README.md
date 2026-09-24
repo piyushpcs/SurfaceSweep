@@ -81,7 +81,7 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **Step 6 — findings feed:** cross-module `findings` list + `executive_summary` (risk, severity counts, top findings, module coverage) in JSON and HTML
 - **Step 7 — report builder:** `modules/reporting/builder.py` — single path computation for JSON/HTML/Burp/ZAP outputs
 - **Step 8 — integration tests:** offline end-to-end pipeline tests (stage order, schema contract, on-disk reports) in `tests/test_integration.py`
-- Stage order: `waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve → spa → cors → jwt → validate → export → report`
+- Stage order: `waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve → spa → jwt → validate → cors → export → report`
 - Unit + integration suite: **259 tests** (`test_cors`, `test_jwt`, `test_pipeline`, `test_integration`)
 
 ## Setup

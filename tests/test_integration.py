@@ -263,7 +263,7 @@ class TestPipelineEndToEnd(unittest.TestCase):
         ))
         expected = [
             "waf_detect", "wayback_fetch", "scan", "wayback_merge",
-            "waf_inject", "cve", "spa", "cors", "jwt", "validate",
+            "waf_inject", "cve", "spa", "jwt", "validate", "cors",
             "export", "report",
         ]
         self.assertEqual(result["meta"]["stages_run"], expected)
