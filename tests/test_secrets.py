@@ -242,5 +242,62 @@ class TestStripeAndOverlap(unittest.TestCase):
         self.assertEqual(found[0]["type"], "Generic API Key")
 
 
+class TestModernSecretPatterns(unittest.TestCase):
+    """Phase C4 — high-signal modern vendor formats."""
+
+    def test_github_fine_grained_pat(self):
+        token = "github_pat_" + "11ABCDEFGHijklmnopqrstuv_" + "Q" * 40
+        found = extract_secrets(f'const t = "{token}";', "unit.js")
+        types = [s["type"] for s in found]
+        self.assertIn("GitHub PAT (fine-grained)", types)
+
+    def test_stripe_webhook_secret(self):
+        whsec = "whsec_" + "a" * 32
+        found = extract_secrets(f'const k = "{whsec}";', "unit.js")
+        types = [s["type"] for s in found]
+        self.assertIn("Stripe Webhook Secret", types)
+        self.assertNotIn("Stripe Live Key", types)
+
+    def test_hugging_face_token(self):
+        hf = "hf_" + "A" * 40
+        found = extract_secrets(f'token: "{hf}",', "unit.js")
+        types = [s["type"] for s in found]
+        self.assertIn("Hugging Face Token", types)
+
+    def test_openai_project_key_without_marker(self):
+        sk = "sk-proj-" + "aB3xY9mN2pQ7rS5tU8vW1xY4zA6bC9dE"
+        found = extract_secrets(f'key = "{sk}";', "unit.js")
+        types = [s["type"] for s in found]
+        self.assertIn("OpenAI Project Key", types)
+
+    def test_openai_classic_marker_still_classic_type(self):
+        sk = "sk-" + "aB3xY9mN2pQ7rS5tU8vW" + "T3BlbkFJ" + "Zq7Wn4Kp2Xr8Vt5Yc1Bm6Hd3"
+        found = extract_secrets(f'key = "{sk}";', "unit.js")
+        types = [s["type"] for s in found]
+        self.assertIn("OpenAI API Key", types)
+
+    def test_anthropic_not_swallowed_by_project_key(self):
+        sk = "sk-ant-api03-" + "aB3xY9mN2pQ7rS5tU8vW1xY4zA6bC9dE"
+        found = extract_secrets(f'key = "{sk}";', "unit.js")
+        types = [s["type"] for s in found]
+        self.assertIn("Anthropic API Key", types)
+        self.assertNotIn("OpenAI Project Key", types)
+
+    def test_new_labels_are_high_confidence(self):
+        for label in (
+            "GitHub PAT (fine-grained)",
+            "Stripe Webhook Secret",
+            "Hugging Face Token",
+            "OpenAI Project Key",
+        ):
+            self.assertIn(label, HIGH_CONFIDENCE_SECRET_LABELS)
+
+    def test_pattern_catalog_size_above_readme_claim(self):
+        from modules.extraction.secrets import SECRET_PATTERNS
+
+        # README claims "60+ patterns" — keep the claim true.
+        self.assertGreaterEqual(len(SECRET_PATTERNS), 60)
+
+
 if __name__ == "__main__":
     unittest.main()

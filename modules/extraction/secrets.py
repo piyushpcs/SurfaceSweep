@@ -60,14 +60,18 @@ SECRET_PATTERNS = {
     # sk_live_ only — pk_live_ (publishable) is intentionally public in browsers.
     "Stripe Live Key":      re.compile(r'sk_live_[a-zA-Z0-9]{24,}'),
     "Stripe Publishable":   re.compile(r'pk_live_[a-zA-Z0-9]{24,}'),
+    "Stripe Webhook Secret": re.compile(r'whsec_[a-zA-Z0-9]{16,}'),
     "PayPal Client ID":     re.compile(r'(?i)["\']paypal[_-]?client[_-]?id["\']\s*[:=]\s*["\']([A-Za-z0-9_\-]{20,})["\']'),
     "PayPal Secret":        re.compile(r'(?i)["\']paypal[_-]?secret["\']\s*[:=]\s*["\']([A-Za-z0-9_\-]{20,})["\']'),
     "Square Access Token":  re.compile(r'(?i)sqOatp-[A-Za-z0-9_\-]+'),
     "Braintree Token":      re.compile(r'(?i)["\']braintree[_-]?token["\']\s*[:=]\s*["\']([a-z0-9_\-]{20,})["\']'),
 
     # ---- SaaS / API keys ----
+    # Classic OpenAI keys embed the T3BlbkFJ marker; project keys are sk-proj-.
     "OpenAI API Key":       re.compile(r'sk-(?:proj-)?[A-Za-z0-9_\-]{20,}T3BlbkFJ[A-Za-z0-9_\-]{20,}'),
+    "OpenAI Project Key":   re.compile(r'sk-proj-[A-Za-z0-9_\-]{20,}'),
     "Anthropic API Key":    re.compile(r'sk-ant-[A-Za-z0-9_\-]{20,}'),
+    "Hugging Face Token":   re.compile(r'hf_[A-Za-z0-9]{30,}'),
     "Twilio SID":           re.compile(r'(?i)AC[a-z0-9]{32}'),
     "Twilio Auth Token":    re.compile(r'(?i)["\'](?:twilio[_-]?)?(?:auth[_-]?)?token["\']\s*[:=]\s*["\']([a-f0-9]{32})["\']'),
     "SendGrid API Key":     re.compile(r'SG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}'),
@@ -94,6 +98,7 @@ SECRET_PATTERNS = {
     # ---- VCS / package managers ----
     "GitHub Token":         re.compile(r'gh[po]_[a-zA-Z0-9]{36,}'),
     "GitHub PAT (classic)": re.compile(r'ghp_[a-zA-Z0-9]{36}'),
+    "GitHub PAT (fine-grained)": re.compile(r'github_pat_[A-Za-z0-9_]{22,}'),
     "GitLab Token":         re.compile(r'glpat-[a-zA-Z0-9_\-]{20}'),
     "Bitbucket App PW":     re.compile(r'(?i)bbdc_[A-Za-z0-9_\-]{20,}'),
     "NPM Token":            re.compile(r'npm_[a-zA-Z0-9]{36}'),
