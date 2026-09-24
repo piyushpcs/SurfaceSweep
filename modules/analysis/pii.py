@@ -3,7 +3,7 @@ PII quick-win detection for recon (emails, phones, PANs, SSNs).
 
 Checksum-gated where possible (Luhn for cards; dashed SSA form + sample
 denylist for SSN). Severity is informational/low — PII shape alone is rarely
-a bounty on H1/BB unless combined with authz issues or bulk cross-user data.
+actionable unless combined with authz issues or bulk cross-user data.
 """
 
 import re

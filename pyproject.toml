@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "surfacesweep"
 version = "1.0.0"
-description = "JavaScript attack-surface recon for bug bounty and penetration testing"
+description = "JavaScript attack-surface recon for security assessment"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [{ name = "piyushpcs" }]
-keywords = ["security", "recon", "javascript", "endpoints", "bug-bounty", "pentest"]
+keywords = ["security", "recon", "javascript", "endpoints", "assessment"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",

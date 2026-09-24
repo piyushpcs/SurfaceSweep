@@ -2,7 +2,7 @@
 
 # SurfaceSweep
 
-**JavaScript attack-surface recon for bug bounty and penetration testing**
+**JavaScript attack-surface recon for security assessment**
 
 Extract API endpoints and secrets from a target's JavaScript, validate what is live,
 check CORS and JWT issues, and export results for Burp Suite / ZAP.
@@ -31,7 +31,7 @@ check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 Modern SPAs hide real API traffic in obfuscated bundles, source maps, lazy chunks, and runtime XHR.
 SurfaceSweep combines **static analysis (regex + AST)**, **headless browser capture**, and **historical JS (Wayback Machine)**
-to build a single inventory of endpoints, then layers on checks that matter in a bounty program:
+to build a single inventory of endpoints, then layers on checks that matter in a security assessment:
 
 | Capability | What you get |
 |------------|--------------|
