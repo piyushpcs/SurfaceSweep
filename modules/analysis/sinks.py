@@ -92,6 +92,32 @@ SINK_PATTERNS = {
         "HIGH",
         "Sink reads from location.hash/search — reflected DOM XSS",
     ),
+    # ---- Prototype pollution ----
+    "__proto__ assignment": (
+        re.compile(r'__proto__["\']?\s*\]?'),
+        "HIGH",
+        "Reference to __proto__ can pollute Object.prototype",
+    ),
+    "constructor.prototype": (
+        re.compile(r'\.constructor\s*(?:\.\s*prototype|\[\s*[\'"]prototype[\'"]\s*\])|\bconstructor\s*(?:\.\s*prototype|\[\s*[\'"]prototype[\'"]\s*\])'),
+        "HIGH",
+        "constructor.prototype write enables prototype pollution",
+    ),
+    "Object.assign to untrusted": (
+        re.compile(r'Object\.assign\s*\(\s*(?:\{\s*\}|this|window|globalThis|module\.exports)\s*,'),
+        "MEDIUM",
+        "Object.assign into shared object — pollution risk if source is user-controlled",
+    ),
+    "recursive merge": (
+        re.compile(r'\b(?:merge|extend|deepExtend|defaultsDeep|deepMerge)\s*\([^;]{0,200}(?:for\s*\(|Object\.keys|Object\.entries)', re.IGNORECASE),
+        "MEDIUM",
+        "Recursive merge helper — classic prototype-pollution gadget when keys are untrusted",
+    ),
+    "JSON.parse + assign key": (
+        re.compile(r'(?:for\s*\([^)]*(?:in\b|of\b)[^)]*\)[\s\S]{0,120}(?:target|obj|config|dest)\s*(?:\[|[.][A-Za-z_$])[^=]{0,40}=)', re.IGNORECASE),
+        "MEDIUM",
+        "Dynamic key assignment in loop — review for __proto__/constructor pollution",
+    ),
 }
 
 
