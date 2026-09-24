@@ -19,6 +19,7 @@ from modules.reporting.builder import (
     output_paths,
     write_reports,
 )
+from modules.reporting.diff import diff_results, load_result, print_diff, save_diff
 
 __all__ = [
     "save_report", "save_html_report", "build_html",
@@ -26,4 +27,5 @@ __all__ = [
     "render_executive_summary", "render_findings_feed",
     "export_burp_csv", "export_zap_csv",
     "build_report_plan", "ensure_parent_dir", "output_paths", "write_reports",
+    "diff_results", "load_result", "print_diff", "save_diff",
 ]

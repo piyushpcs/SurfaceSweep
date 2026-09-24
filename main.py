@@ -6,6 +6,7 @@ through modules.pipeline.run_pipeline (Phase 4 Step 1).
 """
 
 import argparse
+import json
 import sys
 
 from modules import __version__
@@ -58,6 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-probe", action="store_true", help="Skip probing common admin/debug routes in SPA mode")
     parser.add_argument("--html", action="store_true", help="Also generate an HTML report")
     parser.add_argument("--html-only", action="store_true", help="Generate HTML report only (skip JSON)")
+    parser.add_argument(
+        "--diff",
+        default=None,
+        metavar="BASELINE",
+        help="Compare this scan against a baseline JSON and write a diff report",
+    )
     parser.add_argument("--no-deobf", action="store_true", help="Skip JS deobfuscation")
     parser.add_argument("--regex-only", action="store_true", help="Disable AST extraction, use regex only")
     parser.add_argument("--cors", action="store_true", help="Scan discovered endpoints for CORS misconfigurations")
@@ -181,6 +188,21 @@ def main(argv=None):
             import traceback
             traceback.print_exc()
         return EXIT_ERROR
+
+    if getattr(args, "diff", None):
+        try:
+            from modules.reporting.builder import output_paths
+            from modules.reporting.diff import diff_results, load_result, print_diff, save_diff
+
+            baseline = load_result(args.diff)
+            diff = diff_results(baseline, result)
+            print_diff(diff, verbose=verbose)
+            diff_path = output_paths(args.output)["base"] + "_diff.json"
+            save_diff(diff, diff_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            console_error(f"[!] Diff failed: {exc}")
+            return EXIT_ERROR
+
     return exit_code_for_result(result, args.fail_on)
 
 
