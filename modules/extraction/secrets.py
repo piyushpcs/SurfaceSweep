@@ -132,9 +132,10 @@ SECRET_PATTERNS = {
     "SendGrid SMTP Pass":   re.compile(r'(?i)["\']sendgrid[_-]?password["\']\s*[:=]\s*["\']([^\s"\']{6,})["\']'),
 
     # ---- Generic / env / config / structural ----
-    "Generic API Key":      re.compile(r'(?i)["\']api[_-]?key["\']\s*[:=]\s*["\']([a-zA-Z0-9_\-]{16,45})["\']'),
-    "Generic Secret":       re.compile(r'(?i)["\'](?:secret|token|apikey)["\']\s*[:=]\s*["\']([a-zA-Z0-9_\-]{10,})["\']'),
-    "Generic Password":     re.compile(r'(?i)["\'](?:password|passwd|pwd|pass)["\']\s*[:=]\s*["\']([^\s"\']{6,})["\']'),
+    # Keys may be bare identifiers in JS object literals: { password: "…" }.
+    "Generic API Key":      re.compile(r'(?i)(?:["\']api[_-]?key["\']|api[_-]?key)\s*[:=]\s*["\']([a-zA-Z0-9_\-]{16,45})["\']'),
+    "Generic Secret":       re.compile(r'(?i)(?:["\'](?:secret|token|apikey)["\']|(?:secret|token|apikey))\s*[:=]\s*["\']([a-zA-Z0-9_\-]{10,})["\']'),
+    "Generic Password":     re.compile(r'(?i)(?:["\'](?:password|passwd|pwd|pass)["\']|(?:password|passwd|pwd|pass))\s*[:=]\s*["\']([^\s"\']{6,})["\']'),
     "Exposed Env Var":      re.compile(r'(NEXT_PUBLIC_[A-Z0-9_]+|REACT_APP_[A-Z0-9_]+|VITE_[A-Z0-9_]+)\s*[:=]\s*["\']([^"\']{4,100})["\']'),
     "Access Token Env":     re.compile(r'(?:ACCESS_TOKEN|API_TOKEN|AUTH_TOKEN|SECRET_TOKEN)\s*[:=]\s*["\']([^\s"\']{8,})["\']'),
     "Process Env Fallback": re.compile(
