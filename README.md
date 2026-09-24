@@ -14,10 +14,10 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - Flags leaked secrets/API keys (60+ patterns: AWS, OpenAI, Anthropic, Twilio, SendGrid, Discord/Slack webhooks, Postman, Shopify, Cloudinary, Mapbox, GitHub, GitLab, Stripe, PayPal, Firebase, npm, PyPI, Bearer/JWT tokens, env vars, private keys, database URLs, SMTP credentials, passwords, OAuth secrets)
 - Detects dangerous JS sinks (innerHTML, eval, document.write, dangerouslySetInnerHTML, v-html, jQuery HTML, open redirect patterns) with severity ratings
 - Detects internal/private host references (localhost, private IPs 10/172/192.168, *.internal/*.corp hostnames, dev/staging subdomains)
-- Detects publicly exposed `.js.map` source map files
+- Detects publicly exposed source maps (`sourceMappingURL`, inline base64, `js.map` + `sourcesContent` rescan)
 - Recursive JS chunk discovery — follows references to other JS files (webpack chunks, dynamic imports)
 - **JS Deobfuscation** — decodes Base64, hex, unicode, eval(), String.fromCharCode()
-- **Endpoint Validation** — confirms endpoints are live, filters false positives (404s, soft-404s)
+- **Endpoint Validation** — confirms endpoints are live, filters false positives (404s, soft-404s, SPA shells, JSON fail-in-200)
 - **WAF Detection** — identifies Cloudflare, Akamai, AWS WAF, Imperva, etc.
 - **Wayback Machine** — finds historical JS files no longer linked
 - **Burp/ZAP Export** — CSV output for import into proxy tools
@@ -30,6 +30,15 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - Risk scoring summary per scan
 - JSON and HTML report output
 - Custom headers/cookies for authenticated scans
+
+### ✅ Phase 1.1: JS extraction hardening (complete — Steps 1–6)
+- **Step 1 — secret FP stack:** Shannon entropy (class-aware: hex/digit/lower ceilings), placeholder/template rejection (`changeme`, `your-*`, `{{…}}`, repeated/sequential fills), **proximity gate** for high-FP bare shapes (Twilio SID, Telegram bot token, Mailgun, Discord) — keyword must sit near the match; high-confidence vendor prefixes skip weak gates
+- **Step 2 — structural secrets + type-aware dedup:** `process.env.X || "…"`, object `Authorization` / `X-API-Key` headers, `?client_secret=` query, Basic-auth object form; overlapping pattern hits keep the **most specific type** (span priority + match-collapsed dedup); Stripe Live Key is `sk_live_` only (`pk_live_` = Publishable)
+- **Step 3 — source maps deep:** parse last `sourceMappingURL` (`//` and `/* */`, quoted), **inline `data:` base64/URI maps**, external map fetch with size caps, re-scan every `sourcesContent[]` entry for endpoints/secrets/sinks/JWTs; conventional `app.js.map` fallback
+- **Step 4 — endpoint enrichment:** method inference from path verbs (`create`/`delete`/…), tags (`graphql`, `trpc`, `websocket`, `auth`, `api`, `admin`), `state_changing` + `likely_authed` hints on intercepted/SPA endpoint dicts (HTML Tags column); bare-string pools unchanged
+- **Step 5 — validation hardening:** SPA index shell on API paths → **dead** (`note: spa_shell`); JSON fail-in-200 → `json_not_found` (dead) / `json_auth` (restricted) / `json_error` (live + note); soft-404 retained
+- **Step 6 — tests + docs:** `test_secrets`, `test_sourcemaps`, `test_enrich`, `test_validator`; this README section; suite count **382 tests**
+- Research refs: js-surgeon, jsrip, LinkFinder/SecretFinder, mapxtractor, Invicti API FP reduction, OWASP ASTF
 
 ### ✅ Phase 2: CORS Misconfiguration Scanner (complete — Steps 1–4)
 - Sends spoofed `Origin` headers to discovered endpoints (real preflight: `Access-Control-Request-Method`/`Headers` + GET/POST fallback)
@@ -88,7 +97,7 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **Step 7 — report builder:** `modules/reporting/builder.py` — single path computation for JSON/HTML/Burp/ZAP outputs
 - **Step 8 — integration tests:** offline end-to-end pipeline tests (stage order, schema contract, on-disk reports) in `tests/test_integration.py`
 - Stage order: `waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve → spa → jwt → validate → cors → export → report`
-- Unit + integration suite: **270 tests** (`test_cors`, `test_jwt`, `test_pipeline`, `test_integration`)
+- Unit + integration suite: **382 tests** (`test_cors`, `test_jwt`, `test_pipeline`, `test_integration`, `test_secrets`, `test_sourcemaps`, `test_enrich`, `test_validator`)
 
 ## Setup
 
@@ -203,13 +212,15 @@ SurfaceSweep/
 │   ├── extraction/               # Core JS content extraction (Phase 1)
 │   │   ├── __init__.py           # Public API re-exports
 │   │   ├── engine.py             # Main orchestration (run_extractor, merge_results)
-│   │   ├── patterns.py           # Regex patterns, noise/static-asset filters
-│   │   ├── secrets.py            # Secret detection + deduplication
+│   │   ├── patterns.py           # Regex patterns, noise/static-asset filters, secret FP gates
+│   │   ├── secrets.py            # Secret detection, structural patterns, type-aware dedup
 │   │   ├── http.py               # Rate limiter, retry, fetching
 │   │   ├── scope.py              # Domain/scope utilities
 │   │   ├── risk.py               # Risk scoring
 │   │   ├── ast.py                # AST extraction (tree-sitter)
 │   │   ├── browser.py            # Browser extraction (Playwright)
+│   │   ├── sourcemaps.py         # sourceMappingURL / sourcesContent reconstruction
+│   │   ├── enrich.py             # Endpoint method/tags/auth enrichment
 │   │   └── deobfuscator.py       # JS deobfuscation
 │   ├── discovery/                # Expand attack surface
 │   │   ├── __init__.py
@@ -253,7 +264,11 @@ SurfaceSweep/
 │   ├── test_cors.py
 │   ├── test_jwt.py
 │   ├── test_pipeline.py
-│   └── test_integration.py       # Offline end-to-end pipeline (Phase 4 Step 8)
+│   ├── test_integration.py       # Offline end-to-end pipeline (Phase 4 Step 8)
+│   ├── test_secrets.py           # Phase 1.1 Steps 1–2 (FP stack + structural)
+│   ├── test_sourcemaps.py        # Phase 1.1 Step 3
+│   ├── test_enrich.py            # Phase 1.1 Step 4
+│   └── test_validator.py         # Phase 1.1 Step 5
 ├── testbed/
 │   └── vuln_api.py               # Test Flask app
 └── reports/                      # Generated reports
@@ -276,6 +291,12 @@ Tested against `https://kickbacks.ai/security-policy` (real target):
 - Regex only: 53 endpoints
 - AST + regex: 62 endpoints (+17%)
 - AST-only finds included `/login?next=...`, `/me`, `/debug/bootstrap?id=`, `/me#partner-sharing`
+
+### Phase 1.1 — secret FP + source maps + enrichment (unit)
+- Suite after Phase 1.1: **382 tests** (was 270)
+- Proximity gate: bare `AC…` / Telegram-shaped blobs without nearby keyword dropped; same values kept next to `accountSid` / `bot_token`
+- Source maps: last `sourceMappingURL` wins; inline base64 maps decode and `sourcesContent` rescanned for endpoints + secrets
+- Validation: API path + `#root`/`#__next` HTML shell → dead; `{"error":"unauthorized"}` on 200 → restricted; `{"error":"not found"}` → dead
 
 ### CVE detection (gtec.ac.in)
 - Detected: jQuery 1.11.0, Vue.js 2.1.5, FancyBox 2.1.5
@@ -344,6 +365,8 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - **CORS OPTIONS-only escalation FN** — GET still runs when preflight only returns legitimate target ACAO (Phase 2.1 Step 2)
 - **CORS registrable-domain FP** — naive last-two-labels → tldextract via `get_registrable_domain` (Phase 2.1 Step 1)
 - **RateLimiter lock-while-sleep** — sleep outside the lock so probe threads are not serialized (Phase 2.1 Step 4)
+- **Stripe pk_live double-count** — Live Key pattern was `[sp]k_live_` matching Publishable too; now `sk_live_` only + span-priority dedup (Phase 1.1 Step 2)
+- **Source maps: comment/base64 ignored** — only `js_url + ".map"` probed; now full `sourceMappingURL` / `sourcesContent` path (Phase 1.1 Step 3)
 
 ## Roadmap
 - ~~Headless browser mode (Playwright)~~ ✅ Done
@@ -360,8 +383,9 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - ~~Phase 2.2: CORS follow-through~~ ✅ Done (Steps 1–4)
 - ~~Phase 3: JWT security analyzer~~ ✅ Done (Steps 1–6)
 - ~~Phase 4: Combined pipeline + reporting~~ ✅ Done (Steps 1–8)
+- ~~Phase 1.1: JS extraction hardening~~ ✅ Done (Steps 1–6)
 - Diff mode to compare two scans of the same target over time
-- Secret-pattern false-positive tuning (Twilio SID / Telegram Bot Token seen on mintlify)
+- ~~Secret-pattern false-positive tuning (Twilio SID / Telegram Bot Token seen on mintlify)~~ ✅ Done (Phase 1.1 Step 1)
 - PII quick wins
 
 ## Responsible use
