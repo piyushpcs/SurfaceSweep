@@ -304,7 +304,7 @@ coverage report -m
 - **CI**: GitHub Actions runs the suite on Python 3.10 and 3.12 with coverage on every push/PR
 - Local vulnerable API for manual checks: `python testbed/vuln_api.py` (port **5555**)
 
-### Sample results (authorized targets)
+### Sample results
 
 | Feature | Result |
 |---------|--------|
@@ -323,7 +323,7 @@ Full phase notes, bug-fix history, and per-feature validation logs live in the
 Keep a rolling baseline and alert on regressions with cron + `--diff`:
 
 ```bash
-# Nightly scan of an authorized target; rotate baseline weekly
+# Nightly scan of a target; rotate baseline weekly
 # crontab -e
 0 3 * * *  cd /opt/SurfaceSweep && ./venv/bin/python main.py https://target.example -f --validate --html -o reports/nightly.json --diff reports/baseline.json --fail-on high >> logs/nightly.log 2>&1
 
@@ -344,14 +344,6 @@ python -m modules.reporting.diff reports/baseline.json reports/nightly.json -o r
 
 - Additional secret-pattern tuning as new FP reports arrive
 - Burp / ZAP / HAR import as alternate discovery sources
-
-## Responsible use
-
-Built and tested only against intentionally vulnerable or authorized targets
-(local Flask testbed, OWASP Juice Shop, and sites with explicit permission).
-
-**Do not run SurfaceSweep against systems you do not own or are not authorized to test.**
-You are responsible for complying with applicable laws, program rules, and rate limits.
 
 ## Contributing
 

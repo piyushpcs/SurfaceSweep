@@ -24,7 +24,3 @@ You should receive an acknowledgment within a few days. Confirmed issues get a f
 ## Scope notes
 
 SurfaceSweep is a **recon and scanning** tool. Findings about third-party targets scanned with this tool are out of scope for this repo — report those to the target's own security contact.
-
-## Safe use
-
-Only scan systems you are authorized to test. The authors assume no liability for misuse.
