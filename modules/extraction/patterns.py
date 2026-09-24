@@ -2,6 +2,7 @@
 Regex patterns, constants, and filters for JS extraction.
 """
 
+import math
 import re
 
 # ---- Endpoint patterns ----
@@ -45,6 +46,63 @@ STATIC_ASSET_EXTENSIONS = NOISE_EXTENSIONS + (
 )
 
 COMMON_FALSE_POSITIVES = {"loading", "null", "undefined", "true", "false", "none", "test", "example", "placeholder"}
+
+# ---- Secret false-positive filtering ----
+
+# Vendor/format patterns whose structure alone is strong signal — skip
+# placeholder-substring and entropy gates (prefix checks still apply).
+HIGH_CONFIDENCE_SECRET_LABELS = frozenset({
+    "AWS Access Key", "AWS Secret Key", "Google API Key",
+    "Firebase URL", "Firebase Secret", "GCP Service Account",
+    "DigitalOcean Token", "Linode Token",
+    "Stripe Live Key", "Stripe Publishable", "Square Access Token",
+    "OpenAI API Key", "Anthropic API Key", "SendGrid API Key",
+    "Postman API Key", "Shopify Token", "Shopify API Key",
+    "Mapbox Token", "New Relic Key",
+    "Slack Token", "Slack Webhook", "Discord Webhook",
+    "GitHub Token", "GitHub PAT (classic)", "GitLab Token",
+    "Bitbucket App PW", "NPM Token", "PyPI Token",
+    "JWT", "JWT Secret", "Private Key",
+    "Database URL", "MongoDB SRV", "Redis URL", "AMQP URL",
+    "Elasticsearch URL", "Elasticsearch Auth",
+    "Cloudinary URL", "Heroku API Key",
+})
+
+# Bare / high-FP shapes that only count near an explicit secret-related keyword
+# (minified JS often contains AC+32, long digit:base64, etc. with no meaning).
+PROXIMITY_GATED_SECRET_TYPES = frozenset({
+    "Twilio SID",
+    "Telegram Bot Token",
+    "Mailgun API Key",
+    "Discord Token",
+})
+
+SECRET_CONTEXT_WINDOW = 96
+
+_SECRET_CONTEXT_RE = re.compile(
+    r"(?i)(?:"
+    r"twilio|telegram|discord|mailgun|"
+    r"api[_-]?key|apikey|secret|token|password|passwd|pwd|"
+    r"auth|credential|sid|account[_-]?sid|bot[_-]?token|"
+    r"access[_-]?key|private[_-]?key|client[_-]?secret"
+    r")"
+)
+
+_PLACEHOLDER_SUBSTRINGS = (
+    "changeme", "change_me", "change-me", "replace_me", "replace-me",
+    "your-key", "your_key", "your-api", "your_api", "your-secret",
+    "your_secret", "your-token", "your_token", "your-password",
+    "example-key", "example_key", "example-token", "example_secret",
+    "placeholder", "not-a-secret", "not_a_secret", "redacted",
+    "insert-here", "insert_here", "put-here", "todo", "fixme",
+)
+
+_PLACEHOLDER_PREFIXES = (
+    "your-", "your_", "my-key", "my_key", "example-",
+    "sample-", "sample_", "dummy-", "dummy_", "fake-",
+    "changeme", "placeholder", "redacted", "todo-", "fixme-",
+    "insert-", "replace-",
+)
 
 # ---- Private / internal network detection ----
 
@@ -146,10 +204,118 @@ def is_static_asset(path):
     return any(clean.lower().endswith(ext) for ext in STATIC_ASSET_EXTENSIONS)
 
 
-def is_likely_real_secret(value):
-    """Filter obvious false positives from secret detection."""
-    if value.lower() in COMMON_FALSE_POSITIVES:
+def shannon_entropy(s):
+    """Shannon entropy in bits per character."""
+    if not s:
+        return 0.0
+    counts = {}
+    for ch in s:
+        counts[ch] = counts.get(ch, 0) + 1
+    length = len(s)
+    return -sum((c / length) * math.log2(c / length) for c in counts.values())
+
+
+def near_secret_context(content, start, end, window=SECRET_CONTEXT_WINDOW):
+    """True when a secret-related keyword sits near [start, end) in content."""
+    if not content or start is None or end is None:
         return False
-    if len(value) < 10:
+    lo = max(0, start - window)
+    hi = min(len(content), end + window)
+    if lo >= hi:
         return False
+    return bool(_SECRET_CONTEXT_RE.search(content[lo:hi]))
+
+
+def _looks_like_placeholder(value):
+    """Template/sample/dummy values that are never real credentials."""
+    lowered = value.lower()
+    if any(tok in lowered for tok in _PLACEHOLDER_SUBSTRINGS):
+        return True
+    if lowered.startswith(_PLACEHOLDER_PREFIXES):
+        return True
+    if value[:1] in ("<", "{", "$"):
+        return True
+    if re.fullmatch(r"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?", value):
+        return True
+    return False
+
+
+def _is_repeated_char(value):
+    """aaaaaaaa… / 0000… style fills."""
+    if len(value) < 4:
+        return False
+    return len(set(value)) == 1
+
+
+def _is_modular_run(chars, mod):
+    """True when every step is +1 or -1 modulo mod (1234567890, xyzabc…)."""
+    if len(chars) < 8:
+        return False
+    steps = [
+        (ord(chars[i]) - ord(chars[i - 1])) % mod for i in range(1, len(chars))
+    ]
+    return all(s == 1 for s in steps) or all(s == mod - 1 for s in steps)
+
+
+def _is_sequential(value):
+    """Counting runs: abcdefgh, 1234567890, 0987654321, xyzabcdefg…"""
+    if len(value) < 8:
+        return False
+    lowered = value.lower()
+    ascending = all(
+        ord(lowered[i]) - ord(lowered[i - 1]) == 1 for i in range(1, len(lowered))
+    )
+    descending = all(
+        ord(lowered[i]) - ord(lowered[i - 1]) == -1 for i in range(1, len(lowered))
+    )
+    if ascending or descending:
+        return True
+    if lowered.isdigit():
+        return _is_modular_run(lowered, 10)
+    if lowered.isalpha() and lowered.isascii():
+        return _is_modular_run(lowered, 26)
+    return False
+
+
+def _is_low_entropy(value):
+    """
+    Reject random-looking values that are too uniform to be real secrets.
+    Character-class aware: hex max entropy is 4.0, digits ~3.32.
+    """
+    if len(value) < 16:
+        return False
+    if "://" in value or value.startswith(("eyJ", "-----BEGIN")):
+        return False
+    entropy = shannon_entropy(value)
+    if re.fullmatch(r"[0-9a-fA-F]+", value):
+        return entropy < 3.0
+    if re.fullmatch(r"[0-9]+", value):
+        return entropy < 2.5
+    if re.fullmatch(r"[a-z]+", value):
+        return entropy < 3.4
+    return entropy < 3.0
+
+
+def is_likely_real_secret(value, label=None):
+    """
+    Filter obvious false positives from secret detection.
+
+    label: optional SECRET_PATTERNS key. High-confidence vendor formats skip
+    placeholder-substring and entropy gates (their prefixes carry the signal).
+    """
+    if not value:
+        return False
+    candidate = value.strip()
+    if len(candidate) < 10:
+        return False
+    if candidate.lower() in COMMON_FALSE_POSITIVES:
+        return False
+    if _is_repeated_char(candidate) or _is_sequential(candidate):
+        return False
+    high_confidence = label is not None and label in HIGH_CONFIDENCE_SECRET_LABELS
+    if not high_confidence:
+        if _looks_like_placeholder(candidate):
+            return False
+        if _is_low_entropy(candidate):
+            return False
     return True

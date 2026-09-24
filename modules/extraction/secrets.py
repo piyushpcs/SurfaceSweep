@@ -3,7 +3,11 @@ Secret detection patterns and deduplication.
 """
 
 import re
-from modules.extraction.patterns import is_likely_real_secret
+from modules.extraction.patterns import (
+    PROXIMITY_GATED_SECRET_TYPES,
+    is_likely_real_secret,
+    near_secret_context,
+)
 
 
 SECRET_PATTERNS = {
@@ -101,9 +105,12 @@ def extract_secrets(content, source_label):
     """
     secrets = []
     for label, pattern in SECRET_PATTERNS.items():
+        proximity_gated = label in PROXIMITY_GATED_SECRET_TYPES
         for m in pattern.finditer(content):
             value = m.group(1) if m.groups() else m.group(0)
-            if not is_likely_real_secret(value):
+            if not is_likely_real_secret(value, label=label):
+                continue
+            if proximity_gated and not near_secret_context(content, m.start(), m.end()):
                 continue
             match_text = m.group(0)
             # JWTs must stay intact for offline analysis (header.payload.sig)
