@@ -11,6 +11,7 @@ Captures all network requests made during page load, including:
 import re
 from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright
+from modules.common.console import detail, info, ok, warn
 from modules.extraction.deobfuscator import deobfuscate
 from modules.extraction.scope import (
     get_registrable_domain,
@@ -71,7 +72,7 @@ def run_browser_scan(
     result = new_scan_result(base_url, scan_mode="browser", browser_fields=True)
 
     if verbose:
-        print(f"[*] Launching headless browser for {base_url}")
+        info(f" Launching headless browser for {base_url}")
 
     intercepted_requests = []
     js_files_found = set()
@@ -116,7 +117,7 @@ def run_browser_scan(
                     if "json" in content_type or body_start == "{":
                         result["source_maps_found"].append(url)
                         if verbose:
-                            print(f"    [!] Source map exposed: {url}")
+                            detail(f"[!] Source map exposed: {url}")
                 except Exception:
                     pass
 
@@ -129,7 +130,7 @@ def run_browser_scan(
         except Exception as e:
             result["errors"].append(f"Browser navigation error: {e}")
             if verbose:
-                print(f"    [!] Navigation error: {e}")
+                detail(f"[!] Navigation error: {e}")
 
         try:
             dom_content = page.content()
@@ -148,8 +149,8 @@ def run_browser_scan(
         browser.close()
 
     if verbose:
-        print(f"[+] Captured {len(intercepted_requests)} network requests")
-        print(f"[+] Found {len(js_files_found)} JS files via browser")
+        ok(f" Captured {len(intercepted_requests)} network requests")
+        ok(f" Found {len(js_files_found)} JS files via browser")
 
     endpoint_urls = set()
     from modules.extraction.engine import is_static_asset
@@ -253,26 +254,26 @@ def run_browser_scan(
     ])
 
     if verbose:
-        print(f"[+] Internal paths found: {len(result['internal_paths'])}")
-        print(f"[+] In-scope URLs: {len(result['in_scope_urls'])}")
-        print(f"[+] Intercepted XHR/fetch: {len(result['intercepted_endpoints'])}")
+        ok(f" Internal paths found: {len(result['internal_paths'])}")
+        ok(f" In-scope URLs: {len(result['in_scope_urls'])}")
+        ok(f" Intercepted XHR/fetch: {len(result['intercepted_endpoints'])}")
         if result["secrets_found"]:
-            print(f"[!] {len(result['secrets_found'])} unique secret(s) found")
+            warn(f" {len(result['secrets_found'])} unique secret(s) found")
         if result.get("jwts_found"):
-            print(f"[!] {len(result['jwts_found'])} unique JWT(s) found")
+            warn(f" {len(result['jwts_found'])} unique JWT(s) found")
         if result["deobfuscation_findings"]:
-            print(f"[!] {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
+            warn(f" {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
         if result["sinks_found"]:
-            print(f"[!] {len(result['sinks_found'])} dangerous sink pattern(s) found")
+            warn(f" {len(result['sinks_found'])} dangerous sink pattern(s) found")
         if result["internal_hosts_found"]:
-            print(f"[!] {len(result['internal_hosts_found'])} internal/private host reference(s) found")
+            warn(f" {len(result['internal_hosts_found'])} internal/private host reference(s) found")
         if result.get("pii_found"):
-            print(f"[!] {len(result['pii_found'])} potential PII item(s) found")
+            warn(f" {len(result['pii_found'])} potential PII item(s) found")
 
     from modules.extraction.engine import calculate_risk_summary
     result["risk_summary"] = calculate_risk_summary(result)
 
     if verbose:
-        print(f"[+] Risk level: {result['risk_summary']['level']} (score: {result['risk_summary']['score']})")
+        ok(f" Risk level: {result['risk_summary']['level']} (score: {result['risk_summary']['score']})")
 
     return result

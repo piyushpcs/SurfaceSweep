@@ -6,6 +6,7 @@ Generates outputs compatible with Burp Suite and OWASP ZAP.
 
 import csv
 import os
+from modules.common.console import ok, warn
 
 
 def export_burp_csv(result, filename="reports/surfacesweep_burp.csv"):
@@ -60,10 +61,10 @@ def export_burp_csv(result, filename="reports/surfacesweep_burp.csv"):
             writer = csv.DictWriter(f, fieldnames=["Host", "Protocol", "Path", "Query"])
             writer.writeheader()
             writer.writerows(unique_rows)
-        print(f"[+] Burp CSV exported: {filename} ({len(unique_rows)} endpoints)")
+        ok(f" Burp CSV exported: {filename} ({len(unique_rows)} endpoints)")
         return True
     except OSError as e:
-        print(f"[!] Failed to export Burp CSV: {e}")
+        warn(f" Failed to export Burp CSV: {e}")
         return False
 
 
@@ -124,8 +125,8 @@ def export_zap_csv(result, filename="reports/surfacesweep_zap.csv"):
             writer = csv.DictWriter(f, fieldnames=["URL", "Method", "Data", "Payload"])
             writer.writeheader()
             writer.writerows(rows)
-        print(f"[+] ZAP CSV exported: {filename} ({len(rows)} endpoints)")
+        ok(f" ZAP CSV exported: {filename} ({len(rows)} endpoints)")
         return True
     except OSError as e:
-        print(f"[!] Failed to export ZAP CSV: {e}")
+        warn(f" Failed to export ZAP CSV: {e}")
         return False

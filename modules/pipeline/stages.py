@@ -12,6 +12,7 @@ from modules.analysis import (
     scan_for_libraries,
     validate_endpoints,
 )
+from modules.common.console import emit, ok
 from modules.cors import collect_js_origins, scan_cors
 from modules.discovery import crawl_spa_routes, get_wayback_endpoints
 from modules.extraction import (
@@ -65,27 +66,27 @@ def stage_scan(ctx: ScanContext) -> None:
 
     if args.full:
         if verbose:
-            print("[*] === FULL SCAN: Static + Browser mode ===\n")
-            print("[*] --- Phase 1: Static scan ---")
+            emit("[*] === FULL SCAN: Static + Browser mode ===\n")
+            emit("[*] --- Phase 1: Static scan ---")
         static_result = run_extractor(
             args.target, threads=args.threads, verbose=verbose,
             max_depth=args.depth, deobfuscate=deobf,
             use_ast=not args.regex_only,
         )
         if verbose:
-            print("\n[*] --- Phase 2: Browser scan ---")
+            emit("\n[*] --- Phase 2: Browser scan ---")
         browser_result = run_browser_scan(
             args.target, timeout=args.timeout, verbose=verbose,
             **browser_kwargs,
         )
         ctx.result = merge_results(static_result, browser_result)
         if verbose:
-            print("\n[*] --- Combined Results ---")
-            print(f"[+] Total JS files: {len(ctx.result['js_files_scanned'])}")
-            print(f"[+] Total internal paths: {len(ctx.result['internal_paths'])}")
-            print(f"[+] Total intercepted endpoints: {len(ctx.result['intercepted_endpoints'])}")
-            print(f"[+] Total secrets: {len(ctx.result['secrets_found'])}")
-            print(f"[+] Risk: {ctx.result['risk_summary']['level']} (score: {ctx.result['risk_summary']['score']})")
+            emit("\n[*] --- Combined Results ---")
+            ok(f"Total JS files: {len(ctx.result['js_files_scanned'])}")
+            ok(f"Total internal paths: {len(ctx.result['internal_paths'])}")
+            ok(f"Total intercepted endpoints: {len(ctx.result['intercepted_endpoints'])}")
+            ok(f"Total secrets: {len(ctx.result['secrets_found'])}")
+            ok(f"Risk: {ctx.result['risk_summary']['level']} (score: {ctx.result['risk_summary']['score']})")
     elif args.browser:
         ctx.result = run_browser_scan(
             args.target, timeout=args.timeout, verbose=verbose,

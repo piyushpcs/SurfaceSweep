@@ -20,6 +20,7 @@ import json
 import requests
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from modules.common.console import detail, emit, info
 
 USER_AGENT = "SurfaceSweep/1.0"
 
@@ -342,7 +343,7 @@ def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True, hea
             resolved.append(urljoin(base_url + "/", url))
 
     if verbose:
-        print(f"[*] Validating {len(resolved)} endpoints...")
+        info(f" Validating {len(resolved)} endpoints...")
 
     results = {
         "live": [],
@@ -379,19 +380,19 @@ def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True, hea
             if verbose:
                 code = result.get("status_code", "ERR")
                 marker = {"live": "+", "restricted": "!", "dead": "-"}.get(status, "?")
-                print(f"    [{marker}] {code} {result['url'][:80]}")
+                detail(f"[{marker}] {code} {result['url'][:80]}")
 
     live_count = len(results["live"])
     dead_count = len(results["dead"])
     restricted_count = len(results["restricted"])
 
     if verbose:
-        print(f"\n[+] Validation complete:")
-        print(f"    Live: {live_count}")
-        print(f"    Restricted (401/403): {restricted_count}")
-        print(f"    Dead (404): {dead_count}")
-        print(f"    Server errors: {len(results['server_error'])}")
-        print(f"    Timeouts: {len(results['timeout'])}")
+        emit(f"\n[+] Validation complete:")
+        detail(f"Live: {live_count}")
+        detail(f"Restricted (401/403): {restricted_count}")
+        detail(f"Dead (404): {dead_count}")
+        detail(f"Server errors: {len(results['server_error'])}")
+        detail(f"Timeouts: {len(results['timeout'])}")
 
     return results
 

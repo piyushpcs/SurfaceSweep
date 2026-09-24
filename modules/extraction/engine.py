@@ -24,6 +24,7 @@ from modules.extraction.sourcemaps import collect_source_map_sources, load_sourc
 from modules.analysis.sinks import detect_sinks, deduplicate_sinks
 from modules.analysis.pii import detect_pii, deduplicate_pii
 from modules.jwt import extract_jwts, deduplicate_jwts
+from modules.common.console import detail, emit, info, ok, warn
 from modules.common.result import new_scan_result
 
 
@@ -199,7 +200,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
     limiter = RateLimiter(requests_per_second=5)
 
     if verbose:
-        print(f"[*] Fetching {base_url}")
+        info(f"Fetching {base_url}")
 
     try:
         html = get_page(base_url, limiter=limiter)
@@ -209,7 +210,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
 
     external_js, inline_js = get_js_sources(base_url, html)
     if verbose:
-        print(f"[+] Found {len(external_js)} external JS files, {len(inline_js)} inline scripts")
+        ok(f"Found {len(external_js)} external JS files, {len(inline_js)} inline scripts")
 
     all_endpoints = set()
     all_secrets = []
@@ -240,7 +241,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         visited_js.update(new_urls)
 
         if verbose and depth > 0:
-            print(f"[*] Depth {depth}: scanning {len(new_urls)} additional JS files")
+            info(f"Depth {depth}: scanning {len(new_urls)} additional JS files")
 
         linked_at_this_level = set()
 
@@ -253,12 +254,12 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
                 except Exception as e:
                     result["errors"].append(f"{url}: {e}")
                     if verbose:
-                        print(f"    [!] failed: {url} — {e}")
+                        detail(f"[!] failed: {url} — {e}")
                     continue
                 if "error" in data:
                     result["errors"].append(f"{data['source']}: {data['error']}")
                     if verbose:
-                        print(f"    [!] failed: {data['source']} — {data['error']}")
+                        detail(f"[!] failed: {data['source']} — {data['error']}")
                     continue
 
                 result["js_files_scanned"].append(data["source"])
@@ -273,12 +274,12 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
                 if data["source_map_found"]:
                     result["source_maps_found"].append(data["source_map_found"])
                     if verbose:
-                        print(f"    [!] Source map exposed: {data['source_map_found']}")
+                        detail(f"[!] Source map exposed: {data['source_map_found']}")
 
                 linked_at_this_level.update(data.get("linked_js", set()))
 
                 if verbose:
-                    print(f"    scanned {data['source']} — {len(data['endpoints'])} endpoints found")
+                    detail(f"scanned {data['source']} — {len(data['endpoints'])} endpoints found")
 
         if linked_at_this_level:
             scan_js_urls(linked_at_this_level, depth + 1)
@@ -309,28 +310,28 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
     result["risk_summary"] = calculate_risk_summary(result)
 
     if verbose:
-        print(f"\n[+] Internal paths found: {len(result['internal_paths'])}")
-        print(f"[+] In-scope external URLs: {len(result['in_scope_urls'])}")
-        print(f"[+] Out-of-scope URLs (informational only): {len(result['out_of_scope_urls'])}")
+        emit(f"\n[+] Internal paths found: {len(result['internal_paths'])}")
+        ok(f" In-scope external URLs: {len(result['in_scope_urls'])}")
+        ok(f" Out-of-scope URLs (informational only): {len(result['out_of_scope_urls'])}")
         if use_ast and ast_is_available():
-            print(f"[+] Extraction: AST (tree-sitter) + regex")
+            ok(f" Extraction: AST (tree-sitter) + regex")
         else:
-            print(f"[+] Extraction: regex only")
+            ok(f" Extraction: regex only")
         if result["secrets_found"]:
-            print(f"[!] {len(result['secrets_found'])} unique potential secret(s) found — review manually!")
+            warn(f" {len(result['secrets_found'])} unique potential secret(s) found — review manually!")
         if result.get("jwts_found"):
-            print(f"[!] {len(result['jwts_found'])} unique JWT(s) found — run with --jwt to analyze")
+            warn(f" {len(result['jwts_found'])} unique JWT(s) found — run with --jwt to analyze")
         if result["source_maps_found"]:
-            print(f"[!] {len(result['source_maps_found'])} exposed source map(s)")
+            warn(f" {len(result['source_maps_found'])} exposed source map(s)")
         if result["deobfuscation_findings"]:
-            print(f"[!] {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
+            warn(f" {len(result['deobfuscation_findings'])} obfuscated string(s) decoded")
         if result["sinks_found"]:
-            print(f"[!] {len(result['sinks_found'])} dangerous sink pattern(s) found")
+            warn(f" {len(result['sinks_found'])} dangerous sink pattern(s) found")
         if result["internal_hosts_found"]:
-            print(f"[!] {len(result['internal_hosts_found'])} internal/private host reference(s) found")
+            warn(f" {len(result['internal_hosts_found'])} internal/private host reference(s) found")
         if result.get("pii_found"):
-            print(f"[!] {len(result['pii_found'])} potential PII item(s) found")
-        print(f"[+] Risk level: {result['risk_summary']['level']} (score: {result['risk_summary']['score']})")
+            warn(f" {len(result['pii_found'])} potential PII item(s) found")
+        ok(f" Risk level: {result['risk_summary']['level']} (score: {result['risk_summary']['score']})")
 
     return result
 

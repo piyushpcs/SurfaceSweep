@@ -8,6 +8,16 @@ from modules.common.constants import (
     SEVERITY_RANK,
     __version__,
 )
+from modules.common.console import (
+    configure_console,
+    detail,
+    emit,
+    error,
+    info,
+    is_quiet,
+    ok,
+    warn,
+)
 from modules.common.result import (
     RESULT_SCHEMA_VERSION,
     ScanResult,
@@ -23,5 +33,13 @@ __all__ = [
     "SEVERITY_RANK",
     "ScanResult",
     "__version__",
+    "configure_console",
+    "detail",
+    "emit",
+    "error",
+    "info",
+    "is_quiet",
     "new_scan_result",
+    "ok",
+    "warn",
 ]

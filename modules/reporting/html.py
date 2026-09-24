@@ -8,6 +8,7 @@ All dynamic values are escaped via html.escape before interpolation.
 import json
 from html import escape as _esc
 
+from modules.common.console import ok, warn
 from modules.common.constants import SEVERITY_ORDER as CORS_SEV_ORDER
 from modules.reporting.findings import (
     build_executive_summary,
@@ -812,9 +813,9 @@ def save_report(result, filename="reports/surfacesweep_report.json"):
     try:
         with open(filename, "w") as f:
             json.dump(result, f, indent=2)
-        print(f"[+] Report saved to {filename}")
+        ok(f" Report saved to {filename}")
     except OSError as e:
-        print(f"[!] Failed to save report to {filename}: {e}")
+        warn(f" Failed to save report to {filename}: {e}")
 
 
 def save_html_report(result, filename="reports/surfacesweep_report.html"):
@@ -823,6 +824,6 @@ def save_html_report(result, filename="reports/surfacesweep_report.html"):
     try:
         with open(filename, "w") as f:
             f.write(html)
-        print(f"[+] HTML report saved to {filename}")
+        ok(f" HTML report saved to {filename}")
     except OSError as e:
-        print(f"[!] Failed to save HTML report to {filename}: {e}")
+        warn(f" Failed to save HTML report to {filename}: {e}")

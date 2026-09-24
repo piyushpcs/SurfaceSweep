@@ -11,6 +11,7 @@ from argparse import Namespace
 from time import monotonic
 from typing import Optional
 
+from modules.common.console import emit
 from modules.common.result import ScanResult
 
 
@@ -36,7 +37,7 @@ class ScanContext:
 
     def log(self, msg: str) -> None:
         if self.verbose:
-            print(msg)
+            emit(msg)
 
     def require_result(self) -> ScanResult:
         if self.result is None:

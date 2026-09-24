@@ -8,6 +8,7 @@ that may no longer be linked in the current version of the site.
 import requests
 from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from modules.common.console import detail, info, ok
 
 
 def get_wayback_js_urls(target_domain, limit=50, verbose=True):
@@ -17,7 +18,7 @@ def get_wayback_js_urls(target_domain, limit=50, verbose=True):
     Returns list of archived JS file URLs.
     """
     if verbose:
-        print(f"[*] Querying Wayback Machine for {target_domain} JS files...")
+        info(f" Querying Wayback Machine for {target_domain} JS files...")
 
     # CDX API: search for all archived .js files
     cdx_url = "https://web.archive.org/cdx/search/cdx"
@@ -36,16 +37,16 @@ def get_wayback_js_urls(target_domain, limit=50, verbose=True):
         data = resp.json()
     except requests.RequestException as e:
         if verbose:
-            print(f"    [!] Wayback API error: {e}")
+            detail(f"[!] Wayback API error: {e}")
         return []
     except ValueError:
         if verbose:
-            print(f"    [!] Wayback API returned invalid JSON")
+            detail(f"[!] Wayback API returned invalid JSON")
         return []
 
     if not data or len(data) <= 1:
         if verbose:
-            print(f"    [!] No archived JS files found")
+            detail(f"[!] No archived JS files found")
         return []
 
     # First row is header
@@ -60,7 +61,7 @@ def get_wayback_js_urls(target_domain, limit=50, verbose=True):
     js_urls = js_urls[:limit]
 
     if verbose:
-        print(f"    [+] Found {len(js_urls)} archived JS file(s)")
+        detail(f"[+] Found {len(js_urls)} archived JS file(s)")
 
     return js_urls
 
@@ -102,7 +103,7 @@ def get_wayback_endpoints(target_domain, limit=50, threads=5, verbose=True):
         return {"js_files": [], "endpoints": set(), "secrets": [], "sinks": [], "internal_hosts": [], "jwts": [], "pii": [], "errors": []}
 
     if verbose:
-        print(f"[*] Fetching {len(js_urls)} archived JS files...")
+        info(f" Fetching {len(js_urls)} archived JS files...")
 
     results = {"js_files": [], "endpoints": set(), "secrets": [], "sinks": [], "internal_hosts": [], "jwts": [], "pii": [], "errors": []}
 
@@ -133,9 +134,9 @@ def get_wayback_endpoints(target_domain, limit=50, threads=5, verbose=True):
             results["internal_hosts"].extend(internal)
 
             if verbose:
-                print(f"    scanned {data['original_url'][:70]} — {len(endpoints)} endpoints")
+                detail(f"scanned {data['original_url'][:70]} — {len(endpoints)} endpoints")
 
     if verbose:
-        print(f"[+] Wayback: {len(results['js_files'])} files scanned, {len(results['endpoints'])} endpoints found")
+        ok(f" Wayback: {len(results['js_files'])} files scanned, {len(results['endpoints'])} endpoints found")
 
     return results

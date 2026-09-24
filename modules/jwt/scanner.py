@@ -9,6 +9,7 @@ from modules.jwt.checks import SEVERITY_ORDER, analyze_jwt
 from modules.jwt.crack import build_crack_candidates, export_hashcat
 from modules.jwt.decode import decode_jwt, deduplicate_jwts, extract_jwts
 from modules.jwt.keys import collect_jku_urls, fetch_jwks_keys
+from modules.common.console import detail, info, ok
 
 
 def collect_jwts_from_result(result):
@@ -103,7 +104,7 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
       }
     """
     if verbose:
-        print("[*] --- JWT Analysis ---")
+        info(" --- JWT Analysis ---")
 
     candidates, crack_meta = build_crack_candidates(
         result, wordlist_path=wordlist_path, target=target
@@ -115,7 +116,7 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
     if hashcat_path and tokens:
         hashcat_n = export_hashcat([t["token"] for t in tokens], hashcat_path)
         if verbose and hashcat_n:
-            print(f"[+] Exported {hashcat_n} HS* JWT(s) for hashcat (-m 16500): {hashcat_path}")
+            ok(f" Exported {hashcat_n} HS* JWT(s) for hashcat (-m 16500): {hashcat_path}")
 
     # Optional network: fetch jku/x5u JWKS → PEM key materials for confusion PoC
     network_materials = []
@@ -127,14 +128,16 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
             network_materials.extend(fetch_jwks_keys(u, timeout=network_timeout))
         network_materials = list(dict.fromkeys(network_materials))
         if verbose and jku_urls:
-            print(f"[*] Network JWKS: {jku_fetches} jku/x5u URL(s), "
-                  f"{len(network_materials)} RSA key(s) retrieved")
+            info(
+                f"Network JWKS: {jku_fetches} jku/x5u URL(s), "
+                f"{len(network_materials)} RSA key(s) retrieved"
+            )
         if verbose and jku_urls and not network_materials:
-            print("[*] Network JWKS: no usable RSA keys (SSRF guard, fetch error, or non-RSA)")
+            info("Network JWKS: no usable RSA keys (SSRF guard, fetch error, or non-RSA)")
 
     if not tokens:
         if verbose:
-            print("[*] No complete JWTs found in scan results")
+            info(" No complete JWTs found in scan results")
         empty = {
             "schema_version": 1,
             "tokens_analyzed": 0,
@@ -182,16 +185,20 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
         crit = severity_counts.get("CRITICAL", 0)
         high = severity_counts.get("HIGH", 0)
         med = severity_counts.get("MEDIUM", 0)
-        print(f"[+] JWT findings: {crit} critical, {high} high, {med} medium "
-              f"({len(analyses)} token(s) analyzed)")
+        ok(
+            f"JWT findings: {crit} critical, {high} high, {med} medium "
+            f"({len(analyses)} token(s) analyzed)"
+        )
         if crack_meta.get("total"):
-            print(f"[*] Crack candidates: {crack_meta['total']} "
-                  f"(builtin={crack_meta['builtin']}, scan={crack_meta['scan_secrets']}, "
-                  f"wordlist={crack_meta['wordlist']}, mutations={crack_meta['target_mutations']})")
+            info(
+                f"Crack candidates: {crack_meta['total']} "
+                f"(builtin={crack_meta['builtin']}, scan={crack_meta['scan_secrets']}, "
+                f"wordlist={crack_meta['wordlist']}, mutations={crack_meta['target_mutations']})"
+            )
         for a in analyses:
             if a["severity"] in ("CRITICAL", "HIGH"):
                 top = a["findings"][0]
-                print(f"    [!] {a['severity']:8s} {a['alg'] or '?':6s} {top['issue']}: {top['detail'][:90]}")
+                detail(f"[!] {a['severity']:8s} {a['alg'] or '?':6s} {top['issue']}: {top['detail'][:90]}")
 
     out = {
         "schema_version": 1,
@@ -212,7 +219,7 @@ def analyze_result_jwts(result, verbose=True, wordlist_path=None, target=None,
     if export_path:
         out["findings_exported"] = export_jwt_findings(out, export_path)
         if verbose and out["findings_exported"]:
-            print(f"[+] Wrote {out['findings_exported']} per-token finding(s) (NDJSON): {export_path}")
+            ok(f" Wrote {out['findings_exported']} per-token finding(s) (NDJSON): {export_path}")
     return out
 
 

@@ -14,6 +14,7 @@ import re
 import time
 from urllib.parse import urlparse, urljoin
 from playwright.sync_api import sync_playwright
+from modules.common.console import detail, info, ok
 
 
 # ---- Static route patterns (survive minification) ----
@@ -383,8 +384,8 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
 
     # ---- Phase 1: Static extraction from JS bundles ----
     if verbose:
-        print(f"[*] --- SPA Route Discovery ---")
-        print(f"[*] Phase 1: Static analysis of JS bundles...")
+        info(f" --- SPA Route Discovery ---")
+        info(f" Phase 1: Static analysis of JS bundles...")
 
     import requests as _requests
     js_urls = set()
@@ -414,11 +415,11 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
             pass
 
     if verbose and static_count:
-        print(f"    [+] Found {static_count} route(s) in JS bundles")
+        detail(f"[+] Found {static_count} route(s) in JS bundles")
 
     # ---- Phase 2: Runtime analysis via Playwright ----
     if verbose:
-        print(f"[*] Phase 2: Runtime analysis (Playwright)...")
+        info(f" Phase 2: Runtime analysis (Playwright)...")
 
     api_endpoints = set()
 
@@ -464,7 +465,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
         except Exception as e:
             result["errors"].append(f"Navigation error: {e}")
             if verbose:
-                print(f"    [!] Navigation error: {e}")
+                detail(f"[!] Navigation error: {e}")
 
         # DOM routes
         dom_routes = _get_dom_routes(page)
@@ -473,7 +474,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
             if add_route(route, "dom"):
                 dom_count += 1
         if verbose and dom_count:
-            print(f"    [+] Found {dom_count} route(s) from DOM anchors")
+            detail(f"[+] Found {dom_count} route(s) from DOM anchors")
 
         # Vue routes
         vue_routes = _get_vue_routes(page)
@@ -482,7 +483,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
             if add_route(route, "vue"):
                 vue_count += 1
         if verbose and vue_count:
-            print(f"    [+] Found {vue_count} route(s) from Vue Router")
+            detail(f"[+] Found {vue_count} route(s) from Vue Router")
 
         # React routes
         react_routes = _get_react_routes(page)
@@ -491,7 +492,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
             if add_route(route, "react"):
                 react_count += 1
         if verbose and react_count:
-            print(f"    [+] Found {react_count} route(s) from React fiber")
+            detail(f"[+] Found {react_count} route(s) from React fiber")
 
         # Next.js routes
         next_routes = _get_next_routes(page)
@@ -500,7 +501,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
             if add_route(route, "next"):
                 next_count += 1
         if verbose and next_count:
-            print(f"    [+] Found {next_count} route(s) from Next.js manifest")
+            detail(f"[+] Found {next_count} route(s) from Next.js manifest")
 
         # History API captured navigation
         hist_nav = page.evaluate("() => [...window.__ss_nav]")
@@ -510,11 +511,11 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
             if path and add_route(path, "history"):
                 hist_count += 1
         if verbose and hist_count:
-            print(f"    [+] Found {hist_count} route(s) from History API")
+            detail(f"[+] Found {hist_count} route(s) from History API")
 
         # ---- Phase 3: BFS crawl to unfold lazy routes ----
         if verbose:
-            print(f"[*] Phase 3: BFS crawl ({len(all_routes)} candidate route(s))...")
+            info(f" Phase 3: BFS crawl ({len(all_routes)} candidate route(s))...")
 
         # Seed queue with discovered routes
         queue = list(all_routes.keys())
@@ -558,7 +559,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
                 pass
 
         if verbose and crawled:
-            print(f"    [+] Crawled {crawled} route(s)")
+            detail(f"[+] Crawled {crawled} route(s)")
 
         # Collect API endpoints
         api_endpoints.update(spa_api_endpoints)
@@ -569,10 +570,10 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
     # ---- Phase 4: Probe common routes ----
     if probe_common:
         if verbose:
-            print(f"[*] Phase 4: Probing common admin/debug routes...")
+            info(f" Phase 4: Probing common admin/debug routes...")
         probe_candidates = _probe_common_routes(base_url, all_routes.keys())
         if verbose:
-            print(f"    [*] {len(probe_candidates)} candidate(s) to probe (not yet discovered)")
+            detail(f"[*] {len(probe_candidates)} candidate(s) to probe (not yet discovered)")
 
         # Quick HTTP probe (HEAD requests)
         import concurrent.futures
@@ -603,9 +604,9 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
                         probed.append((route, status))
 
         if verbose and probed:
-            print(f"    [+] Found {len(probed)} additional route(s) via probing:")
+            detail(f"[+] Found {len(probed)} additional route(s) via probing:")
             for route, status in sorted(probed):
-                print(f"        [{status}] {route}")
+                detail(f"    [{status}] {route}")
 
     # ---- Final results ----
     result["routes"] = sorted(all_routes.keys())
@@ -613,8 +614,8 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
     result["api_endpoints"] = sorted(api_endpoints)
 
     if verbose:
-        print(f"[+] Total SPA routes discovered: {len(result['routes'])}")
+        ok(f" Total SPA routes discovered: {len(result['routes'])}")
         if result["api_endpoints"]:
-            print(f"[+] API endpoints during crawl: {len(result['api_endpoints'])}")
+            ok(f" API endpoints during crawl: {len(result['api_endpoints'])}")
 
     return result

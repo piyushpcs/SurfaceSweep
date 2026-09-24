@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
+from modules.common.console import detail, info, ok, warn
 from modules.cors.classifier import SEVERITY_ORDER, parse_acao_list
 from modules.cors.origins import (
     MAX_TRUSTED_SEEDS,
@@ -250,13 +251,13 @@ def scan_cors(
     limiter = RateLimiter(rate_limit) if rate_limit and rate_limit > 0 else None
 
     if verbose:
-        print("[*] --- CORS Scan ---")
-        print(f"[*] Testing {len(resolved)} endpoint(s) with {len(origins)} origin(s)")
-        print(f"[*] Target origin: {target_origin}")
-        print(f"[*] Origins: {', '.join(origins)}")
+        info(" --- CORS Scan ---")
+        info(f" Testing {len(resolved)} endpoint(s) with {len(origins)} origin(s)")
+        info(f" Target origin: {target_origin}")
+        info(f" Origins: {', '.join(origins)}")
         if resolved:
             top = resolved[0]
-            print(f"[*] First (highest priority): {top}")
+            info(f" First (highest priority): {top}")
 
     raw_findings = []
     error_probes = 0
@@ -372,8 +373,8 @@ def scan_cors(
         seed_urls = sorted(urls_with_acao)
         if seed_origins and seed_urls:
             if verbose:
-                print(
-                    f"[*] Trusted-seed re-probe: {len(seed_origins)} origin(s) "
+                info(
+                    f"Trusted-seed re-probe: {len(seed_origins)} origin(s) "
                     f"on {len(seed_urls)} URL(s)"
                 )
 
@@ -407,8 +408,8 @@ def scan_cors(
         if verbose:
             for f in findings:
                 origins_list = ", ".join(f.get("origins_flagged") or [f.get("origin", "")])
-                print(
-                    f"    [!] {f['severity']:8s} {f['url'][:70]} "
+                detail(
+                    f"[!] {f['severity']:8s} {f['url'][:70]} "
                     f"origins={origins_list[:80]} ACAO={f.get('acao', '')}"
                 )
     else:
@@ -418,8 +419,8 @@ def scan_cors(
         )
         if verbose:
             for f in findings:
-                print(
-                    f"    [!] {f['severity']:8s} {f['url'][:70]} "
+                detail(
+                    f"[!] {f['severity']:8s} {f['url'][:70]} "
                     f"origin={f.get('origin', '')} ACAO={f.get('acao', '')}"
                 )
 
@@ -434,15 +435,15 @@ def scan_cors(
         high = severity_counts.get("HIGH", 0)
         med = severity_counts.get("MEDIUM", 0)
         err = severity_counts.get("ERROR", 0)
-        print(
-            f"[+] CORS findings: {crit} critical, {high} high, {med} medium "
+        ok(
+            f"CORS findings: {crit} critical, {high} high, {med} medium "
             f"({len(findings)} URL(s) flagged"
             + (f", {len(raw_findings)} probe hits" if aggregate else "")
             + (f", {err} probe errors" if err else "")
             + ")"
         )
         if crit:
-            print("[!] CRITICAL: reflected origin + credentials — data theft possible")
+            warn("CRITICAL: reflected origin + credentials — data theft possible")
 
     summary = {
         "urls_flagged": len(findings),

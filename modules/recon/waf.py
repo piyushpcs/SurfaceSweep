@@ -6,6 +6,7 @@ so the scanner can adjust speed and headers to avoid being blocked.
 """
 
 import requests
+from modules.common.console import detail, ok, warn
 
 
 # WAF signatures: header name -> list of (value_pattern, waf_name)
@@ -103,17 +104,17 @@ def detect_waf(url, timeout=10, verbose=True):
             result["confidence"] = "high" if len(matches) >= 2 else "medium"
 
             if verbose:
-                print(f"[!] WAF detected: {result['waf_name']} (confidence: {result['confidence']})")
+                warn(f" WAF detected: {result['waf_name']} (confidence: {result['confidence']})")
                 for m in matches:
-                    print(f"    {m['header']}: {m['value']}")
+                    detail(f"{m['header']}: {m['value']}")
         else:
             if verbose:
-                print("[+] No WAF detected from headers")
+                ok(" No WAF detected from headers")
 
     except requests.RequestException as e:
         result["error"] = str(e)
         if verbose:
-            print(f"[!] WAF detection failed: {e}")
+            warn(f" WAF detection failed: {e}")
 
     return result
 

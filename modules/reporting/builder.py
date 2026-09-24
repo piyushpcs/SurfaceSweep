@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 
 from modules.reporting.export import export_burp_csv, export_zap_csv
 from modules.reporting.html import save_html_report, save_report
+from modules.common.console import ok
 
 
 def output_paths(output: str) -> Dict[str, str]:
@@ -110,7 +111,7 @@ def write_reports(
         if poc_path:
             written["cors_poc"] = poc_path
             if verbose:
-                print(f"[+] CORS PoC HTML saved: {poc_path}")
+                ok(f" CORS PoC HTML saved: {poc_path}")
 
     return written
 

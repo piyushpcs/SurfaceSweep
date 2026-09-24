@@ -9,6 +9,7 @@ URLs/filenames, then checks against:
 
 import re
 import requests
+from modules.common.console import detail, info, ok, warn
 
 
 # ---- Version detection patterns (from JS file content) ----
@@ -498,21 +499,21 @@ def scan_for_libraries(js_files, content_map=None, use_osv=False, verbose=True):
     osv_results = {}
     if use_osv and all_libraries:
         if verbose:
-            print(f"[*] Querying OSV.dev for {len(all_libraries)} library version(s)...")
+            info(f" Querying OSV.dev for {len(all_libraries)} library version(s)...")
         osv_results = query_osv(all_libraries)
         if verbose:
             total_osv = sum(len(v.get("vulns", [])) for v in osv_results.values())
-            print(f"[+] OSV: {total_osv} additional vulnerability record(s) found")
+            ok(f" OSV: {total_osv} additional vulnerability record(s) found")
 
     if verbose and all_libraries:
-        print(f"[+] Detected {len(all_libraries)} library version(s):")
+        ok(f" Detected {len(all_libraries)} library version(s):")
         for lib in all_libraries:
-            print(f"    {lib['library']} {lib['version']} ({lib['source']})")
+            detail(f"{lib['library']} {lib['version']} ({lib['source']})")
         if vulns:
-            print(f"[!] {len(vulns)} known vulnerability(ies) detected:")
+            warn(f" {len(vulns)} known vulnerability(ies) detected:")
             for v in vulns:
                 cve_str = ", ".join(v["cves"][:2])
-                print(f"    [!] {v['library']} {v['version']} — {v['severity']}: {cve_str}")
+                detail(f"[!] {v['library']} {v['version']} — {v['severity']}: {cve_str}")
 
     return {
         "libraries": all_libraries,

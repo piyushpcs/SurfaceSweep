@@ -169,5 +169,76 @@ class TestScanResultSchema(unittest.TestCase):
         self.assertIn("RESULT_SCHEMA_VERSION", src)
 
 
+class TestConsole(unittest.TestCase):
+    def setUp(self):
+        from modules.common.console import configure_console
+
+        configure_console(quiet=False)
+
+    def tearDown(self):
+        from modules.common.console import configure_console
+
+        configure_console(quiet=False)
+
+    def test_info_ok_warn_prefixes(self):
+        import io
+        from contextlib import redirect_stdout
+        from modules.common.console import detail, info, ok, warn
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            info("progress")
+            ok("done")
+            warn("careful")
+            detail("sub")
+        lines = buf.getvalue().splitlines()
+        self.assertEqual(lines[0], "[*] progress")
+        self.assertEqual(lines[1], "[+] done")
+        self.assertEqual(lines[2], "[!] careful")
+        self.assertEqual(lines[3], "    sub")
+
+    def test_leading_space_trimmed(self):
+        import io
+        from contextlib import redirect_stdout
+        from modules.common.console import info
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            info(" spaced")
+        self.assertEqual(buf.getvalue(), "[*] spaced\n")
+
+    def test_quiet_suppresses_stdout(self):
+        import io
+        from contextlib import redirect_stdout
+        from modules.common.console import configure_console, info, is_quiet, ok
+
+        configure_console(quiet=True)
+        self.assertTrue(is_quiet())
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            info("hidden")
+            ok("hidden")
+        self.assertEqual(buf.getvalue(), "")
+
+    def test_error_always_to_stderr(self):
+        import io
+        from contextlib import redirect_stderr
+        from modules.common.console import configure_console, error
+
+        configure_console(quiet=True)
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            error("[!] fatal")
+        self.assertIn("fatal", buf.getvalue())
+        configure_console(quiet=False)
+
+    def test_main_wires_quiet(self):
+        import inspect
+        import main as main_mod
+
+        src = inspect.getsource(main_mod.main)
+        self.assertIn("configure_console", src)
+
+
 if __name__ == "__main__":
     unittest.main()

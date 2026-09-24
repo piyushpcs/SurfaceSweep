@@ -9,6 +9,7 @@ import argparse
 import sys
 
 from modules import __version__
+from modules.common.console import configure_console, error as console_error
 from modules.extraction.http import clear_text_cache, configure_http
 from modules.pipeline import run_pipeline
 
@@ -162,6 +163,7 @@ def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(argv)
     verbose = not args.quiet
+    configure_console(quiet=args.quiet)
     headers = build_headers(args)
     # Browser always tolerates bad certs by default; --insecure applies to requests.
     args.verify_tls = not args.insecure
@@ -171,10 +173,10 @@ def main(argv=None):
     except SystemExit:
         raise
     except KeyboardInterrupt:
-        print("\n[!] Interrupted", file=sys.stderr)
+        console_error("\n[!] Interrupted")
         return EXIT_ERROR
     except Exception as exc:
-        print(f"[!] Scan failed: {exc}", file=sys.stderr)
+        console_error(f"[!] Scan failed: {exc}")
         if verbose:
             import traceback
             traceback.print_exc()
