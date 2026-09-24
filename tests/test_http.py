@@ -7,6 +7,7 @@ from unittest import mock
 import requests
 
 from modules.extraction.http import (
+    HttpClient,
     RateLimiter,
     clear_text_cache,
     fetch_text,
@@ -209,6 +210,54 @@ class TestRateLimiterStillWorks(unittest.TestCase):
             limiter.wait()
         elapsed = time.monotonic() - t0
         self.assertGreaterEqual(elapsed, 0.05)
+
+
+class TestHttpClient(unittest.TestCase):
+    def test_configure_and_reset_roundtrip(self):
+        client = HttpClient()
+        client.configure(proxy="http://p:1", insecure=True, user_agent="X")
+        self.assertEqual(client.proxy, "http://p:1")
+        self.assertTrue(client.insecure)
+        self.assertEqual(client.default_headers(), {"User-Agent": "X"})
+        kwargs = client.request_kwargs()
+        self.assertEqual(kwargs["proxies"]["https"], "http://p:1")
+        self.assertIs(kwargs.get("verify"), False)
+        client.reset()
+        self.assertIsNone(client.proxy)
+        self.assertFalse(client.insecure)
+        self.assertEqual(client.user_agent, "SurfaceSweep/1.0")
+
+    def test_cache_fifo_eviction(self):
+        client = HttpClient(cache_max=2)
+        client.cache_text("https://a", "1")
+        client.cache_text("https://b", "2")
+        client.cache_text("https://c", "3")
+        self.assertIsNone(client.get_cached_text("https://a"))
+        self.assertEqual(client.get_cached_text("https://b"), "2")
+        self.assertEqual(client.get_cached_text("https://c"), "3")
+
+    def test_cache_empty_url_ignored(self):
+        client = HttpClient()
+        client.cache_text("", "x")
+        self.assertIsNone(client.get_cached_text(""))
+
+    @mock.patch("modules.extraction.http.time.sleep")
+    @mock.patch("modules.extraction.http.requests.get")
+    def test_instance_fetch_with_retry(self, get_mock, sleep_mock):
+        get_mock.return_value = _resp(200)
+        client = HttpClient()
+        resp = client.fetch_with_retry("https://x.test/a.js")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(client.get_cached_text("https://x.test/a.js"), "ok")
+
+    def test_default_client_is_shared(self):
+        from modules.extraction import http as http_mod
+
+        self.assertIsInstance(http_mod._client, HttpClient)
+        before = len(http_mod._client._cache)
+        http_mod.cache_text("https://shared.test/x.js", "body")
+        self.assertEqual(http_mod.get_cached_text("https://shared.test/x.js"), "body")
+        self.assertGreaterEqual(len(http_mod._client._cache), before + 1)
 
 
 if __name__ == "__main__":

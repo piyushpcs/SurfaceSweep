@@ -251,7 +251,7 @@ class TestContentCache(unittest.TestCase):
 
     def test_fetch_text_uses_cache_without_network(self):
         cache_text("https://x.test/cached.js", "console.log(1)")
-        with mock.patch("modules.extraction.http.fetch_with_retry") as fr:
+        with mock.patch("modules.extraction.http.HttpClient.fetch_with_retry") as fr:
             out = fetch_text("https://x.test/cached.js")
             fr.assert_not_called()
         self.assertEqual(out, "console.log(1)")
@@ -260,7 +260,7 @@ class TestContentCache(unittest.TestCase):
         resp = mock.Mock()
         resp.text = "fetched-body"
         with mock.patch(
-            "modules.extraction.http.fetch_with_retry", return_value=resp
+            "modules.extraction.http.HttpClient.fetch_with_retry", return_value=resp
         ) as fr:
             out = fetch_text("https://x.test/miss.js")
             fr.assert_called_once()
@@ -268,19 +268,21 @@ class TestContentCache(unittest.TestCase):
         self.assertEqual(get_cached_text("https://x.test/miss.js"), "fetched-body")
 
     def test_fetch_text_none_on_budget_exhaustion(self):
-        with mock.patch("modules.extraction.http.fetch_with_retry", return_value=None):
+        with mock.patch(
+            "modules.extraction.http.HttpClient.fetch_with_retry", return_value=None
+        ):
             self.assertIsNone(fetch_text("https://x.test/fail.js"))
         self.assertIsNone(get_cached_text("https://x.test/fail.js"))
 
     def test_fifo_eviction(self):
-        from modules.extraction.http import _TEXT_CACHE, _TEXT_CACHE_MAX
+        from modules.extraction.http import _TEXT_CACHE_MAX, _client
         clear_text_cache()
         # Fill to max
         for i in range(_TEXT_CACHE_MAX):
             cache_text(f"https://x.test/{i}.js", str(i))
-        self.assertEqual(len(_TEXT_CACHE), _TEXT_CACHE_MAX)
+        self.assertEqual(len(_client._cache), _TEXT_CACHE_MAX)
         cache_text("https://x.test/new.js", "new")
-        self.assertEqual(len(_TEXT_CACHE), _TEXT_CACHE_MAX)
+        self.assertEqual(len(_client._cache), _TEXT_CACHE_MAX)
         self.assertEqual(get_cached_text("https://x.test/new.js"), "new")
         self.assertIsNone(get_cached_text("https://x.test/0.js"))
 

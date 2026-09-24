@@ -42,6 +42,7 @@ from modules.extraction.patterns import (
 )
 from modules.extraction.secrets import extract_secrets, deduplicate_secrets
 from modules.extraction.http import (
+    HttpClient,
     RateLimiter,
     cache_text,
     clear_text_cache,
@@ -81,7 +82,7 @@ __all__ = [
     "extract_secrets", "deduplicate_secrets",
     "detect_sinks", "deduplicate_sinks",
     "detect_pii", "deduplicate_pii",
-    "RateLimiter", "fetch_with_retry", "get_page", "fetch_text",
+    "HttpClient", "RateLimiter", "fetch_with_retry", "get_page", "fetch_text",
     "configure_http", "reset_http_config", "request_kwargs",
     "default_headers", "parse_retry_after",
     "cache_text", "get_cached_text", "clear_text_cache",

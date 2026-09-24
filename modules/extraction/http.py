@@ -1,5 +1,9 @@
 """
 HTTP utilities: rate limiting, retry, fetching, and process-wide client config.
+
+A single process-wide :class:`HttpClient` holds config, the response-text
+cache, and fetch/retry logic. Module-level functions delegate to the default
+instance so existing call sites and tests stay unchanged.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from modules.common.constants import DEFAULT_USER_AGENT
 
 __all__ = [
     "DEFAULT_USER_AGENT",
+    "HttpClient",
     "RateLimiter",
     "cache_text",
     "clear_text_cache",
@@ -24,123 +29,11 @@ __all__ = [
     "get_cached_text",
     "get_page",
     "parse_retry_after",
+    "request_kwargs",
     "reset_http_config",
 ]
 
-# Process-wide defaults applied by fetch_with_retry / get_page when the
-# caller does not override headers. Configured once from CLI flags.
-_http_config: dict = {
-    "proxy": None,
-    "insecure": False,
-    "user_agent": DEFAULT_USER_AGENT,
-}
-
-# Process-wide response-text cache keyed by URL. Avoids re-fetching the same
-# JS file across stages (scan → browser → CVE → SPA). Bounded FIFO.
-_TEXT_CACHE: dict = {}
 _TEXT_CACHE_MAX = 512
-
-
-def configure_http(
-    proxy: Optional[str] = None,
-    insecure: bool = False,
-    user_agent: Optional[str] = None,
-) -> None:
-    """Set process-wide HTTP defaults (proxy, TLS verify, User-Agent)."""
-    _http_config["proxy"] = proxy or None
-    _http_config["insecure"] = bool(insecure)
-    if user_agent:
-        _http_config["user_agent"] = user_agent
-
-
-def reset_http_config() -> None:
-    """Restore defaults (tests)."""
-    _http_config["proxy"] = None
-    _http_config["insecure"] = False
-    _http_config["user_agent"] = DEFAULT_USER_AGENT
-    clear_text_cache()
-
-
-def default_headers() -> dict:
-    return {"User-Agent": _http_config["user_agent"]}
-
-
-def request_kwargs(headers: Optional[dict] = None) -> dict:
-    """Build kwargs for requests.get/post from the process-wide config."""
-    kwargs: dict = {"headers": headers if headers is not None else default_headers()}
-    if _http_config["proxy"]:
-        kwargs["proxies"] = {
-            "http": _http_config["proxy"],
-            "https": _http_config["proxy"],
-        }
-    if _http_config["insecure"]:
-        kwargs["verify"] = False
-    return kwargs
-
-
-def clear_text_cache() -> None:
-    """Drop all cached response bodies (tests / new scan)."""
-    _TEXT_CACHE.clear()
-
-
-def get_cached_text(url: str) -> Optional[str]:
-    return _TEXT_CACHE.get(url)
-
-
-def cache_text(url: str, text: str) -> None:
-    """Store a response body for later stages (FIFO eviction)."""
-    if not url:
-        return
-    if url in _TEXT_CACHE:
-        _TEXT_CACHE[url] = text
-        return
-    if len(_TEXT_CACHE) >= _TEXT_CACHE_MAX:
-        oldest = next(iter(_TEXT_CACHE))
-        del _TEXT_CACHE[oldest]
-    _TEXT_CACHE[url] = text
-
-
-def fetch_text(url, timeout=10, limiter=None, headers=None) -> Optional[str]:
-    """
-    GET a URL and return its text body, using the process-wide cache.
-
-    Returns None on cache miss + fetch failure (connection errors, timeout
-    exhaustion, 429 budget) — never raises. Matches the contract callers
-    of the old per-stage try/except loops relied on.
-    """
-    cached = get_cached_text(url)
-    if cached is not None:
-        return cached
-    try:
-        resp = fetch_with_retry(url, timeout=timeout, limiter=limiter, headers=headers)
-    except requests.RequestException:
-        return None
-    if resp is None:
-        return None
-    text = resp.text
-    cache_text(url, text)
-    return text
-
-
-class RateLimiter:
-    """Simple token-bucket rate limiter."""
-
-    def __init__(self, requests_per_second: float = 5):
-        self.min_interval = 1.0 / requests_per_second
-        self._last = 0.0
-        self._lock = __import__("threading").Lock()
-
-    def wait(self) -> None:
-        # Reserve the next slot under the lock, then sleep outside so
-        # concurrent callers are not serialized for the full sleep duration.
-        with self._lock:
-            now = time.monotonic()
-            delay = self.min_interval - (now - self._last)
-            if delay < 0:
-                delay = 0.0
-            self._last = now + delay
-        if delay > 0:
-            time.sleep(delay)
 
 
 def parse_retry_after(value: Optional[str], default: float = 2.0, cap: float = 60.0) -> float:
@@ -176,53 +69,212 @@ def parse_retry_after(value: Optional[str], default: float = 2.0, cap: float = 6
     return float(seconds)
 
 
-def fetch_with_retry(url, timeout=10, max_retries=3, limiter=None, headers=None):
-    """
-    Fetch a URL with exponential backoff on 429/5xx and transient network errors.
+class RateLimiter:
+    """Simple token-bucket rate limiter."""
 
-    Returns the final Response on success (including 4xx that raise_for_status
-    accepts or re-raises as HTTPError). Raises the last ConnectionError/Timeout
-    after retries are exhausted. Returns None only if the 429/5xx retry budget
-    is fully consumed without a non-retryable response.
-    """
-    req_headers = headers if headers is not None else default_headers()
+    def __init__(self, requests_per_second: float = 5):
+        self.min_interval = 1.0 / requests_per_second
+        self._last = 0.0
+        self._lock = __import__("threading").Lock()
 
-    for attempt in range(max_retries):
-        if limiter:
-            limiter.wait()
+    def wait(self) -> None:
+        # Reserve the next slot under the lock, then sleep outside so
+        # concurrent callers are not serialized for the full sleep duration.
+        with self._lock:
+            now = time.monotonic()
+            delay = self.min_interval - (now - self._last)
+            if delay < 0:
+                delay = 0.0
+            self._last = now + delay
+        if delay > 0:
+            time.sleep(delay)
+
+
+class HttpClient:
+    """
+    Configurable HTTP client with retry, rate-limit hooks, and a bounded
+    response-text cache shared across pipeline stages.
+    """
+
+    def __init__(
+        self,
+        proxy: Optional[str] = None,
+        insecure: bool = False,
+        user_agent: Optional[str] = None,
+        cache_max: int = _TEXT_CACHE_MAX,
+    ) -> None:
+        self.proxy = proxy or None
+        self.insecure = bool(insecure)
+        self.user_agent = user_agent or DEFAULT_USER_AGENT
+        self.cache_max = cache_max
+        self._cache: dict = {}
+
+    def configure(
+        self,
+        proxy: Optional[str] = None,
+        insecure: bool = False,
+        user_agent: Optional[str] = None,
+    ) -> None:
+        """Set process-wide HTTP defaults (proxy, TLS verify, User-Agent)."""
+        self.proxy = proxy or None
+        self.insecure = bool(insecure)
+        if user_agent:
+            self.user_agent = user_agent
+
+    def reset(self) -> None:
+        """Restore defaults and drop the response cache (tests)."""
+        self.proxy = None
+        self.insecure = False
+        self.user_agent = DEFAULT_USER_AGENT
+        self.clear_cache()
+
+    def default_headers(self) -> dict:
+        return {"User-Agent": self.user_agent}
+
+    def request_kwargs(self, headers: Optional[dict] = None) -> dict:
+        """Build kwargs for requests.get/post from the client config."""
+        kwargs: dict = {"headers": headers if headers is not None else self.default_headers()}
+        if self.proxy:
+            kwargs["proxies"] = {"http": self.proxy, "https": self.proxy}
+        if self.insecure:
+            kwargs["verify"] = False
+        return kwargs
+
+    def clear_cache(self) -> None:
+        """Drop all cached response bodies (tests / new scan)."""
+        self._cache.clear()
+
+    def get_cached_text(self, url: str) -> Optional[str]:
+        return self._cache.get(url)
+
+    def cache_text(self, url: str, text: str) -> None:
+        """Store a response body for later stages (FIFO eviction)."""
+        if not url:
+            return
+        if url in self._cache:
+            self._cache[url] = text
+            return
+        if len(self._cache) >= self.cache_max:
+            oldest = next(iter(self._cache))
+            del self._cache[oldest]
+        self._cache[url] = text
+
+    def fetch_text(self, url, timeout=10, limiter=None, headers=None) -> Optional[str]:
+        """
+        GET a URL and return its text body, using the client cache.
+
+        Returns None on cache miss + fetch failure — never raises.
+        """
+        cached = self.get_cached_text(url)
+        if cached is not None:
+            return cached
         try:
-            kwargs = request_kwargs(headers=req_headers)
-            resp = requests.get(url, timeout=timeout, **kwargs)
-            if resp.status_code == 429:
-                if attempt >= max_retries - 1:
-                    return None
-                time.sleep(parse_retry_after(resp.headers.get("Retry-After")))
-                continue
-            if resp.status_code >= 500 and attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-                continue
-            resp.raise_for_status()
+            resp = self.fetch_with_retry(url, timeout=timeout, limiter=limiter, headers=headers)
+        except requests.RequestException:
+            return None
+        if resp is None:
+            return None
+        text = resp.text
+        self.cache_text(url, text)
+        return text
+
+    def fetch_with_retry(self, url, timeout=10, max_retries=3, limiter=None, headers=None):
+        """
+        Fetch a URL with exponential backoff on 429/5xx and transient network errors.
+
+        Returns the final Response on success. Raises the last ConnectionError/
+        Timeout after retries are exhausted. Returns None only if the 429/5xx
+        retry budget is fully consumed without a non-retryable response.
+        """
+        req_headers = headers if headers is not None else self.default_headers()
+
+        for attempt in range(max_retries):
+            if limiter:
+                limiter.wait()
             try:
-                cache_text(url, resp.text)
-            except Exception:
-                pass
-            return resp
-        except requests.Timeout:
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-                continue
-            raise
-        except requests.ConnectionError:
-            if attempt < max_retries - 1:
-                time.sleep(2 ** attempt)
-                continue
-            raise
-    return None
+                kwargs = self.request_kwargs(headers=req_headers)
+                resp = requests.get(url, timeout=timeout, **kwargs)
+                if resp.status_code == 429:
+                    if attempt >= max_retries - 1:
+                        return None
+                    time.sleep(parse_retry_after(resp.headers.get("Retry-After")))
+                    continue
+                if resp.status_code >= 500 and attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                resp.raise_for_status()
+                try:
+                    self.cache_text(url, resp.text)
+                except Exception:
+                    pass
+                return resp
+            except requests.Timeout:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
+            except requests.ConnectionError:
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
+        return None
+
+    def get_page(self, base_url, timeout=10, limiter=None, headers=None):
+        """Fetch HTML page content. Raises ConnectionError if retries are exhausted."""
+        resp = self.fetch_with_retry(base_url, timeout=timeout, limiter=limiter, headers=headers)
+        if resp is None:
+            raise requests.ConnectionError(f"Failed to fetch {base_url} after retries")
+        return resp.text
+
+
+# Process-wide default client (configured once from CLI flags).
+_client = HttpClient()
+
+
+def configure_http(
+    proxy: Optional[str] = None,
+    insecure: bool = False,
+    user_agent: Optional[str] = None,
+) -> None:
+    """Set process-wide HTTP defaults (proxy, TLS verify, User-Agent)."""
+    _client.configure(proxy=proxy, insecure=insecure, user_agent=user_agent)
+
+
+def reset_http_config() -> None:
+    """Restore defaults (tests)."""
+    _client.reset()
+
+
+def default_headers() -> dict:
+    return _client.default_headers()
+
+
+def request_kwargs(headers: Optional[dict] = None) -> dict:
+    return _client.request_kwargs(headers=headers)
+
+
+def clear_text_cache() -> None:
+    _client.clear_cache()
+
+
+def get_cached_text(url: str) -> Optional[str]:
+    return _client.get_cached_text(url)
+
+
+def cache_text(url: str, text: str) -> None:
+    _client.cache_text(url, text)
+
+
+def fetch_text(url, timeout=10, limiter=None, headers=None) -> Optional[str]:
+    return _client.fetch_text(url, timeout=timeout, limiter=limiter, headers=headers)
+
+
+def fetch_with_retry(url, timeout=10, max_retries=3, limiter=None, headers=None):
+    return _client.fetch_with_retry(
+        url, timeout=timeout, max_retries=max_retries, limiter=limiter, headers=headers
+    )
 
 
 def get_page(base_url, timeout=10, limiter=None, headers=None):
-    """Fetch HTML page content. Raises ConnectionError if retries are exhausted."""
-    resp = fetch_with_retry(base_url, timeout=timeout, limiter=limiter, headers=headers)
-    if resp is None:
-        raise requests.ConnectionError(f"Failed to fetch {base_url} after retries")
-    return resp.text
+    return _client.get_page(base_url, timeout=timeout, limiter=limiter, headers=headers)
