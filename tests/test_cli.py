@@ -184,6 +184,19 @@ class TestExitCodes(unittest.TestCase):
         self.assertEqual(exit_code_for_result(r, "high"), EXIT_FINDINGS)
         self.assertEqual(exit_code_for_result(r, "critical"), EXIT_OK)
 
+    def test_fail_on_counts_findings_feed(self):
+        """--fail-on must see CRITICAL in the findings feed (not just risk/cors/jwt blocks)."""
+        r = {
+            "risk_summary": {"score": 10, "level": "LOW"},
+            "findings": [
+                {"severity": "CRITICAL", "module": "secrets", "title": "AWS key"},
+                {"severity": "MEDIUM", "module": "pii", "title": "email"},
+            ],
+        }
+        self.assertEqual(exit_code_for_result(r, "critical"), EXIT_FINDINGS)
+        self.assertEqual(exit_code_for_result(r, "high"), EXIT_FINDINGS)
+        self.assertEqual(exit_code_for_result(r, "none"), EXIT_OK)
+
     def test_empty_result(self):
         self.assertEqual(exit_code_for_result({}, "high"), EXIT_OK)
         self.assertEqual(exit_code_for_result(None, "high"), EXIT_OK)

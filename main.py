@@ -230,6 +230,11 @@ def _aggregate_severity_counts(result) -> dict:
         for f in a.get("findings") or []:
             _bump(f.get("severity"))
 
+    # Canonical findings feed (secrets, PII, source maps, validation dead, …)
+    # so --fail-on sees every severity the report shows, not just the blocks above.
+    for f in result.get("findings") or []:
+        _bump(f.get("severity"))
+
     return counts
 
 
