@@ -111,8 +111,14 @@ def get_wayback_endpoints(target_domain, limit=50, threads=5, verbose=True):
     with ThreadPoolExecutor(max_workers=threads) as pool:
         futures = {pool.submit(fetch_wayback_js, url): url for url in js_urls}
         for future in as_completed(futures):
-            data = future.result()
+            url = futures[future]
+            try:
+                data = future.result()
+            except Exception as e:
+                results["errors"].append(f"{url}: {e}")
+                continue
             if data is None:
+                results["errors"].append(f"{url}: fetch failed")
                 continue
 
             results["js_files"].append(data["original_url"])

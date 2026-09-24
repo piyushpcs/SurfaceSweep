@@ -355,8 +355,13 @@ def scan_cors(
         with ThreadPoolExecutor(max_workers=max(1, int(threads))) as pool:
             futures = {pool.submit(_scan_one, url): url for url in resolved}
             for future in as_completed(futures):
-                url, results, _baseline = future.result()
-                _ingest(url, results)
+                url = futures[future]
+                try:
+                    scanned_url, results, _baseline = future.result()
+                except Exception:
+                    error_probes += 1
+                    continue
+                _ingest(scanned_url, results)
 
         # --- Trusted-seed second pass -------------------------------------
         seed_origins = []
@@ -387,8 +392,13 @@ def scan_cors(
             with ThreadPoolExecutor(max_workers=max(1, int(threads))) as pool:
                 futures = {pool.submit(_scan_seeds, url): url for url in seed_urls}
                 for future in as_completed(futures):
-                    url, results = future.result()
-                    _ingest(url, results)
+                    url = futures[future]
+                    try:
+                        scanned_url, results = future.result()
+                    except Exception:
+                        error_probes += 1
+                        continue
+                    _ingest(scanned_url, results)
     finally:
         session.close()
 

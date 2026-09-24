@@ -593,7 +593,10 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
             futures = {pool.submit(probe, r): r for r in probe_candidates}
             for future in concurrent.futures.as_completed(futures):
-                result_data = future.result()
+                try:
+                    result_data = future.result()
+                except Exception:
+                    continue
                 if result_data:
                     route, status = result_data
                     if add_route(route, "probe"):

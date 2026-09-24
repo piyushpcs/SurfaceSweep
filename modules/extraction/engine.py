@@ -259,7 +259,14 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         with ThreadPoolExecutor(max_workers=threads) as pool:
             futures = {pool.submit(fetch_and_extract, url, limiter=limiter, use_ast=use_ast): url for url in new_urls}
             for future in as_completed(futures):
-                data = future.result()
+                url = futures[future]
+                try:
+                    data = future.result()
+                except Exception as e:
+                    result["errors"].append(f"{url}: {e}")
+                    if verbose:
+                        print(f"    [!] failed: {url} — {e}")
+                    continue
                 if "error" in data:
                     result["errors"].append(f"{data['source']}: {data['error']}")
                     if verbose:

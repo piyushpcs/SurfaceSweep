@@ -329,7 +329,11 @@ def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True, hea
             for url in resolved
         }
         for future in as_completed(futures):
-            result = future.result()
+            url = futures[future]
+            try:
+                result = future.result()
+            except Exception as e:
+                result = {"url": url, "status": "error", "error": str(e)}
             all_results.append(result)
             status = result.get("status", "unknown")
             if status in results:
