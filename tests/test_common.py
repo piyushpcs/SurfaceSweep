@@ -1,6 +1,7 @@
 """Tier-1 tests for modules.common shared constants."""
 
 import unittest
+from unittest import mock
 
 from modules import __version__ as modules_version
 from modules.common import (
@@ -146,6 +147,20 @@ class TestScanResultSchema(unittest.TestCase):
         src = inspect.getsource(engine.run_extractor)
         self.assertIn("new_scan_result", src)
         self.assertNotIn('"secrets_found": []', src)
+
+    def test_extractor_sets_risk_on_fetch_failure(self):
+        """Failed base URL must still produce risk_summary (HTML/fail-on need it)."""
+        import requests
+        from modules.extraction import engine
+
+        with mock.patch(
+            "modules.extraction.engine.get_page",
+            side_effect=requests.ConnectionError("proxy down"),
+        ):
+            r = engine.run_extractor("http://127.0.0.1:9/", verbose=False)
+        self.assertTrue(any("Failed to fetch" in e for e in r["errors"]))
+        self.assertIn("risk_summary", r)
+        self.assertIn("level", r["risk_summary"])
 
     def test_browser_uses_factory(self):
         import inspect

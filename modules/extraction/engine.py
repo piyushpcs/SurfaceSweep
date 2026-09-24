@@ -280,6 +280,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         html = get_page(base_url, limiter=limiter)
     except requests.RequestException as e:
         result["errors"].append(f"Failed to fetch base URL: {e}")
+        result["risk_summary"] = calculate_risk_summary(result)
         return result
 
     external_js, inline_js = get_js_sources(base_url, html)
