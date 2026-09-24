@@ -424,7 +424,6 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
 
     # ---- Phase 1: Static extraction from JS bundles ----
     if verbose:
-        info(f" --- SPA Route Discovery ---")
         info(f" Phase 1: Static analysis of JS bundles...")
 
     import requests as _requests
