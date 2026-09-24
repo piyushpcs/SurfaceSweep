@@ -8,6 +8,8 @@ import unittest
 
 from modules.extraction.risk import calculate_risk_summary, risk_level_for_score
 from modules.jwt import (
+    _get_with_safe_redirects,
+    _secret_to_bytes,
     analyze_jwt,
     analyze_result_jwts,
     build_crack_candidates,
@@ -19,6 +21,7 @@ from modules.jwt import (
     export_hashcat,
     export_jwt_findings,
     extract_jwts,
+    fetch_jwks_keys,
     forge_hs256_token,
     is_safe_jwt_fetch_url,
     jwt_risk_boost,
@@ -921,6 +924,83 @@ class TestRiskBoostPreservation(unittest.TestCase):
             calculate_risk_summary({}),
             {"score": 0, "level": "INFO"},
         )
+
+
+class TestJwtSsrfAndForgeStep5(unittest.TestCase):
+    """Phase A Step 5: JWKS redirect SSRF guard + bytes HMAC key handling."""
+
+    def test_secret_to_bytes_passes_bytes_through(self):
+        raw = b"\x00\x01secret-material"
+        self.assertIs(_secret_to_bytes(raw), raw)
+        self.assertEqual(_secret_to_bytes(bytearray(b"abc")), b"abc")
+        self.assertEqual(_secret_to_bytes("s3cret"), b"s3cret")
+
+    def test_forge_and_verify_with_bytes_key_material(self):
+        """Regression: str(bytes) would sign with b'...' repr and fail verify."""
+        material = b"raw-public-modulus-bytes-not-a-str"
+        tok = forge_hs256_token({"alg": "HS256"}, {"sub": "admin"}, material)
+        self.assertTrue(verify_hs_signature(tok, material))
+        # PEM-as-str path still works
+        tok2 = forge_hs256_token({"alg": "HS256"}, {"sub": "admin"}, "pem-string")
+        self.assertTrue(verify_hs_signature(tok2, "pem-string"))
+        # Mismatched keys fail
+        self.assertFalse(verify_hs_signature(tok, material + b"!"))
+        self.assertFalse(verify_hs_signature(tok, material.decode("latin-1") + "x"))
+
+    def test_str_bytes_regression_would_have_failed(self):
+        """Prove old str(secret).encode path differs from raw-bytes path."""
+        material = b"raw-key-bytes"
+        wrong = str(material).encode("utf-8")  # b"b'raw-key-bytes'"
+        self.assertNotEqual(material, wrong)
+        tok = forge_hs256_token({"alg": "HS256"}, {"sub": "x"}, material)
+        # Correct path verifies
+        self.assertTrue(verify_hs_signature(tok, material))
+        # Old-style wrong path must not verify
+        self.assertFalse(verify_hs_signature(tok, wrong))
+
+    def test_analyze_persists_forged_token(self):
+        pem = rsa_jwk_to_pem(TestKeyConfusionStep6._JWK_RSA)
+        a = analyze_jwt(JWT_RS256_NO_EXP, source="t", key_materials=[pem])
+        self.assertIsNotNone(a.get("forged_token"))
+        confusion = next(
+            f for f in a["findings"] if f["issue"] == "rs256_hs256_confusion"
+        )
+        self.assertIn("forged_token", confusion)
+        # Forged token is a decodable HS256 JWT with same payload
+        d = decode_jwt(confusion["forged_token"])
+        self.assertEqual(d["alg"], "HS256")
+        self.assertEqual(d["payload"]["sub"], "test")
+        # Top-level field matches finding field
+        self.assertEqual(a["forged_token"], confusion["forged_token"])
+
+    def test_analyze_without_material_has_no_forged_token(self):
+        a = analyze_jwt(JWT_RS256_NO_EXP, source="t")
+        self.assertIsNone(a.get("forged_token"))
+
+    def test_none_alg_has_no_forged_token(self):
+        a = analyze_jwt(JWT_NONE, source="t")
+        self.assertIsNone(a.get("forged_token"))
+
+    def test_fetch_jwks_rejects_unsafe_without_network(self):
+        self.assertEqual(fetch_jwks_keys("http://127.0.0.1/jwks"), [])
+        self.assertEqual(fetch_jwks_keys("file:///etc/passwd"), [])
+        self.assertEqual(fetch_jwks_keys("http://169.254.169.254/"), [])
+
+    def test_safe_redirect_helper_rejects_private_hop(self):
+        """Redirect target that fails SSRF guard must not be fetched."""
+        # Simulate: initial public URL is fine, but helper re-validates each hop.
+        # Direct call with private URL returns None without any network I/O
+        # beyond DNS for localhost (fails guard immediately).
+        self.assertIsNone(_get_with_safe_redirects("http://127.0.0.1/jwks", timeout=0.5))
+        self.assertIsNone(_get_with_safe_redirects("file:///etc/passwd", timeout=0.5))
+        self.assertIsNone(_get_with_safe_redirects("not-a-url", timeout=0.5))
+
+    def test_helper_source_has_allow_redirects_false(self):
+        import inspect
+        from modules.jwt import keys
+        src = inspect.getsource(keys._get_with_safe_redirects)
+        self.assertIn("allow_redirects=False", src)
+        self.assertIn("is_safe_jwt_fetch_url(current)", src)
 
 
 if __name__ == "__main__":

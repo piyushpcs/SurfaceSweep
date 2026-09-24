@@ -129,6 +129,7 @@ def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None,
     alg_l = alg.lower()
     kid = header.get("kid")
     cracked = None
+    forged_token = None
 
     # --- Algorithm issues ---
     if alg_l in ("none", ""):
@@ -175,10 +176,13 @@ def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None,
                 uniq.append(m)
         forged, used = try_key_confusion(decoded, uniq)
         if forged is not None:
-            used_desc = (
-                used if isinstance(used, str) and len(used) <= 60
-                else (f"<{type(used).__name__}, {len(used)} bytes>" if not isinstance(used, str) else used[:60] + "…")
-            )
+            forged_token = forged
+            if isinstance(used, bytes):
+                used_desc = f"<bytes, {len(used)}>"
+            elif isinstance(used, str) and len(used) <= 60:
+                used_desc = used
+            else:
+                used_desc = str(used)[:60] + "…" if used is not None else "?"
             findings.append({
                 "severity": "CRITICAL",
                 "issue": "rs256_hs256_confusion",
@@ -187,6 +191,7 @@ def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None,
                     f"using public key material ({used_desc}) — server may accept "
                     "if it does not pin the algorithm"
                 ),
+                "forged_token": forged,
             })
     elif alg:
         findings.append({
@@ -374,6 +379,7 @@ def analyze_jwt(token, source="unknown", candidate_secrets=None, now=None,
         "findings": findings,
         "severity": top,
         "cracked_secret": cracked,
+        "forged_token": forged_token,
     }
 
 

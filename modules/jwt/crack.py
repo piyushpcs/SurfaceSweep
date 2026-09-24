@@ -110,6 +110,19 @@ def export_hashcat(tokens, path):
     return written
 
 
+def _secret_to_bytes(secret):
+    """Normalize an HMAC key to raw bytes (str encodes utf-8; bytes pass through).
+
+    Regression guard: `str(b"raw")` would produce "b'raw'" and forge/verify
+    with the wrong key whenever key material is raw bytes (embedded jwk n).
+    """
+    if isinstance(secret, bytes):
+        return secret
+    if isinstance(secret, bytearray):
+        return bytes(secret)
+    return str(secret).encode("utf-8")
+
+
 def verify_hs_signature(token, secret):
     """Constant-time HMAC verify for HS256/384/512. Returns bool or None if unsupported."""
     decoded = decode_jwt(token)
@@ -125,7 +138,7 @@ def verify_hs_signature(token, secret):
     signing_input = f"{parts[0]}.{parts[1]}".encode("ascii")
     try:
         expected = hmac.new(
-            str(secret).encode("utf-8"), signing_input, hashes[alg]
+            _secret_to_bytes(secret), signing_input, hashes[alg]
         ).digest()
         actual = b64url_decode(parts[2])
     except Exception:
@@ -138,7 +151,7 @@ def forge_hs256_token(header, payload, secret):
     h = b64url_encode(json.dumps(header, separators=(",", ":")).encode("utf-8"))
     p = b64url_encode(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
     sig = hmac.new(
-        str(secret).encode("utf-8"), f"{h}.{p}".encode("ascii"), hashlib.sha256
+        _secret_to_bytes(secret), f"{h}.{p}".encode("ascii"), hashlib.sha256
     ).digest()
     return f"{h}.{p}.{b64url_encode(sig)}"
 

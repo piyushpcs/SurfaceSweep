@@ -20,6 +20,7 @@ from modules.jwt.checks import (
 )
 from modules.jwt.crack import (
     WEAK_SECRETS,
+    _secret_to_bytes,
     build_crack_candidates,
     collect_candidate_secrets,
     export_hashcat,
@@ -41,6 +42,7 @@ from modules.jwt.keys import (
     fetch_jwks_keys,
     is_safe_jwt_fetch_url,
     rsa_jwk_to_pem,
+    _get_with_safe_redirects,
 )
 from modules.jwt.scanner import (
     analyze_result_jwts,
@@ -81,4 +83,6 @@ __all__ = [
     "try_key_confusion",
     "verify_hs_signature",
     "WEAK_SECRETS",
+    "_secret_to_bytes",
+    "_get_with_safe_redirects",
 ]

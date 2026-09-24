@@ -101,21 +101,60 @@ def collect_embedded_key_materials(header):
     return materials
 
 
+def _get_with_safe_redirects(url, timeout=5.0, max_redirects=3):
+    """
+    GET with redirects re-validated against the SSRF guard on every hop.
+    Returns a requests.Response or None. Never follows a redirect to an
+    unsafe host (initial URL validation alone is bypassable via 302).
+    """
+    try:
+        import requests
+    except ImportError:
+        return None
+
+    current = url
+    for _ in range(max_redirects + 1):
+        if not is_safe_jwt_fetch_url(current):
+            return None
+        try:
+            resp = requests.get(
+                current,
+                timeout=timeout,
+                allow_redirects=False,
+                headers={"User-Agent": "SurfaceSweep/1.0"},
+            )
+        except Exception:
+            return None
+        if resp.status_code in (301, 302, 303, 307, 308):
+            location = resp.headers.get("Location")
+            if not location:
+                return None
+            try:
+                from urllib.parse import urljoin
+                current = urljoin(current, location)
+            except ValueError:
+                return None
+            continue
+        try:
+            resp.raise_for_status()
+        except Exception:
+            return None
+        return resp
+    return None  # too many redirects
+
+
 def fetch_jwks_keys(url, timeout=5.0):
     """
     Fetch a JWKS document (network — behind --jwt-network).
-    Returns list of PEM strings for RSA keys. SSRF-guarded; empty on any failure.
+    Returns list of PEM strings for RSA keys. SSRF-guarded on every
+    redirect hop; empty on any failure.
     """
     if not is_safe_jwt_fetch_url(url):
         return []
+    resp = _get_with_safe_redirects(url, timeout=timeout)
+    if resp is None:
+        return []
     try:
-        import requests
-        resp = requests.get(
-            url,
-            timeout=timeout,
-            headers={"User-Agent": "SurfaceSweep/1.0"},
-        )
-        resp.raise_for_status()
         data = resp.json()
     except Exception:
         return []
