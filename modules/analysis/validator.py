@@ -2,7 +2,8 @@
 Endpoint validator for SurfaceSweep.
 
 Confirms discovered endpoints are live by making HTTP requests.
-Filters out false positives (404s, soft-404s, redirects to homepage).
+Filters out false positives (404s, soft-404s, SPA index shells, JSON
+fail-in-200 bodies, redirects to homepage).
 
 Status classification:
 - 200: LIVE
@@ -15,6 +16,7 @@ Status classification:
 - 5xx: SERVER_ERROR (exists but broken)
 """
 
+import json
 import requests
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -37,6 +39,52 @@ SOFT_404_SIGNATURES = [
     "does not exist",
     "sorry, the page you visited does not exist",
 ]
+
+# API-ish path markers — used to decide when HTML is a false SPA shell hit
+API_PATH_HINTS = (
+    "/api/", "/api", "/v1/", "/v2/", "/v3/", "/graphql", "/rest/",
+    "/auth/", "/oauth/", "/rpc/", "/json/", "/gql/",
+)
+
+# Client-side app mount points (index.html served for unknown API routes)
+SPA_SHELL_SIGNATURES = (
+    'id="root"',
+    "id='root'",
+    'id="__next"',
+    "id='__next'",
+    'id="app"',
+    "id='app'",
+    "data-reactroot",
+    "ng-version",
+    "__NUXT__",
+    "window.__NEXT_DATA__",
+)
+
+JSON_NOT_FOUND_SIGS = (
+    "not found", "not_found", "notfound", "does not exist",
+    "no route", "no routes", "unknown endpoint", "unknown route",
+    "cannot find", "no such ", "endpoint not", "path not found",
+)
+
+JSON_AUTH_SIGS = (
+    "unauthorized", "unauthenticated", "forbidden",
+    "authentication required", "login required", "not authenticated",
+    "invalid token", "token expired", "access denied",
+)
+
+
+def looks_like_api_path(url):
+    """True when the path looks like an API endpoint (not a marketing page)."""
+    if not url:
+        return False
+    if "://" in url or url.startswith("//"):
+        try:
+            path = urlparse(url).path.lower()
+        except ValueError:
+            path = url.lower()
+    else:
+        path = url.split("?")[0].split("#")[0].lower()
+    return any(hint in path for hint in API_PATH_HINTS)
 
 
 def classify_status(status_code):
@@ -82,6 +130,107 @@ def is_soft_404(response, original_url):
     return False
 
 
+def is_spa_shell(response, original_url):
+    """
+    200 + HTML app shell on an API-like path (client router fallback).
+    The HTML index is not evidence the API route exists.
+    """
+    try:
+        if not looks_like_api_path(original_url):
+            return False
+        content_type = response.headers.get("Content-Type", "")
+        if "text/html" not in content_type:
+            return False
+        body = (response.text or "")[:8000]
+        body_l = body.lower()
+        return any(sig.lower() in body_l for sig in SPA_SHELL_SIGNATURES)
+    except Exception:
+        return False
+
+
+def _truthy_error_value(value):
+    """Error field is meaningful only when non-empty (null/[]/{} are success)."""
+    if value is None or value is False or value == 0:
+        return False
+    if value == "" or value == [] or value == {}:
+        return False
+    return True
+
+
+def _json_body_failure(response):
+    """
+    Inspect a 200 body for application-level failure encoded in JSON.
+    Returns 'not_found' | 'auth' | 'error' | None.
+    """
+    try:
+        text = (response.text or "").strip()
+        if not text:
+            return None
+        content_type = response.headers.get("Content-Type", "")
+        looks_json_ct = "json" in content_type.lower()
+        if not looks_json_ct and not text[:1] in ("{", "["):
+            return None
+        if len(text) > 200_000:
+            return None
+        data = json.loads(text)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+
+    # Collect error-ish signals as lowercase strings for keyword search
+    signals = []
+    for key in ("error", "errors", "err", "message", "detail", "description"):
+        if key in data and _truthy_error_value(data[key]):
+            val = data[key]
+            if isinstance(val, dict):
+                signals.extend(str(v).lower() for v in val.values() if v)
+            elif isinstance(val, list):
+                signals.extend(str(v).lower() for v in val if v)
+            else:
+                signals.append(str(val).lower())
+
+    for key in ("success", "ok"):
+        if key in data and data[key] in (False, 0, "false", "no"):
+            if not signals:
+                signals.append("success false")
+
+    status_val = data.get("status") or data.get("state") or data.get("code")
+    if isinstance(status_val, str) and status_val.lower() in (
+        "error", "fail", "failed", "failure", "not_found", "notfound",
+    ):
+        signals.append(status_val.lower())
+
+    if not signals:
+        return None
+    blob = " | ".join(signals)
+    if any(sig in blob for sig in JSON_NOT_FOUND_SIGS):
+        return "not_found"
+    if any(sig in blob for sig in JSON_AUTH_SIGS):
+        return "auth"
+    return "error"
+
+
+def classify_200_body(response, original_url):
+    """
+    Refine a raw-200 classification using body content.
+    Returns (status, note) where status is live|restricted|dead and
+    note is None | soft_404 | spa_shell | json_not_found | json_auth | json_error.
+    """
+    if is_spa_shell(response, original_url):
+        return "dead", "spa_shell"
+    failure = _json_body_failure(response)
+    if failure == "not_found":
+        return "dead", "json_not_found"
+    if failure == "auth":
+        return "restricted", "json_auth"
+    if is_soft_404(response, original_url):
+        return "dead", "soft_404"
+    if failure == "error":
+        return "live", "json_error"
+    return "live", None
+
+
 def validate_endpoint(url, method="GET", timeout=10, allow_redirects=False, headers=None):
     """
     Validate a single endpoint. Returns dict with validation details.
@@ -99,10 +248,9 @@ def validate_endpoint(url, method="GET", timeout=10, allow_redirects=False, head
         )
 
         status = classify_status(resp.status_code)
-        soft_404 = is_soft_404(resp, url) if resp.status_code == 200 else False
-
-        if soft_404:
-            status = "dead"
+        note = None
+        if resp.status_code == 200:
+            status, note = classify_200_body(resp, url)
 
         result = {
             "url": url,
@@ -112,6 +260,8 @@ def validate_endpoint(url, method="GET", timeout=10, allow_redirects=False, head
             "content_type": resp.headers.get("Content-Type", ""),
             "method": method
         }
+        if note:
+            result["note"] = note
 
         if resp.history:
             result["redirect_chain"] = [
