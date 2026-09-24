@@ -54,6 +54,20 @@ LIBRARY_PATTERNS = {
     ],
     "axios": [
         re.compile(r'axios\s+v([0-9]+\.[0-9]+\.[0-9]+)', re.IGNORECASE),
+        re.compile(r'axios\.VERSION\s*=\s*["\']([0-9]+\.[0-9]+\.[0-9]+)["\']', re.IGNORECASE),
+    ],
+    "jQuery UI": [
+        re.compile(r'jQuery UI\s+v([0-9]+\.[0-9]+\.[0-9]+)', re.IGNORECASE),
+        re.compile(r'jQuery UI\s+([0-9]+\.[0-9]+\.[0-9]+)', re.IGNORECASE),
+        re.compile(r'jqueryUi\.version\s*=\s*["\']([0-9]+\.[0-9]+\.[0-9]+)["\']', re.IGNORECASE),
+    ],
+    "DOMPurify": [
+        re.compile(r'DOMPurify(?:\.version)?\s*=\s*["\']([0-9]+\.[0-9]+\.[0-9]+)["\']'),
+        re.compile(
+            r'DOMPurify\s*=\s*\{[^}]*version\s*[:=]\s*["\']([0-9]+\.[0-9]+\.[0-9]+)["\']',
+            re.DOTALL,
+        ),
+        re.compile(r'DOMPurify\s+v([0-9]+\.[0-9]+\.[0-9]+)', re.IGNORECASE),
     ],
     "FancyBox": [
         re.compile(r'fancy[Bb]ox\s+v([0-9]+\.[0-9]+\.[0-9]+)', re.IGNORECASE),
@@ -67,12 +81,14 @@ LIBRARY_PATTERNS = {
 
 FILENAME_PATTERNS = {
     "jQuery": re.compile(r'(?:^|/)jquery[-.](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
+    "jQuery UI": re.compile(r'(?:^|/)jquery-ui[-.](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
     "Bootstrap": re.compile(r'(?:^|/)bootstrap[.-](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
     "Lodash": re.compile(r'(?:^|/)lodash[.-](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
     "Underscore.js": re.compile(r'(?:^|/)underscore[.-](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
     "moment.js": re.compile(r'(?:^|/)moment[.-](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
     "Handlebars": re.compile(r'(?:^|/)handlebars[.-](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
     "axios": re.compile(r'(?:^|/)axios[.-](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
+    "DOMPurify": re.compile(r'(?:^|/)(?:dompurify|purify)[.-](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
     "Vue.js": re.compile(r'(?:^|/)vue[.-](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
     "React": re.compile(r'(?:^|/)react(?:-dom)?[.-](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
     "FancyBox": re.compile(r'(?:^|/)fancybox[.-](\d+\.\d+\.\d+)(?:\.min)?\.js', re.IGNORECASE),
@@ -82,7 +98,9 @@ FILENAME_PATTERNS = {
 # CDN path patterns: /ajax/libs/jquery/1.10.2/jquery.min.js
 CDN_PATTERNS = {
     "jQuery": re.compile(r'ajax\.googleapis\.com/ajax/libs/jquery/(\d+\.\d+\.\d+)/', re.IGNORECASE),
+    "jQuery UI": re.compile(r'ajax\.googleapis\.com/ajax/libs/jqueryui/(\d+\.\d+\.\d+)/', re.IGNORECASE),
     "Bootstrap": re.compile(r'ajax\.googleapis\.com/ajax/libs/twitter-bootstrap/(\d+\.\d+\.\d+)/', re.IGNORECASE),
+    "DOMPurify": re.compile(r'cdnjs\.cloudflare\.com/ajax/libs/dompurify/(\d+\.\d+\.\d+)/', re.IGNORECASE),
 }
 
 
@@ -198,6 +216,62 @@ VULNERABILITIES = [
         "description": "SSRF: path-relative URLs treated as protocol-relative",
         "fixed_in": "1.7.4",
         "vulnerable_from": "1.3.2",
+    },
+    {
+        "library": "axios",
+        # CVE-2025-27152: absolute URLs bypass baseURL (SSRF / credential leakage).
+        "vulnerable_ranges": [
+            {"from": "1.0.0", "below": "1.8.2"},
+        ],
+        "cves": ["CVE-2025-27152"],
+        "severity": "HIGH",
+        "cvss": 7.5,
+        "description": "SSRF / credential leakage: absolute URLs ignore baseURL (allowAbsoluteUrls)",
+        "fixed_in": "1.8.2",
+    },
+    {
+        "library": "jQuery UI",
+        "vulnerable_below": "1.12.0",
+        "cves": ["CVE-2016-7103"],
+        "severity": "MEDIUM",
+        "cvss": 6.1,
+        "description": "XSS via closeText parameter of the dialog function",
+        "fixed_in": "1.12.0",
+    },
+    {
+        "library": "jQuery UI",
+        "vulnerable_below": "1.13.0",
+        "cves": ["CVE-2021-41182", "CVE-2021-41183"],
+        "severity": "MEDIUM",
+        "cvss": 6.5,
+        "description": "XSS / code execution via Datepicker altField and jQuery.extend mass assignment",
+        "fixed_in": "1.13.0",
+    },
+    {
+        "library": "DOMPurify",
+        # CVE-2024-47875 fixed in 2.5.0 / 3.1.3; CVE-2024-45801 fixed in 2.5.4 / 3.1.3.
+        # Conservative union: flag 2.x < 2.5.4 and 3.0.x < 3.1.3.
+        "vulnerable_ranges": [
+            {"from": "0", "below": "2.5.4"},
+            {"from": "3.0.0", "below": "3.1.3"},
+        ],
+        "cves": ["CVE-2024-45801", "CVE-2024-47875"],
+        "severity": "HIGH",
+        "cvss": 7.3,
+        "description": "mXSS: nesting / depth-check bypass weakens HTML sanitization",
+        "fixed_in": "2.5.4 / 3.1.3",
+    },
+    {
+        "library": "Bootstrap",
+        # CVE-2024-6531: XSS in carousel when HTML is read from data attributes.
+        "vulnerable_ranges": [
+            {"from": "5.0.0", "below": "5.3.3"},
+        ],
+        "cves": ["CVE-2024-6531"],
+        "severity": "MEDIUM",
+        "cvss": 6.1,
+        "description": "XSS via carousel data-html attribute when unsanitized",
+        "fixed_in": "5.3.3",
     },
     {
         "library": "FancyBox",
@@ -408,12 +482,14 @@ def query_osv(libraries, timeout=10):
         # Map our library names to npm package names
         npm_name = {
             "jQuery": "jquery",
+            "jQuery UI": "jquery-ui",
             "Bootstrap": "bootstrap",
             "Lodash": "lodash",
             "Underscore.js": "underscore",
             "moment.js": "moment",
             "Handlebars": "handlebars",
             "axios": "axios",
+            "DOMPurify": "dompurify",
             "Vue.js": "vue",
             "React": "react",
             "AngularJS": "angular",

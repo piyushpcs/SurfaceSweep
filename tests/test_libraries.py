@@ -94,7 +94,7 @@ class TestCheckVulnerabilities(unittest.TestCase):
         self.assertEqual(findings, [])
 
     def test_bootstrap_fixed_versions_not_flagged(self):
-        for ver in ("3.4.1", "4.3.1", "5.3.0"):
+        for ver in ("3.4.1", "4.3.1", "5.3.3"):
             findings = check_vulnerabilities([
                 {"library": "Bootstrap", "version": ver, "file": "b.js"},
             ])
@@ -149,6 +149,91 @@ class TestCheckVulnerabilities(unittest.TestCase):
         src = inspect.getsource(libraries)
         self.assertNotIn("also_affects", src)
         self.assertNotIn('v < "3.4.1"', src)
+
+
+class TestModernLibraryCoverage(unittest.TestCase):
+    """Phase C5 — DOMPurify / jQuery UI / axios / Bootstrap detectors + CVEs."""
+
+    def test_dompurify_content_banner(self):
+        content = 'var DOMPurify = { version: "2.4.1" };'
+        libs = detect_libraries_from_content(content, "https://x.test/app.js")
+        dp = next(l for l in libs if l["library"] == "DOMPurify")
+        self.assertEqual(dp["version"], "2.4.1")
+
+    def test_dompurify_filename(self):
+        libs = detect_libraries_from_content("", "/static/purify-3.1.0.min.js")
+        dp = next(l for l in libs if l["library"] == "DOMPurify")
+        self.assertEqual(dp["version"], "3.1.0")
+        self.assertEqual(dp["source"], "filename")
+
+    def test_dompurify_vulnerable_ranges(self):
+        for ver, vulnerable in (("2.4.1", True), ("2.5.3", True), ("2.5.4", False),
+                                ("3.1.0", True), ("3.1.3", False), ("3.2.0", False)):
+            findings = check_vulnerabilities([
+                {"library": "DOMPurify", "version": ver, "file": "dp.js"},
+            ])
+            if vulnerable:
+                self.assertTrue(findings, f"DOMPurify {ver} should be flagged")
+                self.assertIn("CVE-2024-45801", findings[0]["cves"])
+            else:
+                self.assertEqual(findings, [], f"DOMPurify {ver} should not be flagged")
+
+    def test_jquery_ui_filename_and_content(self):
+        libs = detect_libraries_from_content("", "https://cdn.test/jquery-ui-1.12.1.min.js")
+        ui = next(l for l in libs if l["library"] == "jQuery UI")
+        self.assertEqual(ui["version"], "1.12.1")
+
+        content = "/*! jQuery UI v1.11.4 */"
+        libs = detect_libraries_from_content(content, "https://x.test/bundle.js")
+        ui = next(l for l in libs if l["library"] == "jQuery UI")
+        self.assertEqual(ui["version"], "1.11.4")
+
+    def test_jquery_ui_vulnerable_and_fixed(self):
+        old = check_vulnerabilities([
+            {"library": "jQuery UI", "version": "1.11.4", "file": "ui.js"},
+        ])
+        self.assertTrue(old)
+        cves = set(old[0]["cves"])
+        self.assertIn("CVE-2016-7103", cves)
+        self.assertIn("CVE-2021-41182", cves)
+
+        mid = check_vulnerabilities([
+            {"library": "jQuery UI", "version": "1.12.1", "file": "ui.js"},
+        ])
+        self.assertTrue(mid)
+        cves = set(mid[0]["cves"])
+        self.assertNotIn("CVE-2016-7103", cves)
+        self.assertIn("CVE-2021-41182", cves)
+
+        fixed = check_vulnerabilities([
+            {"library": "jQuery UI", "version": "1.13.2", "file": "ui.js"},
+        ])
+        self.assertEqual(fixed, [])
+
+    def test_axios_cve_2025_27152(self):
+        findings = check_vulnerabilities([
+            {"library": "axios", "version": "1.7.9", "file": "a.js"},
+        ])
+        self.assertTrue(findings)
+        cves = set(findings[0]["cves"])
+        self.assertIn("CVE-2025-27152", cves)
+
+        fixed = check_vulnerabilities([
+            {"library": "axios", "version": "1.8.2", "file": "a.js"},
+        ])
+        self.assertEqual(fixed, [])
+
+    def test_bootstrap_5_carousel_cve(self):
+        findings = check_vulnerabilities([
+            {"library": "Bootstrap", "version": "5.3.2", "file": "b.js"},
+        ])
+        self.assertTrue(findings)
+        self.assertIn("CVE-2024-6531", findings[0]["cves"])
+
+        fixed = check_vulnerabilities([
+            {"library": "Bootstrap", "version": "5.3.3", "file": "b.js"},
+        ])
+        self.assertEqual(fixed, [])
 
 
 if __name__ == "__main__":
