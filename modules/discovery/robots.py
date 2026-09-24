@@ -143,6 +143,10 @@ def discover_robots_and_sitemap(
     urls: List[str] = []
     seen_paths = set()
     seen_urls = set()
+    # Wall-clock budget: fetch_with_retry multiplies slow hosts (connect+read
+    # per attempt × 3 attempts), and sitemap indexes stack more fetches.
+    import time as _time
+    deadline = _time.monotonic() + max(10.0, float(timeout) * 2.0)
 
     def _add_path(path: Optional[str]) -> None:
         if path and path not in seen_paths:
@@ -171,6 +175,10 @@ def discover_robots_and_sitemap(
 
     fetched_sitemaps = set()
     for sm_url in sitemaps[:_MAX_SITEMAPS]:
+        if _time.monotonic() > deadline:
+            if verbose:
+                detail("[!] robots/sitemap budget exhausted — skipping remaining maps")
+            break
         if sm_url in fetched_sitemaps:
             continue
         fetched_sitemaps.add(sm_url)
@@ -185,6 +193,8 @@ def discover_robots_and_sitemap(
             and urlparse(u).netloc.lower() == netloc.lower()
         ]
         for nested_url in nested[:_MAX_SITEMAPS]:
+            if _time.monotonic() > deadline:
+                break
             if nested_url in fetched_sitemaps:
                 continue
             fetched_sitemaps.add(nested_url)
