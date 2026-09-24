@@ -45,6 +45,8 @@ def output_paths(output: str) -> Dict[str, str]:
         "burp": f"{base}_burp.csv",
         "zap": f"{base}_zap.csv",
         "cors_poc": f"{base}_cors_poc.html",
+        "sarif": f"{base}.sarif",
+        "diff": f"{base}_diff.json",
     }
 
 
@@ -64,6 +66,7 @@ def write_reports(
     write_burp: bool = False,
     write_zap: bool = False,
     write_cors_poc: bool = False,
+    write_sarif: bool = False,
     verbose: bool = True,
 ) -> Dict[str, Optional[str]]:
     """
@@ -72,16 +75,17 @@ def write_reports(
     Args:
         result: full scan result dict (schema_version/meta/findings when finalized)
         output: primary JSON path (siblings derived from it)
-        write_json / write_html / write_burp / write_zap / write_cors_poc: toggles
+        write_json / write_html / write_burp / write_zap / write_cors_poc /
+        write_sarif: toggles
         verbose: print save confirmations (writers already print when they succeed)
 
     Returns:
-        {"json", "html", "burp", "zap", "cors_poc"} → path or None
+        {"json", "html", "burp", "zap", "cors_poc", "sarif"} → path or None
     """
     paths = output_paths(output)
     written: Dict[str, Optional[str]] = {
         "json": None, "html": None, "burp": None, "zap": None,
-        "cors_poc": None,
+        "cors_poc": None, "sarif": None,
     }
 
     if write_json:
@@ -113,6 +117,13 @@ def write_reports(
             if verbose:
                 ok(f" CORS PoC HTML saved: {poc_path}")
 
+    if write_sarif:
+        from modules.reporting.sarif import export_sarif
+
+        ensure_parent_dir(paths["sarif"])
+        if export_sarif(result, paths["sarif"]):
+            written["sarif"] = paths["sarif"]
+
     return written
 
 
@@ -126,4 +137,5 @@ def build_report_plan(args) -> Dict[str, bool]:
         "write_burp": bool(getattr(args, "burp", False)),
         "write_zap": bool(getattr(args, "zap", False)),
         "write_cors_poc": bool(getattr(args, "cors_poc", False)),
+        "write_sarif": bool(getattr(args, "sarif", False)),
     }

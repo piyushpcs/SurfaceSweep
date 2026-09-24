@@ -65,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="BASELINE",
         help="Compare this scan against a baseline JSON and write a diff report",
     )
+    parser.add_argument(
+        "--sarif",
+        action="store_true",
+        help="Export findings as SARIF 2.1.0 (GitHub code scanning)",
+    )
     parser.add_argument("--no-deobf", action="store_true", help="Skip JS deobfuscation")
     parser.add_argument("--regex-only", action="store_true", help="Disable AST extraction, use regex only")
     parser.add_argument("--cors", action="store_true", help="Scan discovered endpoints for CORS misconfigurations")
