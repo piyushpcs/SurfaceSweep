@@ -5,6 +5,7 @@ import sys
 import os
 import unittest
 from argparse import Namespace
+from unittest import mock
 
 from main import (
     EXIT_ERROR,
@@ -17,8 +18,12 @@ from main import (
 from modules import __version__
 from modules.extraction.http import (
     DEFAULT_USER_AGENT,
+    cache_text,
+    clear_text_cache,
     configure_http,
     default_headers,
+    fetch_text,
+    get_cached_text,
     request_kwargs,
     reset_http_config,
 )
@@ -230,6 +235,89 @@ class TestNoDeobfThreading(unittest.TestCase):
         self.assertIs(sig.parameters["deobfuscate_content"].default, True)
         self.assertIn("user_agent", sig.parameters)
         self.assertIn("proxy", sig.parameters)
+
+
+class TestContentCache(unittest.TestCase):
+    def setUp(self):
+        clear_text_cache()
+
+    def tearDown(self):
+        clear_text_cache()
+
+    def test_cache_put_get(self):
+        cache_text("https://x.test/a.js", "var a=1;")
+        self.assertEqual(get_cached_text("https://x.test/a.js"), "var a=1;")
+        self.assertIsNone(get_cached_text("https://x.test/missing.js"))
+
+    def test_fetch_text_uses_cache_without_network(self):
+        cache_text("https://x.test/cached.js", "console.log(1)")
+        with mock.patch("modules.extraction.http.fetch_with_retry") as fr:
+            out = fetch_text("https://x.test/cached.js")
+            fr.assert_not_called()
+        self.assertEqual(out, "console.log(1)")
+
+    def test_fetch_text_miss_calls_fetch_and_caches(self):
+        resp = mock.Mock()
+        resp.text = "fetched-body"
+        with mock.patch(
+            "modules.extraction.http.fetch_with_retry", return_value=resp
+        ) as fr:
+            out = fetch_text("https://x.test/miss.js")
+            fr.assert_called_once()
+        self.assertEqual(out, "fetched-body")
+        self.assertEqual(get_cached_text("https://x.test/miss.js"), "fetched-body")
+
+    def test_fetch_text_none_on_budget_exhaustion(self):
+        with mock.patch("modules.extraction.http.fetch_with_retry", return_value=None):
+            self.assertIsNone(fetch_text("https://x.test/fail.js"))
+        self.assertIsNone(get_cached_text("https://x.test/fail.js"))
+
+    def test_fifo_eviction(self):
+        from modules.extraction.http import _TEXT_CACHE, _TEXT_CACHE_MAX
+        clear_text_cache()
+        # Fill to max
+        for i in range(_TEXT_CACHE_MAX):
+            cache_text(f"https://x.test/{i}.js", str(i))
+        self.assertEqual(len(_TEXT_CACHE), _TEXT_CACHE_MAX)
+        cache_text("https://x.test/new.js", "new")
+        self.assertEqual(len(_TEXT_CACHE), _TEXT_CACHE_MAX)
+        self.assertEqual(get_cached_text("https://x.test/new.js"), "new")
+        self.assertIsNone(get_cached_text("https://x.test/0.js"))
+
+    def test_reset_clears_cache(self):
+        cache_text("https://x.test/z.js", "z")
+        reset_http_config()
+        self.assertIsNone(get_cached_text("https://x.test/z.js"))
+
+    def test_stage_cve_uses_cache(self):
+        """CVE stage must not re-fetch when content is already cached."""
+        from modules.pipeline import stages as stages_mod
+        from modules.pipeline.context import ScanContext
+
+        cache_text("https://example.com/app.js", "/*! jQuery v3.4.1 */")
+        args = Namespace(
+            target="https://example.com", cve=True, osv=False, quiet=True,
+        )
+        ctx = ScanContext(args, verbose=False)
+        ctx.result = {
+            "js_files_scanned": ["https://example.com/app.js"],
+            "risk_summary": {"score": 0, "level": "INFO"},
+        }
+        with mock.patch.object(stages_mod, "scan_for_libraries") as sfl, \
+             mock.patch("modules.extraction.http.fetch_with_retry") as fr:
+            sfl.return_value = {
+                "libraries": [],
+                "vulnerabilities": [],
+                "osv_results": [],
+            }
+            stages_mod.stage_cve(ctx)
+            fr.assert_not_called()
+            # content_map passed to scan_for_libraries includes cached body
+            _, kwargs = sfl.call_args
+            self.assertEqual(
+                kwargs["content_map"]["https://example.com/app.js"],
+                "/*! jQuery v3.4.1 */",
+            )
 
 
 if __name__ == "__main__":

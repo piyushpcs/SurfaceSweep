@@ -9,7 +9,7 @@ import argparse
 import sys
 
 from modules import __version__
-from modules.extraction.http import configure_http
+from modules.extraction.http import clear_text_cache, configure_http
 from modules.pipeline import run_pipeline
 
 # Exit codes for scripting/CI:
@@ -100,19 +100,59 @@ def build_headers(args: argparse.Namespace) -> dict:
     return headers
 
 
+def _aggregate_severity_counts(result) -> dict:
+    """
+    Collect severity counts from every findings surface on the result.
+
+    risk_summary itself is score-only; CORS/JWT store severity_counts, and
+    library vulnerabilities / sinks carry per-item severity.
+    """
+    counts: dict = {}
+
+    def _bump(sev, n=1):
+        if not sev:
+            return
+        key = str(sev).upper()
+        counts[key] = counts.get(key, 0) + n
+
+    if not isinstance(result, dict):
+        return counts
+
+    rs = result.get("risk_summary") or {}
+    for sev, n in (rs.get("severity_counts") or {}).items():
+        _bump(sev, int(n or 0))
+
+    for key in ("cors", "jwt"):
+        block = result.get(key) or {}
+        for sev, n in (block.get("severity_counts") or {}).items():
+            _bump(sev, int(n or 0))
+
+    for v in result.get("library_vulnerabilities") or []:
+        _bump(v.get("severity"))
+
+    for s in result.get("sinks_found") or []:
+        _bump(s.get("severity"))
+
+    for a in (result.get("jwt") or {}).get("findings") or []:
+        for f in a.get("findings") or []:
+            _bump(f.get("severity"))
+
+    return counts
+
+
 def exit_code_for_result(result, fail_on: str) -> int:
     """Map scan findings + --fail-on to a process exit code."""
     if not fail_on or fail_on == "none":
         return EXIT_OK
     threshold = _SEVERITY_RANK[fail_on.upper()]
-    counts = (result or {}).get("risk_summary", {}).get("severity_counts") or {}
-    # Prefer explicit severity buckets when present; fall back to risk level.
+    counts = _aggregate_severity_counts(result)
     if counts:
         for sev, n in counts.items():
-            if n and _SEVERITY_RANK.get(sev.upper(), -1) >= threshold:
+            if n and _SEVERITY_RANK.get(str(sev).upper(), -1) >= threshold:
                 return EXIT_FINDINGS
         return EXIT_OK
-    level = (result or {}).get("risk_summary", {}).get("level", "INFO")
+    # No severity buckets — fall back to weighted risk level.
+    level = ((result or {}).get("risk_summary") or {}).get("level", "INFO")
     if _SEVERITY_RANK.get(str(level).upper(), -1) >= threshold:
         return EXIT_FINDINGS
     return EXIT_OK

@@ -3,3 +3,9 @@ __pycache__/
 *.pyc
 reports/
 .DS_Store
+.coverage
+coverage.xml
+htmlcov/
+*.egg-info/
+.pytest_cache/
+

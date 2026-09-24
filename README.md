@@ -8,7 +8,8 @@ Extract API endpoints and secrets from a target's JavaScript, validate what is l
 check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-416%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-532%20passing-brightgreen)](#testing)
+[![CI](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml/badge.svg)](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/piyushpcs/SurfaceSweep)](https://github.com/piyushpcs/SurfaceSweep/commits/main)
 [![Standard Readme](https://img.shields.io/badge/readme-standard-brightgreen.svg)](https://github.com/RichardLitt/standard-readme)
@@ -176,7 +177,14 @@ Reports default to `reports/surfacesweep_report.json` (JSON) and, with `--html`,
 | `--html-only` | HTML report only (skip JSON) |
 | `--no-deobf` | Skip JS deobfuscation |
 | `--regex-only` | Disable AST extraction, use regex only |
+| `--proxy` | HTTP(S) proxy for all scan requests (e.g. `http://127.0.0.1:8080`) |
+| `--insecure` | Disable TLS certificate verification |
+| `--ua` | Custom User-Agent for HTTP requests |
+| `--fail-on` | Exit 1 when any finding is at/above `none\|low\|medium\|high\|critical` (default: `none`) |
+| `--version` | Print version and exit |
 | `-q, --quiet` | Suppress progress output |
+
+Exit codes: `0` success · `1` findings at/above `--fail-on` · `2` usage error · `3` runtime error
 
 ## Architecture
 
@@ -234,11 +242,17 @@ Risk weights (CORS/JWT/CVE contribute; PII is recon-only):
 ```bash
 source venv/bin/activate
 python -m unittest discover -s tests -q
+
+# With coverage (optional)
+pip install -r requirements-dev.txt
+coverage run -m unittest discover -s tests -q
+coverage report -m
 ```
 
-- **416 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
+- **532 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
 - Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation,
   JWT decode/crack/JWKS, pipeline stage order, report schema (`schema_version: 1`), and finding feeds
+- **CI**: GitHub Actions runs the suite on Python 3.10 and 3.12 with coverage on every push/PR
 - Local vulnerable API for manual checks: `python testbed/vuln_api.py` (port **5555**)
 
 ### Sample results (authorized targets)
@@ -259,7 +273,8 @@ Full phase notes, bug-fix history, and per-feature validation logs live in the
 
 - Diff mode — compare two scans of the same target over time
 - Additional secret-pattern tuning as new FP reports arrive
-- Optional CI workflow for the test suite
+- SARIF export for code-scanning integrations
+- Multi-target batch scans
 
 ## Responsible use
 

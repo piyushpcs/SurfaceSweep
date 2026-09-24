@@ -196,13 +196,14 @@ def run_browser_scan(
         if not is_same_scope(js_url, scope):
             continue
         try:
-            import requests
-            from modules.extraction.http import request_kwargs
-            resp = requests.get(js_url, timeout=10, **request_kwargs())
+            from modules.extraction.http import fetch_text
+            body = fetch_text(js_url, timeout=10)
+            if body is None:
+                continue
             if deobfuscate_content:
-                deobfed_content, deobf_findings = deobfuscate(resp.text)
+                deobfed_content, deobf_findings = deobfuscate(body)
             else:
-                deobfed_content, deobf_findings = resp.text, []
+                deobfed_content, deobf_findings = body, []
             eps = extract_endpoints_from_text(deobfed_content, js_url)
             endpoint_urls.update(eps)
             # Already deobfuscated above — do not run deobfuscate a second time.

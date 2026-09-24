@@ -20,6 +20,11 @@ _http_config: dict = {
     "user_agent": DEFAULT_USER_AGENT,
 }
 
+# Process-wide response-text cache keyed by URL. Avoids re-fetching the same
+# JS file across stages (scan → browser → CVE → SPA). Bounded FIFO.
+_TEXT_CACHE: dict = {}
+_TEXT_CACHE_MAX = 512
+
 
 def configure_http(
     proxy: Optional[str] = None,
@@ -38,6 +43,7 @@ def reset_http_config() -> None:
     _http_config["proxy"] = None
     _http_config["insecure"] = False
     _http_config["user_agent"] = DEFAULT_USER_AGENT
+    clear_text_cache()
 
 
 def default_headers() -> dict:
@@ -55,6 +61,50 @@ def request_kwargs(headers: Optional[dict] = None) -> dict:
     if _http_config["insecure"]:
         kwargs["verify"] = False
     return kwargs
+
+
+def clear_text_cache() -> None:
+    """Drop all cached response bodies (tests / new scan)."""
+    _TEXT_CACHE.clear()
+
+
+def get_cached_text(url: str) -> Optional[str]:
+    return _TEXT_CACHE.get(url)
+
+
+def cache_text(url: str, text: str) -> None:
+    """Store a response body for later stages (FIFO eviction)."""
+    if not url:
+        return
+    if url in _TEXT_CACHE:
+        _TEXT_CACHE[url] = text
+        return
+    if len(_TEXT_CACHE) >= _TEXT_CACHE_MAX:
+        oldest = next(iter(_TEXT_CACHE))
+        del _TEXT_CACHE[oldest]
+    _TEXT_CACHE[url] = text
+
+
+def fetch_text(url, timeout=10, limiter=None, headers=None) -> Optional[str]:
+    """
+    GET a URL and return its text body, using the process-wide cache.
+
+    Returns None on cache miss + fetch failure (connection errors, timeout
+    exhaustion, 429 budget) — never raises. Matches the contract callers
+    of the old per-stage try/except loops relied on.
+    """
+    cached = get_cached_text(url)
+    if cached is not None:
+        return cached
+    try:
+        resp = fetch_with_retry(url, timeout=timeout, limiter=limiter, headers=headers)
+    except requests.RequestException:
+        return None
+    if resp is None:
+        return None
+    text = resp.text
+    cache_text(url, text)
+    return text
 
 
 class RateLimiter:
@@ -137,6 +187,10 @@ def fetch_with_retry(url, timeout=10, max_retries=3, limiter=None, headers=None)
                 time.sleep(2 ** attempt)
                 continue
             resp.raise_for_status()
+            try:
+                cache_text(url, resp.text)
+            except Exception:
+                pass
             return resp
         except requests.Timeout:
             if attempt < max_retries - 1:

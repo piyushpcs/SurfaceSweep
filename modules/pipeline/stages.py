@@ -135,15 +135,12 @@ def stage_cve(ctx: ScanContext) -> None:
         ctx.log("[*] No JS files to scan for libraries")
         return
 
-    from modules.extraction.http import request_kwargs
-    import requests as _requests
+    from modules.extraction.http import fetch_text
     content_map = {}
     for js_url in js_files:
-        try:
-            resp = _requests.get(js_url, timeout=10, **request_kwargs())
-            content_map[js_url] = resp.text
-        except _requests.RequestException:
-            pass
+        text = fetch_text(js_url, timeout=10)
+        if text is not None:
+            content_map[js_url] = text
 
     lib_result = scan_for_libraries(
         js_files, content_map=content_map, use_osv=args.osv, verbose=ctx.verbose,

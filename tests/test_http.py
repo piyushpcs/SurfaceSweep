@@ -8,8 +8,11 @@ import requests
 
 from modules.extraction.http import (
     RateLimiter,
+    clear_text_cache,
+    fetch_text,
     fetch_with_retry,
     get_page,
+    get_cached_text,
     parse_retry_after,
 )
 
