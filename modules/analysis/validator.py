@@ -456,6 +456,8 @@ def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True,
         detail(f"Dead (404): {dead_count}")
         detail(f"Server errors: {len(results['server_error'])}")
         detail(f"Timeouts: {len(results['timeout'])}")
+        detail(f"Connection errors: {len(results['connection_error'])}")
+        detail(f"Other errors: {len(results['error'])}")
 
     return results
 

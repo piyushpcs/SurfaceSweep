@@ -282,5 +282,28 @@ class TestMethodAwareValidation(unittest.TestCase):
         self.assertEqual(called_url, "https://x.test/health")
 
 
+class TestValidationSummaryBuckets(unittest.TestCase):
+    @mock.patch("modules.analysis.validator.emit")
+    @mock.patch("modules.analysis.validator.detail")
+    @mock.patch("modules.analysis.validator.request_tls")
+    def test_summary_reports_connection_errors(self, request_mock, detail_mock, emit_mock):
+        request_mock.side_effect = __import__("requests").ConnectionError("down")
+        results = validate_endpoints(["/a", "/b"], "https://x.test", verbose=True)
+        self.assertEqual(len(results["connection_error"]), 2)
+        printed = " ".join(str(c.args[0]) for c in detail_mock.call_args_list)
+        self.assertIn("Connection errors: 2", printed)
+        self.assertIn("Other errors: 0", printed)
+
+    @mock.patch("modules.analysis.validator.emit")
+    @mock.patch("modules.analysis.validator.detail")
+    @mock.patch("modules.analysis.validator.request_tls")
+    def test_summary_reports_other_errors(self, request_mock, detail_mock, emit_mock):
+        request_mock.side_effect = __import__("requests").RequestException("boom")
+        results = validate_endpoints(["/a"], "https://x.test", verbose=True)
+        self.assertEqual(len(results["error"]), 1)
+        printed = " ".join(str(c.args[0]) for c in detail_mock.call_args_list)
+        self.assertIn("Other errors: 1", printed)
+
+
 if __name__ == "__main__":
     unittest.main()
