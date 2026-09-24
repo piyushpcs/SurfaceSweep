@@ -243,6 +243,34 @@ class TestNoDeobfThreading(unittest.TestCase):
         self.assertIn("static", captured)
         self.assertIs(captured["static"]["deobfuscate"], False)
 
+    def test_robots_fetch_uses_short_timeout_not_browser_timeout(self):
+        """robots/sitemap must not inherit the 30s browser page-load timeout."""
+        from modules.pipeline import stages as stages_mod
+        from modules.pipeline.context import ScanContext
+
+        captured = {}
+
+        def fake_discover(base_url, timeout=10, verbose=True, **kw):
+            captured["timeout"] = timeout
+            return {"paths": [], "urls": []}
+
+        args = Namespace(
+            target="https://x.test", timeout=30, vtimeout=5,
+        )
+        ctx = ScanContext(args, verbose=False)
+        ctx.result = {
+            "target": "https://x.test", "internal_paths": [],
+            "in_scope_urls": [], "intercepted_endpoints": [],
+            "secrets_found": [],
+        }
+        orig = stages_mod.discover_robots_and_sitemap
+        stages_mod.discover_robots_and_sitemap = fake_discover
+        try:
+            stages_mod._merge_robots_sitemap(ctx)
+        finally:
+            stages_mod.discover_robots_and_sitemap = orig
+        self.assertEqual(captured.get("timeout"), 10)
+
     def test_browser_scan_accepts_deobfuscate_content_param(self):
         import inspect
         from modules.extraction.browser import run_browser_scan

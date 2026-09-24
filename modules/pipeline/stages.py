@@ -123,9 +123,12 @@ def _merge_robots_sitemap(ctx: ScanContext) -> None:
     if ctx.result is None:
         return
     result = ctx.require_result()
+    # robots/sitemap is a plain HTTP GET — do not inherit the browser
+    # page-load timeout (args.timeout defaults to 30s and multiplies
+    # through fetch retries into multi-minute hangs).
     discovery = discover_robots_and_sitemap(
         ctx.args.target,
-        timeout=getattr(ctx.args, "timeout", 10) or 10,
+        timeout=10,
         verbose=ctx.verbose,
     )
     endpoints = list(discovery.get("paths") or []) + list(discovery.get("urls") or [])
