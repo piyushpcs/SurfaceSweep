@@ -522,6 +522,45 @@ class TestScannerEscalationAndErrors(unittest.TestCase):
             )
         session.close.assert_called_once()
 
+    @mock.patch("modules.cors.scanner.requests.Session")
+    def test_scan_cors_session_applies_insecure_config(self, session_cls):
+        """Shared session bypasses request_tls — must still honor --insecure."""
+        from modules.extraction.http import configure_http, reset_http_config
+
+        session = session_cls.return_value
+        session.verify = True
+        session.proxies = {}
+        reset_http_config()
+        try:
+            configure_http(insecure=True, proxy="http://127.0.0.1:8080")
+            with mock.patch("modules.cors.scanner.probe_baseline") as baseline_mock, \
+                    mock.patch("modules.cors.scanner.probe_endpoint") as probe_mock:
+                baseline_mock.return_value = {"static_acao": False, "acao": ""}
+                probe_mock.return_value = []
+                scan_cors(
+                    ["/api/users"], TARGET, verbose=False, threads=1, rate_limit=0
+                )
+            self.assertFalse(session.verify)
+            self.assertEqual(session.proxies.get("https"), "http://127.0.0.1:8080")
+        finally:
+            reset_http_config()
+
+    @mock.patch("modules.cors.scanner.requests.Session")
+    def test_scan_cors_session_defaults_verify_true(self, session_cls):
+        from modules.extraction.http import reset_http_config
+
+        session = session_cls.return_value
+        session.verify = True
+        reset_http_config()
+        with mock.patch("modules.cors.scanner.probe_baseline") as baseline_mock, \
+                mock.patch("modules.cors.scanner.probe_endpoint") as probe_mock:
+            baseline_mock.return_value = {"static_acao": False, "acao": ""}
+            probe_mock.return_value = []
+            scan_cors(
+                ["/api/users"], TARGET, verbose=False, threads=1, rate_limit=0
+            )
+        self.assertTrue(session.verify)
+
     @staticmethod
     def _row(origin, severity, acao, method="OPTIONS"):
         return {

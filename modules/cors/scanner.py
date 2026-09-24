@@ -262,8 +262,15 @@ def scan_cors(
     raw_findings = []
     error_probes = 0
     session = requests.Session()
-    from modules.extraction.http import RelaxedTLSAdapter
+    from modules.extraction.http import RelaxedTLSAdapter, request_kwargs
     session.mount("https://", RelaxedTLSAdapter())
+    # Apply process-wide insecure/proxy config — this session bypasses
+    # request_tls, so without this every probe fails on bad-cert hosts.
+    cfg = request_kwargs(headers=None)
+    if cfg.get("verify") is False:
+        session.verify = False
+    if cfg.get("proxies"):
+        session.proxies.update(cfg["proxies"])
     baselines = {}
     urls_with_acao = set()
     trusted_seeds = set()
