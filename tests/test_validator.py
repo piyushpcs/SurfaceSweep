@@ -130,6 +130,43 @@ class TestSoft404StillWorks(unittest.TestCase):
         self.assertEqual(status, "dead")
         self.assertEqual(note, "soft_404")
 
+    def test_bare_404_alone_not_soft_404(self):
+        """Docs pages that mention status code 404 must stay live."""
+        resp = _resp(
+            "<html><body><p>API returns 404 when missing</p></body></html>",
+            "text/html",
+        )
+        self.assertFalse(is_soft_404(resp, "https://x.test/api/docs"))
+
+    def test_single_weak_not_found_alone_not_enough(self):
+        resp = _resp("<html><body>entry not found in cache</body></html>", "text/html")
+        self.assertFalse(is_soft_404(resp, "https://x.test/api/v1/items"))
+
+    def test_two_weak_signals_are_enough(self):
+        resp = _resp(
+            "<html><body>sorry not found — resource does not exist</body></html>",
+            "text/html",
+        )
+        self.assertTrue(is_soft_404(resp, "https://x.test/api/v1/items"))
+
+    def test_error_404_phrase_is_strong(self):
+        resp = _resp("<html><body>Error 404</body></html>", "text/html")
+        self.assertTrue(is_soft_404(resp, "https://x.test/missing"))
+
+    def test_does_not_exist_is_strong(self):
+        resp = _resp("<html><body>The record does not exist</body></html>", "text/html")
+        self.assertTrue(is_soft_404(resp, "https://x.test/api/v1/rec"))
+
+    def test_path_echo_suppresses_weak_match(self):
+        resp = _resp(
+            "<html><body>You wanted /api/v1/nope not found</body></html>",
+            "text/html",
+        )
+        # path is echoed — weak "not found" should not kill alone via path skip
+        # but "not found" is weak and only one signal after path skip of path itself
+        # path "/api/v1/nope" appears in body → all sigs skipped → not soft-404
+        self.assertFalse(is_soft_404(resp, "https://x.test/api/v1/nope"))
+
 
 class TestValidateEndpointUsesBodyNotes(unittest.TestCase):
     @mock.patch("modules.analysis.validator.requests.request")

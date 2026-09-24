@@ -9,7 +9,6 @@ code that previously lived inline in main.py — no behavior change.
 from urllib.parse import urlparse
 
 from modules.analysis import (
-    get_live_endpoints,
     scan_for_libraries,
     validate_endpoints,
 )
@@ -250,7 +249,14 @@ def stage_jwt(ctx: ScanContext) -> None:
 
 
 def stage_validate(ctx: ScanContext) -> None:
-    """Validate discovered endpoints; filter dead false positives from paths."""
+    """
+    Validate discovered endpoints and annotate results.
+
+    Annotates path_status / internal_paths_discovered instead of
+    destructively replacing internal_paths. Only confirmed-dead paths are
+    removed from the active pool; timeouts and connection errors stay so
+    they remain available for CORS and reporting.
+    """
     args = ctx.args
     result = ctx.require_result()
     ctx.log("\n[*] --- Endpoint Validation ---")
@@ -267,15 +273,56 @@ def stage_validate(ctx: ScanContext) -> None:
     result["validation"] = validation
 
     target_base = f"{urlparse(args.target).scheme}://{urlparse(args.target).netloc}"
-    result["internal_paths"] = sorted(set(
-        r["url"].replace(target_base, "").rstrip("/") or "/"
-        for r in get_live_endpoints(validation)
-        if r["url"].startswith(target_base) and not is_static_asset(r["url"])
-    ))
+
+    def _to_path(url: str):
+        if not url:
+            return None
+        if url.startswith(target_base):
+            rest = url[len(target_base):]
+            return rest.split("?", 1)[0].split("#", 1)[0].rstrip("/") or "/"
+        if url.startswith("/") and not url.startswith("//"):
+            return url.split("?", 1)[0].split("#", 1)[0]
+        return None
+
+    # path -> {status, note?, status_code?} for every validated endpoint
+    path_status: dict = {}
+    for bucket, items in validation.items():
+        for r in items:
+            p = _to_path(r.get("url", ""))
+            if p is None or p in path_status:
+                continue
+            entry = {"status": bucket}
+            if r.get("note"):
+                entry["note"] = r["note"]
+            if r.get("status_code") is not None:
+                entry["status_code"] = r["status_code"]
+            path_status[p] = entry
+    result["path_status"] = path_status
+
+    discovered = list(result.get("internal_paths") or [])
+    result["internal_paths_discovered"] = discovered
+
+    dead_paths = set()
+    for r in validation.get("dead", []):
+        p = _to_path(r.get("url", ""))
+        if p:
+            dead_paths.add(p)
+
+    result["internal_paths"] = sorted(
+        p for p in discovered if p not in dead_paths
+    )
     result["risk_summary"] = calculate_risk_summary(result)
+
     dead = len(validation.get("dead", []))
     if ctx.verbose and dead:
-        ctx.log(f"[+] Filtered out {dead} false positive(s)")
+        unverified = sum(
+            1 for p in discovered
+            if path_status.get(p, {}).get("status") in ("timeout", "connection_error", "error")
+        )
+        msg = f"[+] Filtered out {dead} confirmed-dead endpoint(s)"
+        if unverified:
+            msg += f"; {unverified} unverified (timeout/error) kept in pool"
+        ctx.log(msg)
 
 
 def stage_export(ctx: ScanContext) -> None:

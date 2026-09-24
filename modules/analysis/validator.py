@@ -31,14 +31,33 @@ RATE_LIMITED_STATUSES = {429}
 ERROR_STATUSES = set(range(500, 600))
 DEAD_STATUSES = {404, 410}
 
-# Noise responses that look like 200 but are actually soft-404s
+# Noise responses that look like 200 but are actually soft-404s.
+# Bare substrings like "404" are intentionally omitted — they match live
+# pages that merely document status codes. Classification requires either
+# a strong multi-word phrase or at least two distinct weak signals.
 SOFT_404_SIGNATURES = [
     "page not found",
     "not found",
-    "404",
     "does not exist",
     "sorry, the page you visited does not exist",
+    "404 not found",
+    "error 404",
+    "http 404",
+    "status 404",
+    "404 error",
 ]
+
+# Phrases strong enough to classify soft-404 on their own.
+STRONG_SOFT_404 = frozenset({
+    "page not found",
+    "does not exist",
+    "sorry, the page you visited does not exist",
+    "404 not found",
+    "error 404",
+    "http 404",
+    "status 404",
+    "404 error",
+})
 
 # API-ish path markers — used to decide when HTML is a false SPA shell hit
 API_PATH_HINTS = (
@@ -111,23 +130,39 @@ def classify_status(status_code):
 
 
 def is_soft_404(response, original_url):
-    """Detect soft-404s: server returns 200 but content indicates not found."""
+    """
+    Detect soft-404s: server returns 200 but content indicates not found.
+
+    Requires a strong phrase (e.g. "page not found") or at least two
+    distinct weak signals so live pages that merely mention "404" or
+    "not found" in docs/widgets are not misclassified as dead.
+    """
     try:
         content_type = response.headers.get("Content-Type", "")
         if "text/html" not in content_type and "application/json" not in content_type:
             return False
 
         body = response.text[:2000].lower()
+        path = urlparse(original_url).path
+        path_l = path.lower() if path else ""
+
+        matched = []
         for sig in SOFT_404_SIGNATURES:
-            if sig in body:
-                # Check if the original path is also mentioned (sometimes in 404 pages)
-                path = urlparse(original_url).path
-                if path and path.lower() in body:
-                    continue
-                return True
+            if sig not in body:
+                continue
+            # Skip when the original path is echoed (common on branded 404s
+            # that still render the requested URL for SEO/logging).
+            if path_l and path_l in body:
+                continue
+            matched.append(sig)
+
+        if not matched:
+            return False
+        if any(sig in STRONG_SOFT_404 for sig in matched):
+            return True
+        return len(set(matched)) >= 2
     except Exception:
-        pass
-    return False
+        return False
 
 
 def is_spa_shell(response, original_url):
