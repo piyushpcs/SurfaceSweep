@@ -44,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cors-rps", type=float, default=5.0, help="CORS probe rate limit, requests/sec (default: 5, 0=unlimited)")
     parser.add_argument("--cors-threads", type=int, default=6, help="CORS probe threads (default: 6)")
     parser.add_argument("--cors-timeout", type=float, default=5.0, help="CORS per-request timeout seconds (default: 5)")
+    parser.add_argument("--cors-poc", action="store_true", help="Write standalone CORS PoC HTML next to the report")
     parser.add_argument("--jwt", action="store_true", help="Analyze JWTs found in scanned content (alg/none, weak HMAC, exp, claims)")
     parser.add_argument("--jwt-wordlist", default=None, metavar="FILE", help="Extra newline-delimited secrets for offline HS* cracking")
     parser.add_argument("--jwt-hashcat", default=None, metavar="FILE", help="Export HS* JWTs to FILE in hashcat mode 16500 format")

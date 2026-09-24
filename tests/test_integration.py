@@ -51,6 +51,7 @@ def _args(**overrides):
         cors_origin=None,
         cors_max=50,
         cors_rps=5.0,
+        cors_poc=False,
         cors_threads=6,
         cors_timeout=5.0,
         jwt=False,

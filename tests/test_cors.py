@@ -880,8 +880,9 @@ class TestReportingStep4(unittest.TestCase):
         self.assertIn("Findings (one row per URL)", html)
         self.assertIn("JSON schema v1", html)
         self.assertIn("Target origin:", html)
-        # INFO row omitted from findings table
-        self.assertEqual(html.count("https://example.com/api/v2/users"), 1)
+        # INFO row omitted from findings table (URL may appear in PoC/matrix)
+        table_html = html.split("Findings (one row per URL)")[1].split("<h3")[0] if "Findings (one row per URL)" in html else html
+        self.assertEqual(table_html.count("https://example.com/api/v2/users"), 1)
 
     def test_render_cors_empty(self):
         from modules.reporting.html import render_cors

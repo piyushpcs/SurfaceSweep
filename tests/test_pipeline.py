@@ -61,6 +61,7 @@ def _args(**overrides):
         cors_rps=5.0,
         cors_threads=6,
         cors_timeout=5.0,
+        cors_poc=False,
         jwt=False,
         jwt_wordlist=None,
         jwt_hashcat=None,
@@ -104,10 +105,11 @@ class TestStageList(unittest.TestCase):
         self.assertIn("cve", stage_names(_args(osv=True)))
         self.assertNotIn("cve", stage_names(_args()))
 
-    def test_export_only_when_burp_or_zap(self):
+    def test_export_only_when_burp_or_zap_or_cors_poc(self):
         self.assertNotIn("export", stage_names(_args()))
         self.assertIn("export", stage_names(_args(burp=True)))
         self.assertIn("export", stage_names(_args(zap=True)))
+        self.assertIn("export", stage_names(_args(cors_poc=True)))
 
     def test_scan_always_present(self):
         self.assertIn("scan", stage_names(_args()))
@@ -711,12 +713,14 @@ class TestReportBuilder(unittest.TestCase):
         self.assertTrue(plan["write_json"])
         self.assertFalse(plan["write_html"])
         self.assertFalse(plan["write_burp"])
+        self.assertFalse(plan["write_cors_poc"])
 
-        plan = build_report_plan(_args(html=True, burp=True, zap=True))
+        plan = build_report_plan(_args(html=True, burp=True, zap=True, cors_poc=True))
         self.assertTrue(plan["write_json"])
         self.assertTrue(plan["write_html"])
         self.assertTrue(plan["write_burp"])
         self.assertTrue(plan["write_zap"])
+        self.assertTrue(plan["write_cors_poc"])
 
         plan = build_report_plan(_args(html_only=True))
         self.assertFalse(plan["write_json"])
@@ -755,13 +759,92 @@ class TestReportBuilder(unittest.TestCase):
             written = write_reports(
                 {"target": "https://x.com"}, out,
                 write_json=True, write_html=False,
-                write_burp=False, write_zap=False,
+                write_burp=False, write_zap=False, write_cors_poc=False,
                 verbose=False,
             )
             self.assertIsNotNone(written["json"])
             self.assertIsNone(written["html"])
             self.assertIsNone(written["burp"])
             self.assertIsNone(written["zap"])
+            self.assertIsNone(written["cors_poc"])
+
+    def test_write_cors_poc_document(self):
+        import tempfile
+        from pathlib import Path
+        from modules.reporting.builder import write_reports
+
+        result = {
+            "target": "https://example.com",
+            "cors": {
+                "target_origin": "https://example.com",
+                "findings": [{
+                    "url": "https://example.com/api",
+                    "severity": "CRITICAL",
+                    "origin": "https://evil.com",
+                    "acao": "https://evil.com",
+                    "acac": "true",
+                }],
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "scan.json")
+            written = write_reports(
+                result, out,
+                write_json=False, write_html=False,
+                write_burp=False, write_zap=False, write_cors_poc=True,
+                verbose=False,
+            )
+            self.assertIsNotNone(written["cors_poc"])
+            text = Path(written["cors_poc"]).read_text()
+            self.assertIn("credentials:", text)
+            self.assertIn("include", text)
+            self.assertIn("https://example.com/api", text)
+
+    def test_write_cors_poc_skips_when_no_findings(self):
+        import tempfile
+        from pathlib import Path
+        from modules.reporting.builder import write_reports
+
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "scan.json")
+            written = write_reports(
+                {"target": "https://example.com", "cors": {"findings": []}},
+                out,
+                write_json=False, write_html=False,
+                write_burp=False, write_zap=False, write_cors_poc=True,
+                verbose=False,
+            )
+            self.assertIsNone(written["cors_poc"])
+
+    def test_html_report_embeds_poc_for_critical(self):
+        from modules.reporting.html import build_html
+        result = {
+            "target": "https://example.com",
+            "risk_summary": {"level": "CRITICAL", "score": 25},
+            "cors": {
+                "schema_version": 1,
+                "target_origin": "https://example.com",
+                "endpoints_tested": 1,
+                "probe_hits": 1,
+                "severity_counts": {"CRITICAL": 1},
+                "summary": {"urls_flagged": 1, "severity_counts": {"CRITICAL": 1}},
+                "findings": [{
+                    "url": "https://example.com/api",
+                    "severity": "CRITICAL",
+                    "origin": "https://evil.com",
+                    "origins_flagged": ["https://evil.com"],
+                    "acao": "https://evil.com",
+                    "acac": "true",
+                    "method": "GET",
+                    "methods": ["GET"],
+                    "detail": "reflected",
+                }],
+            },
+        }
+        html = build_html(result)
+        self.assertIn("Proof of concept", html)
+        self.assertIn("credentials:", html)
+        self.assertIn("credentialed", html)
 
     def test_no_inline_path_duplication_in_stages(self):
         """stage_export / stage_report must not re-derive paths inline."""

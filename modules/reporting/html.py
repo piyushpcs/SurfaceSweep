@@ -573,11 +573,17 @@ def render_cors(cors):
         '<th>Evidence</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table>'
     )
+    try:
+        from modules.reporting.cors_poc import render_cors_pocs_inline
+        pocs = render_cors_pocs_inline(cors)
+    except Exception:
+        pocs = ""
     return (
         f"<h2>CORS Misconfigurations</h2>"
         f"{summary}{meta}{matrix}"
         f'<h3 style="margin:1rem 0 0.35rem;color:#8b949e;font-size:0.95rem;">'
         f"Findings (one row per URL)</h3>{table}"
+        f"{pocs}"
     )
 
 

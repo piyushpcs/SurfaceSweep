@@ -275,7 +275,7 @@ def stage_validate(ctx: ScanContext) -> None:
 
 
 def stage_export(ctx: ScanContext) -> None:
-    """Write Burp/ZAP CSVs (when requested) via the unified report builder."""
+    """Write Burp/ZAP CSVs and optional CORS PoC (when requested)."""
     args = ctx.args
     result = ctx.require_result()
     plan = build_report_plan(args)
@@ -283,6 +283,7 @@ def stage_export(ctx: ScanContext) -> None:
         result, args.output,
         write_json=False, write_html=False,
         write_burp=plan["write_burp"], write_zap=plan["write_zap"],
+        write_cors_poc=plan["write_cors_poc"],
         verbose=ctx.verbose,
     )
 
