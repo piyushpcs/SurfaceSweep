@@ -295,6 +295,20 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
     all_pii = []
     all_params = []
 
+    # HTML body itself: anchors/forms/etc. carry internal paths on
+    # server-rendered sites that have no (or few) JS endpoints.
+    html_eps, html_secs, html_deobf, html_snks, html_intr, html_jwts, html_pii = extract_from_text(
+        html, "html_body", do_deobfuscate=deobfuscate, use_ast=use_ast
+    )
+    all_endpoints.update(html_eps)
+    all_secrets.extend(html_secs)
+    all_sinks.extend(html_snks)
+    all_internal.extend(html_intr)
+    all_jwts.extend(html_jwts)
+    all_pii.extend(html_pii)
+    all_params.extend(extract_params(html, "html_body"))
+    result["deobfuscation_findings"].extend(html_deobf)
+
     for i, content in enumerate(inline_js):
         eps, secs, deobf, snks, intr, jwts, pii = extract_from_text(content, f"inline_script_{i}", do_deobfuscate=deobfuscate, use_ast=use_ast)
         all_endpoints.update(eps)

@@ -162,6 +162,30 @@ class TestScanResultSchema(unittest.TestCase):
         self.assertIn("risk_summary", r)
         self.assertIn("level", r["risk_summary"])
 
+    def test_extractor_pulls_paths_from_html_body(self):
+        """Server-rendered pages with no JS must still yield href paths."""
+        from modules.extraction import engine
+
+        html = (
+            '<html><body>'
+            '<a href="/index.jsp?content=login">login</a>'
+            '<a href="/admin/panel.jsp">admin</a>'
+            '<link rel="stylesheet" href="/style.css">'
+            '</body></html>'
+        )
+        with mock.patch("modules.extraction.engine.get_page", return_value=html):
+            r = engine.run_extractor("https://demo.testfire.net/", verbose=False, max_depth=0)
+        self.assertIn("/index.jsp?content=login", r["internal_paths"])
+        self.assertIn("/admin/panel.jsp", r["internal_paths"])
+        self.assertNotIn("/style.css", r["internal_paths"])
+
+    def test_extractor_source_label_is_html_body(self):
+        import inspect
+        from modules.extraction import engine
+
+        src = inspect.getsource(engine.run_extractor)
+        self.assertIn('"html_body"', src)
+
     def test_browser_uses_factory(self):
         import inspect
         from modules.extraction import browser
