@@ -16,6 +16,7 @@ from modules.extraction.http import (
     fetch_with_retry,
     get_page,
     get_cached_text,
+    is_cert_error,
     is_tls_policy_error,
     parse_retry_after,
     request_tls,
@@ -233,6 +234,38 @@ class TestTlsPolicyFallback(unittest.TestCase):
 
     def test_is_tls_policy_error_non_request_exception(self):
         self.assertFalse(is_tls_policy_error(ValueError("connection reset")))
+
+    def test_is_cert_error_expired(self):
+        exc = requests.ConnectionError(
+            "HTTPSConnectionPool(host='x.test', port=443): Max retries exceeded "
+            "(Caused by SSLError(SSLCertVerificationError(1, '[SSL: CERTIFICATE_VERIFY_FAILED] "
+            "certificate has expired (_ssl.c:1082)')))"
+        )
+        self.assertTrue(is_cert_error(exc))
+
+    def test_is_cert_error_self_signed(self):
+        exc = requests.exceptions.SSLError(
+            "certificate verify failed: self-signed certificate (_ssl.c:1082)"
+        )
+        self.assertTrue(is_cert_error(exc))
+
+    def test_is_cert_error_reset_not_cert(self):
+        exc = requests.ConnectionError(
+            "('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))"
+        )
+        self.assertFalse(is_cert_error(exc))
+
+    @mock.patch("modules.extraction.http.time.sleep")
+    @mock.patch("modules.extraction.http.requests.get")
+    def test_cert_error_not_retried(self, get_mock, sleep_mock):
+        exc = requests.exceptions.SSLError(
+            "certificate verify failed: certificate has expired (_ssl.c:1082)"
+        )
+        get_mock.side_effect = exc
+        with self.assertRaises(requests.exceptions.SSLError):
+            fetch_with_retry("https://expired.test/", max_retries=3)
+        self.assertEqual(get_mock.call_count, 1)
+        sleep_mock.assert_not_called()
 
     @mock.patch("modules.extraction.http.relaxed_session")
     @mock.patch("modules.extraction.http.requests.request")

@@ -32,6 +32,7 @@ __all__ = [
     "fetch_with_retry",
     "get_cached_text",
     "get_page",
+    "is_cert_error",
     "is_tls_policy_error",
     "parse_retry_after",
     "request_kwargs",
@@ -53,6 +54,23 @@ def is_tls_policy_error(exc: BaseException) -> bool:
         return False
     text = str(exc).lower()
     return "connection reset" in text or "connection aborted" in text
+
+
+def is_cert_error(exc: BaseException) -> bool:
+    """
+    True when a failure is a certificate verification problem (expired,
+    self-signed, hostname mismatch). These are non-transient — retrying
+    only wastes the full retry budget.
+    """
+    if not isinstance(exc, requests.RequestException):
+        return False
+    text = str(exc).lower()
+    return (
+        "certificate verify failed" in text
+        or "certificate has expired" in text
+        or "self-signed certificate" in text
+        or "sslerror" in text and "certificate" in text
+    )
 
 
 class RelaxedTLSAdapter(HTTPAdapter):
@@ -284,6 +302,8 @@ class HttpClient:
                 if is_tls_policy_error(exc) and not used_relaxed:
                     used_relaxed = True
                     continue
+                if is_cert_error(exc):
+                    raise
                 if attempt < max_retries - 1:
                     time.sleep(2 ** attempt)
                     continue
