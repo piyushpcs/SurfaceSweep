@@ -58,6 +58,12 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **Step 5 — tests + docs:** HTTP-layer `probe_endpoint`/`probe_baseline` coverage, escalation/error/session unit tests, WAF pacing tests, this README section
 - Reference techniques: PortSwigger CORS labs, Nuclei `cors-misconfig`, CORScanner origin matrix/redirect filter, Fetch spec `Vary: Origin`
 
+### ✅ Phase 2.2: CORS follow-through (complete — Steps 1–4)
+- **Step 1 — stage order:** CORS runs **after** `validate` (`… spa → jwt → validate → cors → export`) so probes hit live endpoints only
+- **Step 2 — trusted-seed re-probe:** static/third-party ACAO seeds (not reflection, not target) expand to lookalikes (`sub.<reg>`, `<reg>.evil.com`, `evil.<reg>`, path-bearing) and re-probe URLs that already returned ACAO (max 3 seeds × 5 lookalikes)
+- **Step 3 — PoC HTML:** `modules/reporting/cors_poc.py` — credentialed XHR / null-iframe / bare-reflection snippets; collapsible **Proof of concept** blocks in the HTML report (CRITICAL/HIGH); standalone export via **`--cors-poc`** → `*_cors_poc.html`
+- **Step 4 — tests + docs:** stage-order, seed expansion, PoC export/embed tests; this README section
+
 ### ✅ Phase 3: JWT Security Analyzer (complete — Steps 1–6)
 - Extracts compact JWTs (`header.payload.sig`) from JS/HTML scan results
 - **Step 3 pipeline wiring:** `extract_from_text` returns JWTs; `jwts_found` populated in static/browser/wayback/full scans and merged/deduped across modes
@@ -82,7 +88,7 @@ A recon tool that extracts API endpoints and secrets from a target's JavaScript 
 - **Step 7 — report builder:** `modules/reporting/builder.py` — single path computation for JSON/HTML/Burp/ZAP outputs
 - **Step 8 — integration tests:** offline end-to-end pipeline tests (stage order, schema contract, on-disk reports) in `tests/test_integration.py`
 - Stage order: `waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve → spa → jwt → validate → cors → export → report`
-- Unit + integration suite: **259 tests** (`test_cors`, `test_jwt`, `test_pipeline`, `test_integration`)
+- Unit + integration suite: **270 tests** (`test_cors`, `test_jwt`, `test_pipeline`, `test_integration`)
 
 ## Setup
 
@@ -144,6 +150,7 @@ python main.py https://target.com -f --validate --burp --zap --waf --html
 | `--cors-rps` | CORS probe rate limit req/s (default: 5, 0=unlimited) |
 | `--cors-threads` | CORS probe threads (default: 6) |
 | `--cors-timeout` | CORS per-request timeout seconds (default: 5) |
+| `--cors-poc` | Write standalone CORS PoC HTML next to the report |
 | `--jwt` | Analyze JWTs found in scanned content (alg/none, weak HMAC, exp, claims) |
 | `--jwt-wordlist` | Extra newline-delimited secrets for offline HS* cracking |
 | `--jwt-hashcat` | Export HS* JWTs to FILE in hashcat mode 16500 format |
@@ -227,7 +234,8 @@ SurfaceSweep/
 │   │   ├── html.py               # HTML/JSON report generation
 │   │   ├── export.py             # Burp/ZAP CSV export
 │   │   ├── findings.py           # Cross-module findings feed + exec summary
-│   │   └── builder.py            # Unified report path/output builder
+│   │   ├── builder.py            # Unified report path/output builder
+│   │   └── cors_poc.py           # CORS PoC HTML (embed + --cors-poc export)
 │   ├── cors/                     # Phase 2: CORS misconfiguration scanner
 │   │   ├── __init__.py           # Public API re-exports
 │   │   ├── origins.py            # Origin build/normalize/compare (Phase 2.1 matrix)
@@ -349,6 +357,7 @@ Aggregation check (local testbed): 348 probe hits → **21 URL rows** (worst sev
 - ~~SPA route crawling~~ ✅ Done
 - ~~Phase 2: CORS misconfiguration scanner~~ ✅ Done (Steps 1–4)
 - ~~Phase 2.1: CORS hardening~~ ✅ Done (Steps 1–5)
+- ~~Phase 2.2: CORS follow-through~~ ✅ Done (Steps 1–4)
 - ~~Phase 3: JWT security analyzer~~ ✅ Done (Steps 1–6)
 - ~~Phase 4: Combined pipeline + reporting~~ ✅ Done (Steps 1–8)
 - Diff mode to compare two scans of the same target over time
