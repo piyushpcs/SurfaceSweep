@@ -346,6 +346,36 @@ def _probe_common_routes(base_url, existing_routes, verbose=True, timeout=5):
     return candidates
 
 
+# Statuses that mean the path exists (auth walls count as existence)
+_PROBE_EXISTS_STATUSES = (200, 301, 302, 401, 403, 405)
+
+
+def probe_route(url, timeout=5, session=None):
+    """
+    Existence probe for a candidate route: HEAD first, GET fallback.
+
+    Many stacks reject or mis-handle HEAD (405/501/empty) while GET works.
+    Falling back avoids false negatives on admin/API paths. Returns the
+    confirming status code, or None when the path does not look live.
+    """
+    import requests as _requests
+    http = session if session is not None else _requests
+    headers = {"User-Agent": "SurfaceSweep/1.0"}
+    try:
+        r = http.head(url, timeout=timeout, allow_redirects=True, headers=headers)
+        status = r.status_code
+        if status in _PROBE_EXISTS_STATUSES and status not in (405, 501):
+            return status
+        # HEAD inconclusive or method-not-allowed → confirm with GET
+        r = http.get(url, timeout=timeout, allow_redirects=True, headers=headers)
+        status = r.status_code
+        if status in _PROBE_EXISTS_STATUSES:
+            return status
+    except _requests.RequestException:
+        return None
+    return None
+
+
 def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
                      probe_common=True, scope_filter=None):
     """
@@ -575,20 +605,15 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
         if verbose:
             detail(f"[*] {len(probe_candidates)} candidate(s) to probe (not yet discovered)")
 
-        # Quick HTTP probe (HEAD requests)
+        # Quick HTTP probe (HEAD, GET fallback for method-not-allowed)
         import concurrent.futures
         probed = []
 
         def probe(route):
             url = base_origin + route
-            try:
-                r = _requests.head(url, timeout=5, allow_redirects=True,
-                                   headers={"User-Agent": "SurfaceSweep/1.0"})
-                # 401/403 = exists (restricted), 200/302 = exists
-                if r.status_code in (200, 301, 302, 401, 403, 405):
-                    return (route, r.status_code)
-            except _requests.RequestException:
-                pass
+            status = probe_route(url, timeout=5)
+            if status is not None:
+                return (route, status)
             return None
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:

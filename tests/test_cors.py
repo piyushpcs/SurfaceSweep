@@ -20,6 +20,7 @@ from modules.cors import (
     probe_endpoint,
 )
 from modules.cors.classifier import classify_cors as classify
+from modules.cors.classifier import is_pna_allowed
 from modules.cors.origins import (
     MAX_TEST_ORIGINS,
     THIRD_PARTY_SUFFIXES,
@@ -939,6 +940,47 @@ class TestReportingStep4(unittest.TestCase):
         }
         self.assertEqual(set(fixture.keys()), expected_top)
         self.assertTrue(summary_keys.issubset(fixture["summary"].keys()))
+
+
+class TestPnaClassification(unittest.TestCase):
+    """Private Network Access (CORS-RFC1918) severity ladder — C10."""
+
+    def test_is_pna_allowed(self):
+        self.assertTrue(is_pna_allowed("true"))
+        self.assertTrue(is_pna_allowed("TRUE"))
+        self.assertTrue(is_pna_allowed("1"))
+        self.assertFalse(is_pna_allowed(""))
+        self.assertFalse(is_pna_allowed(None))
+        self.assertFalse(is_pna_allowed("false"))
+
+    def test_wildcard_without_pna_stays_medium(self):
+        sev, detail = classify(EVIL, "*", "", target_origin=TARGET)
+        self.assertEqual(sev, "MEDIUM")
+        self.assertNotIn("Private-Network", detail)
+
+    def test_wildcard_with_pna_elevates_to_high(self):
+        sev, detail = classify(EVIL, "*", "", target_origin=TARGET, acpn="true")
+        self.assertEqual(sev, "HIGH")
+        self.assertIn("Private-Network", detail)
+
+    def test_reflected_with_pna_notes_private_network(self):
+        sev, detail = classify(EVIL, EVIL, "", target_origin=TARGET, acpn="true")
+        self.assertEqual(sev, "HIGH")
+        self.assertIn("Private-Network", detail)
+
+    def test_reflected_creds_with_pna_stays_critical(self):
+        sev, detail = classify(EVIL, EVIL, "true", target_origin=TARGET, acpn="true")
+        self.assertEqual(sev, "CRITICAL")
+        self.assertIn("Private-Network", detail)
+
+    def test_no_acao_pna_ignored(self):
+        sev, detail = classify(EVIL, "", "", target_origin=TARGET, acpn="true")
+        self.assertEqual(sev, "INFO")
+        self.assertNotIn("Private-Network", detail)
+
+    def test_legitimate_origin_untouched_by_pna(self):
+        sev, detail = classify(TARGET, TARGET, "", target_origin=TARGET, acpn="true")
+        self.assertEqual(sev, "INFO")
 
 
 if __name__ == "__main__":

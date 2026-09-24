@@ -13,6 +13,7 @@ from modules.cors.classifier import (
     SEVERITY_ORDER,
     classify_cors,
     is_multi_origin_acao,
+    is_pna_allowed,
     parse_acao_list,
 )
 from modules.cors.origins import (
@@ -50,6 +51,7 @@ __all__ = [
     "origins_equal",
     "parse_acao_list",
     "is_multi_origin_acao",
+    "is_pna_allowed",
     "probe_endpoint",
     "probe_baseline",
     "is_cross_domain_redirect",

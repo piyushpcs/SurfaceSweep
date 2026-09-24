@@ -199,6 +199,7 @@ def probe_endpoint(
                 cors["acac"],
                 target_origin=target_origin,
                 registrable_domain=registrable_domain,
+                acpn=cors.get("acpn", ""),
             )
 
             # Dynamic ACAO (reflected) without Vary: Origin → cache-poisoning signal
