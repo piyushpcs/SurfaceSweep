@@ -6,11 +6,9 @@ Analysis boosts (CORS, JWT) are applied inside the same calculation so
 every recalculation (wayback, SPA, validation) preserves them.
 """
 
-RISK_THRESHOLDS = (
-    (30, "HIGH"),
-    (10, "MEDIUM"),
-    (1, "LOW"),
-)
+from modules.common.constants import CVE_SEVERITY_WEIGHTS, RISK_THRESHOLDS
+
+__all__ = ["CVE_SEVERITY_WEIGHTS", "RISK_THRESHOLDS", "calculate_risk_summary", "risk_level_for_score"]
 
 
 def risk_level_for_score(score):
@@ -38,9 +36,6 @@ def _analysis_boost(result):
     if result.get("jwt"):
         boost += jwt_risk_boost(result["jwt"])
     return boost
-
-
-CVE_SEVERITY_WEIGHTS = {"CRITICAL": 25, "HIGH": 15, "MEDIUM": 8, "LOW": 3}
 
 
 def _cve_boost(result):

@@ -10,7 +10,22 @@ from typing import Optional
 
 import requests
 
-DEFAULT_USER_AGENT = "SurfaceSweep/1.0"
+from modules.common.constants import DEFAULT_USER_AGENT
+
+__all__ = [
+    "DEFAULT_USER_AGENT",
+    "RateLimiter",
+    "cache_text",
+    "clear_text_cache",
+    "configure_http",
+    "default_headers",
+    "fetch_text",
+    "fetch_with_retry",
+    "get_cached_text",
+    "get_page",
+    "parse_retry_after",
+    "reset_http_config",
+]
 
 # Process-wide defaults applied by fetch_with_retry / get_page when the
 # caller does not override headers. Configured once from CLI flags.

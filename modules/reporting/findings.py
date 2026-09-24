@@ -10,8 +10,15 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-# Lower = worse (keep in sync with modules.cors / modules.jwt SEVERITY_ORDER)
-SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
+from modules.common.constants import SEVERITY_ORDER
+
+__all__ = [
+    "SEVERITY_ORDER",
+    "build_executive_summary",
+    "build_findings_feed",
+    "render_executive_summary",
+    "render_findings_feed",
+]
 
 
 def _finding(severity: str, module: str, title: str, detail: str = "",

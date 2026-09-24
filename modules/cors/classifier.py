@@ -2,6 +2,7 @@
 CORS response classification (severity ladder).
 """
 
+from modules.common.constants import SEVERITY_ORDER
 from modules.cors.origins import (
     is_host_suffix_match,
     is_related_host,
@@ -10,14 +11,12 @@ from modules.cors.origins import (
     origins_equal,
 )
 
-SEVERITY_ORDER = {
-    "CRITICAL": 0,
-    "HIGH": 1,
-    "MEDIUM": 2,
-    "LOW": 3,
-    "INFO": 4,
-    "ERROR": 5,
-}
+__all__ = [
+    "SEVERITY_ORDER",
+    "classify_cors",
+    "is_multi_origin_acao",
+    "parse_acao_list",
+]
 
 
 def parse_acao_list(acao):

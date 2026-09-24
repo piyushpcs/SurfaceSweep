@@ -9,6 +9,9 @@ Architecture:
     reporting/    — Output generation (JSON, HTML, Burp/ZAP CSV)
     cors/         — Phase 2: CORS misconfiguration scanner
     jwt/          — Phase 3: JWT security analyzer (complete)
+    common/       — Shared constants and foundation utilities
 """
 
-__version__ = "1.0.0"
+from modules.common.constants import __version__
+
+__all__ = ["__version__"]

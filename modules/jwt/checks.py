@@ -10,9 +10,12 @@ import time
 from collections import Counter
 from urllib.parse import urlparse
 
+from modules.common.constants import SEVERITY_ORDER
 from modules.jwt.crack import _try_crack_hs, try_key_confusion
 from modules.jwt.decode import b64url_decode, decode_jwt
 from modules.jwt.keys import collect_embedded_key_materials
+
+__all__ = ["SEVERITY_ORDER"]
 
 SENSITIVE_CLAIM_KEYS = {
     "admin", "role", "roles", "is_admin", "isAdmin", "permissions",
@@ -34,8 +37,6 @@ _KID_SQLI_RE = re.compile(
     r"\b(union|select|insert|update|delete|drop|alter|exec|truncate)\b",
     re.IGNORECASE,
 )
-
-SEVERITY_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
 
 
 def shannon_entropy(s):

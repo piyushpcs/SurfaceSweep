@@ -8,6 +8,7 @@ All dynamic values are escaped via html.escape before interpolation.
 import json
 from html import escape as _esc
 
+from modules.common.constants import SEVERITY_ORDER as CORS_SEV_ORDER
 from modules.reporting.findings import (
     build_executive_summary,
     build_findings_feed,
@@ -15,10 +16,8 @@ from modules.reporting.findings import (
     render_findings_feed,
 )
 
-
-# Keep in sync with modules.cors.classifier.SEVERITY_ORDER (lower = worse).
-# Inlined to avoid circular import through modules.cors package.
-CORS_SEV_ORDER = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4, "ERROR": 5}
+# Canonical severity rank (lower = worse); same map as modules.common.
+__all__ = ["CORS_SEV_ORDER"]
 
 
 CSS = """
