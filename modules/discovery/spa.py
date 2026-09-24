@@ -562,8 +562,11 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
         queue = list(all_routes.keys())
         visited = set()
         crawled = 0
+        # Overall budget so a chatty site cannot hang the crawl indefinitely
+        import time as _time
+        crawl_deadline = _time.monotonic() + max(15.0, float(timeout) * float(max_routes) * 0.5)
 
-        while queue and crawled < max_routes:
+        while queue and crawled < max_routes and _time.monotonic() < crawl_deadline:
             route = queue.pop(0)
             if route in visited:
                 continue
@@ -573,8 +576,10 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
             crawl_url = base_origin + concrete
 
             try:
-                page.goto(crawl_url, wait_until="networkidle", timeout=10000)
-                page.wait_for_timeout(500)
+                # domcontentloaded: networkidle never settles on long-poll/SSE apps
+                # and was observed hanging multi-minute BFS crawls in live tests.
+                page.goto(crawl_url, wait_until="domcontentloaded", timeout=5000)
+                page.wait_for_timeout(300)
                 crawled += 1
 
                 # Harvest more routes from this page state
