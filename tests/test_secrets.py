@@ -1,4 +1,4 @@
-"""Unit tests for Phase 1.1 Step 1 — secret FP stack (entropy + proximity)."""
+"""Unit tests for Phase 1.1 Steps 1–2 — secret FP stack + structural patterns."""
 
 import unittest
 
@@ -16,9 +16,12 @@ from modules.extraction.secrets import deduplicate_secrets, extract_secrets
 _AWS_KEY = "AKIA" + "ABCDEFGHIJKLMNOP"
 _GOOGLE_KEY = "AIza" + "SyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6"
 _GENERIC_HIGH_ENTROPY = "aB3xY9mN2pQ7rS5tU8vW1xY4zA6bC9dE"
+_SECOND_HIGH_ENTROPY = "Zq7Wn4Kp2Xr8Vt5Yc1Bm6Hd3Lf9Gj0Sa"
 _TWILIO_SID = "AC" + "0123456789abcdef0123456789abcdef"
 # Telegram pattern requires 35 chars after "digits:"
 _TELEGRAM_TOKEN = "1234567890:" + "aB3xY9mN2pQ7rS5tU8vW1xY4zA6bC9dEfGh"
+_STRIPE_SECRET = "sk_live_" + "aB3xY9mN2pQ7rS5tU8vW1xY4"
+_STRIPE_PUBLISHABLE = "pk_live_" + "Zq7Wn4Kp2Xr8Vt5Yc1Bm6Hd3"
 
 
 class TestShannonEntropy(unittest.TestCase):
@@ -171,6 +174,72 @@ class TestDeduplicateSecrets(unittest.TestCase):
         merged = deduplicate_secrets([a, b])
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["sources"], ["a.js", "b.js"])
+
+    def test_same_match_prefers_specific_type(self):
+        match = '"apikey": "%s"' % _GENERIC_HIGH_ENTROPY
+        a = {"type": "Generic Secret", "match": match, "source": "a.js"}
+        b = {"type": "Generic API Key", "match": match, "source": "b.js"}
+        merged = deduplicate_secrets([a, b])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["type"], "Generic API Key")
+        self.assertEqual(merged[0]["sources"], ["a.js", "b.js"])
+
+
+class TestStructuralPatterns(unittest.TestCase):
+    def test_process_env_fallback(self):
+        content = 'const k = process.env.API_SECRET || "%s";' % _GENERIC_HIGH_ENTROPY
+        found = extract_secrets(content, "unit.js")
+        self.assertTrue(any(s["type"] == "Process Env Fallback" for s in found))
+
+    def test_authorization_header_object(self):
+        content = 'headers: { "Authorization": "%s" },' % _SECOND_HIGH_ENTROPY
+        found = extract_secrets(content, "unit.js")
+        self.assertTrue(any(s["type"] == "Authorization Header" for s in found))
+
+    def test_authorization_bearer_stays_bearer_type(self):
+        content = '"Authorization": "Bearer %s",' % _GENERIC_HIGH_ENTROPY
+        found = extract_secrets(content, "unit.js")
+        types = [s["type"] for s in found]
+        self.assertIn("Bearer Token", types)
+        self.assertNotIn("Authorization Header", types)
+
+    def test_x_api_key_header(self):
+        content = '"X-API-Key": "%s",' % _SECOND_HIGH_ENTROPY
+        found = extract_secrets(content, "unit.js")
+        self.assertTrue(any(s["type"] == "X-API-Key Header" for s in found))
+
+    def test_client_secret_query_param(self):
+        content = 'fetch("/oauth?client_secret=%s&redirect=1")' % _GENERIC_HIGH_ENTROPY
+        found = extract_secrets(content, "unit.js")
+        self.assertTrue(any(s["type"] == "Client Secret Query" for s in found))
+
+    def test_basic_auth_object_form(self):
+        b64 = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY="
+        content = '"Authorization": "Basic %s",' % b64
+        found = extract_secrets(content, "unit.js")
+        self.assertTrue(any(s["type"] == "Basic Auth" for s in found))
+
+
+class TestStripeAndOverlap(unittest.TestCase):
+    def test_stripe_secret_not_publishable(self):
+        content = 'const k = "%s";' % _STRIPE_SECRET
+        found = extract_secrets(content, "unit.js")
+        types = [s["type"] for s in found]
+        self.assertIn("Stripe Live Key", types)
+        self.assertNotIn("Stripe Publishable", types)
+
+    def test_stripe_publishable_not_secret(self):
+        content = 'const k = "%s";' % _STRIPE_PUBLISHABLE
+        found = extract_secrets(content, "unit.js")
+        types = [s["type"] for s in found]
+        self.assertIn("Stripe Publishable", types)
+        self.assertNotIn("Stripe Live Key", types)
+
+    def test_apikey_claimed_once_by_specific_type(self):
+        content = '"apikey": "%s",' % _GENERIC_HIGH_ENTROPY
+        found = extract_secrets(content, "unit.js")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["type"], "Generic API Key")
 
 
 if __name__ == "__main__":
