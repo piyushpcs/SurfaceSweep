@@ -120,31 +120,26 @@ VULNERABILITIES = [
     },
     {
         "library": "Bootstrap",
-        "vulnerable_below": "4.3.1",
+        # CVE-2019-8331: fixed in 3.4.1 (3.x line) and 4.3.1 (4.x line).
+        # vulnerable_below alone would flag fixed 3.4.1+ as < 4.3.1.
+        "vulnerable_ranges": [
+            {"from": "0", "below": "3.4.1"},
+            {"from": "4.0.0", "below": "4.3.1"},
+        ],
         "cves": ["CVE-2019-8331"],
         "severity": "MEDIUM",
         "cvss": 6.1,
         "description": "XSS in tooltip/popover data-template, data-content, data-title attributes",
         "fixed_in": "4.3.1 / 3.4.1",
-        "also_affects": lambda v: v.startswith("3.") and v < "3.4.1",
     },
     {
         "library": "Lodash",
         "vulnerable_below": "4.17.21",
         "cves": ["CVE-2021-23337", "CVE-2020-8203"],
         "severity": "HIGH",
-        "cvss": 7.2,
-        "description": "Command injection via _.template; prototype pollution in _.zipObjectDeep",
-        "fixed_in": "4.17.21",
-    },
-    {
-        "library": "Lodash",
-        "vulnerable_below": "4.17.19",
-        "cves": ["CVE-2020-8203"],
-        "severity": "HIGH",
         "cvss": 7.4,
-        "description": "Prototype pollution in _.zipObjectDeep / _.set / _.pick",
-        "fixed_in": "4.17.19",
+        "description": "Command injection via _.template; prototype pollution in _.zipObjectDeep / _.set / _.pick",
+        "fixed_in": "4.17.21",
     },
     {
         "library": "moment.js",
@@ -315,12 +310,45 @@ def detect_libraries_from_content(content, source_url=""):
     return list(found.values())
 
 
+def _matches_vulnerability(version: str, vuln: dict) -> bool:
+    """
+    Return True when version is affected by vuln entry.
+
+    Supports:
+      - vulnerable_from / max_version bounds
+      - vulnerable_below (all versions < bound)
+      - vulnerable_ranges: list of {from, below} half-open intervals
+        (numeric comparison — never lexicographic)
+    """
+    if "vulnerable_from" in vuln and not _version_gte(version, vuln["vulnerable_from"]):
+        return False
+    if "max_version" in vuln and not _version_lte(version, vuln["max_version"]):
+        return False
+
+    if "vulnerable_ranges" in vuln:
+        for rng in vuln["vulnerable_ranges"]:
+            lo = rng.get("from", "0")
+            hi = rng.get("below")
+            if hi is None:
+                continue
+            if _version_gte(version, lo) and _version_lt(version, hi):
+                return True
+        return False
+
+    if "vulnerable_below" in vuln:
+        return _version_lt(version, vuln["vulnerable_below"])
+
+    # No version constraint — treat as always matching for this library
+    return True
+
+
 def check_vulnerabilities(libraries):
     """
     Check detected libraries against local vulnerable-version database.
-    Returns list of vulnerability findings.
+    Returns list of vulnerability findings, merged per (library, version)
+    so overlapping CVE entries are not double-counted in risk scoring.
     """
-    findings = []
+    raw = []
 
     for lib in libraries:
         lib_name = lib["library"]
@@ -329,30 +357,13 @@ def check_vulnerabilities(libraries):
         for vuln in VULNERABILITIES:
             if vuln["library"] != lib_name:
                 continue
+            if not _matches_vulnerability(version, vuln):
+                continue
 
-            # Check vulnerable_from (if defined)
-            if "vulnerable_from" in vuln:
-                if not _version_gte(version, vuln["vulnerable_from"]):
-                    continue
-
-            # Check max_version (if defined)
-            if "max_version" in vuln:
-                if not _version_lte(version, vuln["max_version"]):
-                    continue
-
-            # Check vulnerable_below
-            if "vulnerable_below" in vuln:
-                if not _version_lt(version, vuln["vulnerable_below"]):
-                    # Also check also_affects callback for special cases
-                    if "also_affects" in vuln and vuln["also_affects"](version):
-                        pass  # Fall through to add finding
-                    else:
-                        continue
-
-            findings.append({
+            raw.append({
                 "library": lib_name,
                 "version": version,
-                "cves": vuln["cves"],
+                "cves": list(vuln["cves"]),
                 "severity": vuln["severity"],
                 "cvss": vuln.get("cvss"),
                 "description": vuln["description"],
@@ -360,7 +371,24 @@ def check_vulnerabilities(libraries):
                 "source_file": lib.get("file", ""),
             })
 
-    return findings
+    # Merge findings for the same library+version (union CVEs, keep max severity)
+    severity_rank = {"LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
+    merged: dict = {}
+    for f in raw:
+        key = (f["library"], f["version"])
+        if key not in merged:
+            merged[key] = f
+            continue
+        existing = merged[key]
+        existing["cves"] = sorted(set(existing["cves"]) | set(f["cves"]))
+        if severity_rank.get(f["severity"], 0) > severity_rank.get(existing["severity"], 0):
+            existing["severity"] = f["severity"]
+            existing["description"] = f["description"]
+            existing["fixed_in"] = f["fixed_in"]
+        if f.get("cvss") and (not existing.get("cvss") or f["cvss"] > existing["cvss"]):
+            existing["cvss"] = f["cvss"]
+
+    return list(merged.values())
 
 
 def query_osv(libraries, timeout=10):
