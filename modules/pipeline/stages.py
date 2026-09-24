@@ -15,7 +15,13 @@ from modules.analysis import (
 from modules.analysis.validator import build_method_map
 from modules.common.console import emit, ok
 from modules.cors import collect_js_origins, scan_cors
-from modules.discovery import crawl_spa_routes, discover_robots_and_sitemap, get_wayback_endpoints
+from modules.discovery import (
+    crawl_spa_routes,
+    discover_robots_and_sitemap,
+    get_wayback_endpoints,
+    probe_graphql_endpoints,
+    collect_graphql_candidates,
+)
 from modules.extraction import (
     calculate_risk_summary,
     is_static_asset,
@@ -359,6 +365,46 @@ def stage_validate(ctx: ScanContext) -> None:
         if unverified:
             msg += f"; {unverified} unverified (timeout/error) kept in pool"
         ctx.log(msg)
+
+
+def stage_graphql(ctx: ScanContext) -> None:
+    """
+    Probe candidate GraphQL endpoints for open introspection (Phase F3).
+
+    Runs after validate so path_status can prefer live endpoints. Writes
+    result["graphql"] and recomputes risk_summary.
+    """
+    args = ctx.args
+    result = ctx.require_result()
+    ctx.log("\n[*] --- GraphQL Introspection Probe ---")
+    candidates = collect_graphql_candidates(result, args.target)
+    if not candidates:
+        ctx.log("[*] No GraphQL-like endpoints to probe")
+        result["graphql"] = {
+            "endpoints": [],
+            "findings": [],
+            "endpoints_tested": 0,
+            "introspection_open": 0,
+            "summary": {"endpoints_tested": 0, "introspection_open": 0},
+        }
+        result["risk_summary"] = calculate_risk_summary(result)
+        return
+
+    gql = probe_graphql_endpoints(
+        candidates,
+        timeout=getattr(args, "graphql_timeout", 5.0),
+        verbose=ctx.verbose,
+        headers=ctx.headers if ctx.headers else None,
+    )
+    result["graphql"] = gql
+    result["risk_summary"] = calculate_risk_summary(result)
+    if ctx.verbose:
+        n = gql.get("introspection_open", 0)
+        tested = gql.get("endpoints_tested", 0)
+        if n:
+            ctx.log(f"[!] {n}/{tested} endpoint(s) expose GraphQL introspection")
+        else:
+            ctx.log(f"[*] {tested} endpoint(s) probed — no open introspection")
 
 
 def stage_export(ctx: ScanContext) -> None:

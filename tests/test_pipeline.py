@@ -69,6 +69,8 @@ def _args(**overrides):
         jwt_export=None,
         jwt_network=False,
         jwt_network_timeout=5.0,
+        graphql=False,
+        graphql_timeout=5.0,
         quiet=False,
         proxy=None,
         insecure=False,
@@ -91,12 +93,21 @@ class TestStageList(unittest.TestCase):
         names = stage_names(_args(
             waf=True, wayback=True, full=True, cve=True, spa=True,
             cors=True, jwt=True, validate=True, burp=True, zap=True,
+            graphql=True,
         ))
         self.assertEqual(names, [
             "waf_detect", "wayback_fetch", "scan", "wayback_merge",
-            "waf_inject", "cve", "spa", "jwt", "validate", "cors",
-            "export", "report",
+            "waf_inject", "cve", "spa", "jwt", "validate", "graphql",
+            "cors", "export", "report",
         ])
+
+    def test_graphql_runs_after_validate_before_cors(self):
+        names = stage_names(_args(graphql=True, validate=True, cors=True))
+        self.assertLess(names.index("validate"), names.index("graphql"))
+        self.assertLess(names.index("graphql"), names.index("cors"))
+
+    def test_graphql_off_by_default(self):
+        self.assertNotIn("graphql", stage_names(_args()))
 
     def test_cors_runs_after_validate(self):
         """Phase 2.2: CORS must probe post-validation (live endpoints only)."""

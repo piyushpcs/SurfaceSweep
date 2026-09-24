@@ -144,6 +144,17 @@ def build_findings_feed(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             url=str(item.get("url", "")),
         ))
 
+    # --- GraphQL introspection (Phase F3) ---
+    for f in (result.get("graphql") or {}).get("findings") or []:
+        if f.get("severity") in ("INFO", "ERROR"):
+            continue
+        feed.append(_finding(
+            f.get("severity", "HIGH"), "graphql",
+            "GraphQL introspection enabled",
+            str(f.get("detail", ""))[:140],
+            url=str(f.get("url", "")),
+        ))
+
     feed.sort(key=lambda f: (SEVERITY_ORDER.get(f["severity"], 9),
                              f["module"], f["title"]))
     return feed
@@ -189,6 +200,7 @@ def build_executive_summary(result: Dict[str, Any],
             "spa_routes": len(result.get("spa_routes") or []),
             "pii": len(result.get("pii_found") or []),
             "params": len(result.get("params_found") or []),
+            "graphql_findings": len((result.get("graphql") or {}).get("findings") or []),
         },
     }
 

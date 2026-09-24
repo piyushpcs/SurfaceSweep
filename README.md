@@ -8,7 +8,7 @@ Extract API endpoints and secrets from a target's JavaScript, validate what is l
 check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-781%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-796%20passing-brightgreen)](#testing)
 [![CI](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml/badge.svg)](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/piyushpcs/SurfaceSweep)](https://github.com/piyushpcs/SurfaceSweep/commits/main)
@@ -41,6 +41,7 @@ to build a single inventory of endpoints, then layers on checks that matter in a
 | CORS | Spoofed Origin matrix, preflight + GET/POST, redirect-aware, PoC HTML |
 | JWT | Offline decode, weak-HMAC crack, `alg=none`, JWKS key-confusion (optional network) |
 | Risk | Weighted score (CVE + CORS + JWT) with evidence in JSON and HTML reports |
+| GraphQL | Opt-in introspection probe — flags publicly readable schemas |
 
 ## Features
 
@@ -112,7 +113,7 @@ python main.py https://target.com --browser
 python main.py https://target.com --full --validate --html
 
 # Everything on
-python main.py https://target.com -f --validate --burp --zap --waf --wayback --cve --spa --cors --jwt --html
+python main.py https://target.com -f --validate --burp --zap --waf --wayback --cve --spa --cors --jwt --graphql --html
 ```
 
 ### More examples
@@ -120,6 +121,9 @@ python main.py https://target.com -f --validate --burp --zap --waf --wayback --c
 ```bash
 # Authenticated scan
 python main.py https://target.com --cookie "session=abc123" -H "X-Api-Key: value"
+
+# GraphQL introspection probe
+python main.py https://target.com --graphql --html
 
 # Export for Burp Suite / ZAP
 python main.py https://target.com -f --burp --zap
@@ -191,6 +195,8 @@ Batch mode writes one JSON per host next to `-o` (e.g. `reports/batch_app.exampl
 | `--jwt-export` | Write per-token JWT findings as NDJSON to FILE |
 | `--jwt-network` | Fetch jku/x5u JWKS for key-confusion checks (SSRF-guarded) |
 | `--jwt-network-timeout` | JWKS fetch timeout seconds (default: 5) |
+| `--graphql` | Probe discovered GraphQL endpoints for open introspection |
+| `--graphql-timeout` | GraphQL introspection probe timeout seconds (default: 5) |
 | `--cookie` | Cookie header for authenticated scans |
 | `--header` | Custom header (repeatable: `-H 'X-Api-Key: value'`) |
 | `--timeout` | Browser page load timeout in seconds (default: 30) |
@@ -216,7 +222,7 @@ Exit codes: `0` success · `1` findings at/above `--fail-on` · `2` usage error 
 Pipeline stage order:
 
 ```text
-waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve → spa → jwt → validate → cors → export → report
+waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve → spa → jwt → validate → graphql → cors → export → report
 ```
 
 ```text
@@ -274,9 +280,9 @@ coverage run -m unittest discover -s tests -q
 coverage report -m
 ```
 
-- **781 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
+- **796 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
 - Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation/PNA,
-  JWT decode/crack/JWKS, pipeline stage order, report schema (`schema_version: 1`), finding feeds,
+  JWT decode/crack/JWKS, GraphQL introspection probe, pipeline stage order, report schema (`schema_version: 1`), finding feeds,
   scan diff, SARIF export, and multi-target batch mode
 - **CI**: GitHub Actions runs the suite on Python 3.10 and 3.12 with coverage on every push/PR
 - Local vulnerable API for manual checks: `python testbed/vuln_api.py` (port **5555**)

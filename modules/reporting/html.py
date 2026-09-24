@@ -727,6 +727,54 @@ def render_jwt(jwt_result):
     )
 
 
+def render_graphql(graphql_result):
+    """Render GraphQL introspection probe section (Phase F3)."""
+    if not graphql_result:
+        return ""
+    endpoints = graphql_result.get("endpoints") or []
+    findings = graphql_result.get("findings") or []
+    if not endpoints and not findings:
+        return ""
+    tested = graphql_result.get("endpoints_tested", len(endpoints))
+    open_n = graphql_result.get("introspection_open", 0)
+    summary = (
+        '<div class="stats">'
+        + _stat(tested, "Endpoints probed")
+        + _stat(open_n, "Introspection open", "#e74c3c" if open_n else "#484f58")
+        + "</div>"
+    )
+    rows = []
+    for ep in endpoints:
+        enabled = bool(ep.get("introspection_enabled"))
+        badge = (
+            '<span class="badge badge-high">OPEN</span>'
+            if enabled
+            else '<span class="badge badge-live">blocked/off</span>'
+        )
+        detail = ep.get("error") or (
+            f"types={ep.get('type_count', 0)} query={ep.get('query_type') or '—'}"
+        )
+        rows.append(
+            f'<tr><td>{badge}</td>'
+            f'<td><code>{_esc(str(ep.get("url", "")))}</code></td>'
+            f'<td>{_esc(str(ep.get("status") or "—"))}</td>'
+            f'<td class="muted">{_esc(str(detail)[:140])}</td></tr>'
+        )
+    table = (
+        '<table><thead><tr><th>Status</th><th>Endpoint</th>'
+        '<th>HTTP</th><th>Detail</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+    )
+    return f"<h2>GraphQL Introspection</h2>{summary}{table}"
+
+
+def _stat(n, label, color="#484f58"):
+    return (
+        f'<div class="stat"><div class="num" style="color:{color}">{n}</div>'
+        f'<div class="label">{label}</div></div>'
+    )
+
+
 def build_html(result):
     """Build the full HTML report from scan results."""
     risk = result.get("risk_summary", {})
@@ -772,6 +820,7 @@ def build_html(result):
   <div class="stat"><div class="num">{len(result.get('params_found', []))}</div><div class="label">Parameters</div></div>
   <div class="stat"><div class="num">{len((result.get('cors') or {}).get('findings', []))}</div><div class="label">CORS Findings</div></div>
   <div class="stat"><div class="num">{(result.get('jwt') or {}).get('tokens_analyzed', 0)}</div><div class="label">JWTs Analyzed</div></div>
+  <div class="stat"><div class="num">{(result.get('graphql') or {}).get('introspection_open', 0)}</div><div class="label">GraphQL Open</div></div>
 </div>
 
 {render_executive_summary(result.get("executive_summary") or build_executive_summary(result, result.get("findings") or build_findings_feed(result)))}
@@ -806,6 +855,8 @@ def build_html(result):
 {render_cors(result.get('cors', {}))}
 
 {render_jwt(result.get('jwt'))}
+
+{render_graphql(result.get('graphql') or {})}
 
 <h2>Exposed Source Maps</h2>
 {render_list(result.get('source_maps_found', []), 'None found')}

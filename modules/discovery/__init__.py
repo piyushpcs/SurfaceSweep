@@ -2,6 +2,12 @@
 Discovery — expand attack surface via SPA routes and Wayback Machine.
 """
 
+from modules.discovery.graphql import (
+    INTROSPECTION_QUERY,
+    collect_graphql_candidates,
+    probe_graphql_endpoints,
+    probe_introspection,
+)
 from modules.discovery.robots import discover_robots_and_sitemap, parse_robots, parse_sitemap_locs
 from modules.discovery.spa import (
     crawl_spa_routes,
@@ -16,4 +22,6 @@ __all__ = [
     "get_wayback_endpoints", "get_wayback_js_urls", "fetch_wayback_js",
     "discover_robots_and_sitemap", "parse_robots", "parse_sitemap_locs",
     "probe_route",
+    "INTROSPECTION_QUERY", "collect_graphql_candidates",
+    "probe_graphql_endpoints", "probe_introspection",
 ]

@@ -1,9 +1,10 @@
 """
 Pipeline runner — builds the ordered stage list from CLI flags and executes it.
 
-Stage order (Phase 2.2: CORS runs after validate so probes hit live endpoints):
+Stage order (Phase 2.2: CORS runs after validate so probes hit live endpoints;
+Phase F3: graphql runs after validate, before cors):
   waf_detect → wayback_fetch → scan → wayback_merge → waf_inject →
-  cve → spa → jwt → validate → cors → export → report
+  cve → spa → jwt → validate → graphql → cors → export → report
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from modules.pipeline.stages import (
     stage_cors,
     stage_cve,
     stage_export,
+    stage_graphql,
     stage_jwt,
     stage_report,
     stage_scan,
@@ -41,6 +43,7 @@ _STAGE_SPECS: List[Tuple[str, StageFn, Callable[[Namespace], bool]]] = [
     ("spa", stage_spa, lambda a: bool(a.spa)),
     ("jwt", stage_jwt, lambda a: bool(a.jwt)),
     ("validate", stage_validate, lambda a: bool(a.validate)),
+    ("graphql", stage_graphql, lambda a: bool(getattr(a, "graphql", False))),
     ("cors", stage_cors, lambda a: bool(a.cors)),
     ("export", stage_export, lambda a: bool(a.burp or a.zap or getattr(a, "cors_poc", False) or getattr(a, "sarif", False) or getattr(a, "wordlist", None))),
     ("report", stage_report, lambda a: True),
@@ -115,7 +118,8 @@ def _stamp_meta(ctx: ScanContext, finished_at) -> None:
     flags = sorted(
         name for name in (
             "waf", "wayback", "cve", "osv", "spa", "cors", "jwt",
-            "validate", "burp", "zap", "html", "html_only", "full", "browser",
+            "validate", "graphql", "burp", "zap", "html", "html_only",
+            "full", "browser",
         )
         if getattr(args, name, False)
     )

@@ -54,6 +54,8 @@ def _args(**overrides):
         jwt_export=None,
         jwt_network=False,
         jwt_network_timeout=5.0,
+        graphql=False,
+        graphql_timeout=5.0,
         quiet=False,
     )
     base.update(overrides)
