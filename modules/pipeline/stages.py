@@ -54,6 +54,12 @@ def stage_waf_detect(ctx: ScanContext) -> None:
 def stage_wayback_fetch(ctx: ScanContext) -> None:
     """Prefetch historical JS endpoints from the Wayback Machine."""
     ctx.log("\n[*] --- Wayback Machine ---")
+    host = urlparse(ctx.args.target).hostname or ""
+    # Skip non-routable / local hosts — archive.org has nothing useful for them
+    if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or host.startswith("127.") or host.startswith("192.168."):
+        ctx.log(f"[*] Skipping Wayback for local/private host: {host}")
+        ctx.wayback_result = {"js_files": [], "endpoints": set(), "secrets": [], "sinks": [], "internal_hosts": [], "jwts": [], "pii": [], "params": [], "errors": []}
+        return
     target_domain = urlparse(ctx.args.target).netloc
     ctx.wayback_result = get_wayback_endpoints(target_domain, limit=30, verbose=ctx.verbose)
 

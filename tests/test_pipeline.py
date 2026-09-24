@@ -164,6 +164,44 @@ class TestStageList(unittest.TestCase):
             self.assertTrue(callable(fn), name)
 
 
+class TestWaybackLocalSkip(unittest.TestCase):
+    """stage_wayback_fetch must skip local/private hosts (archive.org is useless for them)."""
+
+    def _ctx(self, target):
+        args = _args(target=target, wayback=True)
+        ctx = ScanContext(args, verbose=False)
+        return ctx
+
+    @mock.patch("modules.pipeline.stages.get_wayback_endpoints")
+    def test_skips_localhost(self, wb_mock):
+        from modules.pipeline.stages import stage_wayback_fetch
+
+        ctx = self._ctx("http://127.0.0.1:5555/")
+        stage_wayback_fetch(ctx)
+        wb_mock.assert_not_called()
+        self.assertEqual(ctx.wayback_result["js_files"], [])
+
+    @mock.patch("modules.pipeline.stages.get_wayback_endpoints")
+    def test_skips_localhost_name(self, wb_mock):
+        from modules.pipeline.stages import stage_wayback_fetch
+
+        ctx = self._ctx("http://localhost:3000/")
+        stage_wayback_fetch(ctx)
+        wb_mock.assert_not_called()
+
+    @mock.patch("modules.pipeline.stages.get_wayback_endpoints")
+    def test_queries_public_domain(self, wb_mock):
+        from modules.pipeline.stages import stage_wayback_fetch
+
+        wb_mock.return_value = {"js_files": [], "endpoints": set(), "secrets": [],
+                                "sinks": [], "internal_hosts": [], "jwts": [],
+                                "pii": [], "params": [], "errors": []}
+        ctx = self._ctx("https://example.com/")
+        stage_wayback_fetch(ctx)
+        wb_mock.assert_called_once()
+        self.assertEqual(wb_mock.call_args[0][0], "example.com")
+
+
 class TestScanContext(unittest.TestCase):
     def test_require_result_before_scan_raises(self):
         ctx = ScanContext(_args(), verbose=False)
