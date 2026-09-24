@@ -192,7 +192,7 @@ def _ctx(result, args):
 
 
 class TestSarifStageWiring(unittest.TestCase):
-    """stage_export / stage_report must honor --sarif (was dropped in D2 wiring)."""
+    """stage_report must honor --sarif; stage_export must not double-write it."""
 
     def _args(self, out, **flags):
         base = dict(
@@ -202,14 +202,15 @@ class TestSarifStageWiring(unittest.TestCase):
         base.update(flags)
         return Namespace(**base)
 
-    def test_stage_export_writes_sarif(self):
+    def test_stage_export_does_not_write_sarif(self):
+        """SARIF is a report-stage artifact — export must not duplicate it."""
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "scan.json")
             stage_export(_ctx(_minimal_result(), self._args(out, sarif=True)))
-            sarif_path = output_paths(out)["sarif"]
-            self.assertTrue(os.path.isfile(sarif_path), "stage_export ignored --sarif")
-            with open(sarif_path) as fh:
-                self.assertEqual(json.load(fh)["version"], "2.1.0")
+            self.assertFalse(
+                os.path.isfile(output_paths(out)["sarif"]),
+                "stage_export wrote SARIF (double-export bug)",
+            )
 
     def test_stage_report_writes_sarif(self):
         with tempfile.TemporaryDirectory() as tmp:

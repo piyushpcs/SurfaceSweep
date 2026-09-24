@@ -457,7 +457,7 @@ def stage_export(ctx: ScanContext) -> None:
         write_json=False, write_html=False,
         write_burp=plan["write_burp"], write_zap=plan["write_zap"],
         write_cors_poc=plan["write_cors_poc"],
-        write_sarif=plan["write_sarif"],
+        write_sarif=False,
         write_wordlist=False,
         verbose=ctx.verbose,
     )
