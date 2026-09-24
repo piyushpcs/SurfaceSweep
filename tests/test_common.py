@@ -239,6 +239,105 @@ class TestConsole(unittest.TestCase):
         src = inspect.getsource(main_mod.main)
         self.assertIn("configure_console", src)
 
+    def test_emit_respects_quiet_and_file(self):
+        import io
+        from contextlib import redirect_stdout
+        from modules.common.console import configure_console, emit
+
+        configure_console(quiet=False)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            emit("[*] raw line")
+        self.assertEqual(buf.getvalue(), "[*] raw line\n")
+
+        configure_console(quiet=True)
+        buf2 = io.StringIO()
+        with redirect_stdout(buf2):
+            emit("[*] hidden")
+        self.assertEqual(buf2.getvalue(), "")
+        configure_console(quiet=False)
+
+    def test_emit_explicit_file_bypasses_stdout(self):
+        import io
+        from modules.common.console import configure_console, emit
+
+        configure_console(quiet=False)
+        buf = io.StringIO()
+        emit("[+] to-file", file=buf)
+        self.assertEqual(buf.getvalue(), "[+] to-file\n")
+
+
+class TestScanContextResult(unittest.TestCase):
+    def test_require_result_raises_before_scan(self):
+        from argparse import Namespace
+        from modules.pipeline.context import ScanContext
+
+        ctx = ScanContext(Namespace(), verbose=False)
+        with self.assertRaises(RuntimeError):
+            ctx.require_result()
+
+    def test_require_result_returns_scan_result(self):
+        from argparse import Namespace
+        from modules.common.result import new_scan_result
+        from modules.pipeline.context import ScanContext
+
+        ctx = ScanContext(Namespace(), verbose=False)
+        ctx.result = new_scan_result("https://x.test")
+        out = ctx.require_result()
+        self.assertEqual(out["target"], "https://x.test")
+        self.assertIn("secrets_found", out)
+
+    def test_log_respects_verbose(self):
+        import io
+        from argparse import Namespace
+        from contextlib import redirect_stdout
+        from modules.pipeline.context import ScanContext
+
+        quiet_ctx = ScanContext(Namespace(), verbose=False)
+        loud_ctx = ScanContext(Namespace(), verbose=True)
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            quiet_ctx.log("[*] nope")
+            loud_ctx.log("[*] yes")
+        self.assertEqual(buf.getvalue(), "[*] yes\n")
+
+
+class TestFoundationContracts(unittest.TestCase):
+    def test_no_bare_print_in_modules(self):
+        import pathlib
+        import re
+
+        root = pathlib.Path(__file__).resolve().parents[1] / "modules"
+        offenders = []
+        for path in root.rglob("*.py"):
+            if path.name == "console.py":
+                continue
+            text = path.read_text(encoding="utf-8")
+            for i, line in enumerate(text.splitlines(), 1):
+                if re.search(r"\bprint\s*\(", line) and "file=" not in line:
+                    offenders.append(f"{path.relative_to(root.parent)}:{i}")
+        self.assertEqual(offenders, [], f"bare print() found: {offenders}")
+
+    def test_common_package_exports(self):
+        import modules.common as common
+
+        for name in (
+            "SEVERITY_ORDER", "RISK_THRESHOLDS", "CVE_SEVERITY_WEIGHTS",
+            "DEFAULT_USER_AGENT", "__version__", "ScanResult", "new_scan_result",
+            "RESULT_SCHEMA_VERSION", "configure_console", "info", "ok", "warn",
+            "HttpClient" if hasattr(common, "HttpClient") else "detail",
+        ):
+            self.assertTrue(hasattr(common, name), f"missing export: {name}")
+
+    def test_new_scan_result_lists_not_shared(self):
+        from modules.common.result import new_scan_result
+
+        a = new_scan_result("https://a.test")
+        b = new_scan_result("https://b.test")
+        a["secrets_found"].append({"type": "x"})
+        self.assertEqual(b["secrets_found"], [])
+        self.assertIsNot(a["errors"], b["errors"])
+
 
 if __name__ == "__main__":
     unittest.main()
