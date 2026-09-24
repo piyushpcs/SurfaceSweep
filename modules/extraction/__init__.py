@@ -47,6 +47,7 @@ from modules.extraction.risk import calculate_risk_summary, risk_level_for_score
 from modules.extraction.deobfuscator import deobfuscate
 from modules.extraction.ast import extract_endpoints_ast, ast_is_available
 from modules.analysis.sinks import detect_sinks, deduplicate_sinks
+from modules.analysis.pii import detect_pii, deduplicate_pii
 from modules.reporting.html import save_report, save_html_report
 
 __all__ = [
@@ -62,6 +63,7 @@ __all__ = [
     "is_noise", "is_static_asset", "find_internal_hosts",
     "extract_secrets", "deduplicate_secrets",
     "detect_sinks", "deduplicate_sinks",
+    "detect_pii", "deduplicate_pii",
     "RateLimiter", "fetch_with_retry", "get_page",
     "get_registrable_domain", "is_same_scope",
     "calculate_risk_summary",

@@ -22,6 +22,7 @@ from modules.extraction.deobfuscator import deobfuscate
 from modules.extraction.ast import extract_endpoints_ast, ast_is_available
 from modules.extraction.sourcemaps import collect_source_map_sources, load_source_map
 from modules.analysis.sinks import detect_sinks, deduplicate_sinks
+from modules.analysis.pii import detect_pii, deduplicate_pii
 from modules.jwt import extract_jwts, deduplicate_jwts
 
 
@@ -79,7 +80,7 @@ def discover_js_chunks(js_content, base_js_url):
 def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
     """
     Run all extraction passes (regex + AST) over a blob of JS text.
-    Returns (endpoints, secrets, deobf_findings, sinks, internal_hosts, jwts).
+    Returns (endpoints, secrets, deobf_findings, sinks, internal_hosts, jwts, pii).
     """
     deobf_findings = []
     if do_deobfuscate:
@@ -124,10 +125,13 @@ def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
     # Dedicated JWT extraction (populates jwts_found for Phase 3 analysis)
     jwts = extract_jwts(content, source_label=source_label)
 
+    # PII quick wins (emails / phones / PANs / SSNs)
+    pii = detect_pii(content, source_label)
+
     # Filter noise from combined AST + regex results
     endpoints = {e for e in endpoints if not is_noise(e) and not e.startswith("//")}
 
-    return endpoints, secrets, deobf_findings, sinks, internal, jwts
+    return endpoints, secrets, deobf_findings, sinks, internal, jwts, pii
 
 
 def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
@@ -135,14 +139,14 @@ def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
     try:
         resp = fetch_with_retry(js_url, timeout=timeout, limiter=limiter)
         if resp is None:
-            return {"source": js_url, "error": "Failed after retries", "endpoints": set(), "secrets": [], "linked_js": set(), "sinks": [], "internal_hosts": [], "jwts": []}
+            return {"source": js_url, "error": "Failed after retries", "endpoints": set(), "secrets": [], "linked_js": set(), "sinks": [], "internal_hosts": [], "jwts": [], "pii": []}
 
         content_type = resp.headers.get("Content-Type", "")
         text = resp.text if "json" not in content_type.lower() else ""
         if text:
-            endpoints, secrets, deobf, sinks, internal, jwts = extract_from_text(text, js_url, use_ast=use_ast)
+            endpoints, secrets, deobf, sinks, internal, jwts, pii = extract_from_text(text, js_url, use_ast=use_ast)
         else:
-            endpoints, secrets, deobf, sinks, internal, jwts = set(), [], [], [], [], []
+            endpoints, secrets, deobf, sinks, internal, jwts, pii = set(), [], [], [], [], [], []
 
         # Source map: comment / data: URI / conventional .map — then rescan sourcesContent
         source_map = None
@@ -150,7 +154,7 @@ def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
         if map_obj is not None:
             source_map = map_report
             for label, original_source in collect_source_map_sources(map_obj, js_url):
-                o_eps, o_secrets, o_deobf, o_sinks, o_internal, o_jwts = extract_from_text(
+                o_eps, o_secrets, o_deobf, o_sinks, o_internal, o_jwts, o_pii = extract_from_text(
                     original_source, label, use_ast=use_ast
                 )
                 endpoints |= o_eps
@@ -159,6 +163,7 @@ def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
                 sinks.extend(o_sinks)
                 internal.extend(o_internal)
                 jwts.extend(o_jwts)
+                pii.extend(o_pii)
 
         linked_js = discover_js_chunks(text, js_url) if text else set()
 
@@ -172,9 +177,10 @@ def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
             "sinks": sinks,
             "internal_hosts": internal,
             "jwts": jwts,
+            "pii": pii,
         }
     except requests.RequestException as e:
-        return {"source": js_url, "error": str(e), "endpoints": set(), "secrets": [], "linked_js": set(), "deobfuscation_findings": [], "sinks": [], "internal_hosts": [], "jwts": []}
+        return {"source": js_url, "error": str(e), "endpoints": set(), "secrets": [], "linked_js": set(), "deobfuscation_findings": [], "sinks": [], "internal_hosts": [], "jwts": [], "pii": []}
 
 
 def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=True, use_ast=True):
@@ -196,6 +202,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         "deobfuscation_findings": [],
         "sinks_found": [],
         "internal_hosts_found": [],
+        "pii_found": [],
         "errors": [],
         "scan_depth": max_depth
     }
@@ -221,21 +228,23 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
     all_sinks = []
     all_internal = []
     all_jwts = []
+    all_pii = []
 
     for i, content in enumerate(inline_js):
-        eps, secs, deobf, snks, intr, jwts = extract_from_text(content, f"inline_script_{i}", do_deobfuscate=deobfuscate, use_ast=use_ast)
+        eps, secs, deobf, snks, intr, jwts, pii = extract_from_text(content, f"inline_script_{i}", do_deobfuscate=deobfuscate, use_ast=use_ast)
         all_endpoints.update(eps)
         all_secrets.extend(secs)
         all_sinks.extend(snks)
         all_internal.extend(intr)
         all_jwts.extend(jwts)
+        all_pii.extend(pii)
         result["deobfuscation_findings"].extend(deobf)
     result["inline_scripts_scanned"] = len(inline_js)
 
     visited_js = set()
 
     def scan_js_urls(js_urls, depth):
-        nonlocal all_endpoints, all_secrets, all_sinks, all_internal, all_jwts
+        nonlocal all_endpoints, all_secrets, all_sinks, all_internal, all_jwts, all_pii
         if not js_urls or depth > max_depth:
             return
 
@@ -263,6 +272,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
                 all_sinks.extend(data.get("sinks", []))
                 all_internal.extend(data.get("internal_hosts", []))
                 all_jwts.extend(data.get("jwts", []))
+                all_pii.extend(data.get("pii", []))
                 result["deobfuscation_findings"].extend(data.get("deobfuscation_findings", []))
 
                 if data["source_map_found"]:
@@ -293,6 +303,7 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
     result["secrets_found"] = deduplicate_secrets(all_secrets)
     result["jwts_found"] = deduplicate_jwts(all_jwts)
     result["sinks_found"] = deduplicate_sinks(all_sinks)
+    result["pii_found"] = deduplicate_pii(all_pii)
     seen_host = set()
     for h in all_internal:
         key = h["match"]
@@ -322,6 +333,8 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
             print(f"[!] {len(result['sinks_found'])} dangerous sink pattern(s) found")
         if result["internal_hosts_found"]:
             print(f"[!] {len(result['internal_hosts_found'])} internal/private host reference(s) found")
+        if result.get("pii_found"):
+            print(f"[!] {len(result['pii_found'])} potential PII item(s) found")
         print(f"[+] Risk level: {result['risk_summary']['level']} (score: {result['risk_summary']['score']})")
 
     return result
@@ -343,6 +356,7 @@ def merge_results(static_result, browser_result):
         "deobfuscation_findings": [],
         "sinks_found": [],
         "internal_hosts_found": [],
+        "pii_found": [],
         "network_requests": [],
         "intercepted_endpoints": [],
         "errors": [],
@@ -421,6 +435,12 @@ def merge_results(static_result, browser_result):
                               "description": s.get("description", ""), "count": s.get("count", 1),
                               "source": src})
     merged["sinks_found"] = deduplicate_sinks(all_sinks)
+
+    all_pii = []
+    for p in static_result.get("pii_found", []) + browser_result.get("pii_found", []):
+        for src in p.get("sources", [p.get("source", "unknown")]):
+            all_pii.append({**p, "source": src})
+    merged["pii_found"] = deduplicate_pii(all_pii)
 
     seen_host = set()
     for h in static_result.get("internal_hosts_found", []) + browser_result.get("internal_hosts_found", []):

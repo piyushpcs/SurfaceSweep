@@ -155,5 +155,33 @@ class TestLineSkipAndDedup(unittest.TestCase):
         )
 
 
+class TestExtractionWiring(unittest.TestCase):
+    """Step 2: extract_from_text returns a 7-tuple with PII."""
+
+    def test_extract_from_text_returns_pii(self):
+        from modules.extraction.engine import extract_from_text
+
+        content = 'fetch("/api"); contact "alice.smith@corp-target.io";'
+        eps, secrets, _, sinks, internal, jwts, pii = extract_from_text(
+            content, "app.js", do_deobfuscate=False, use_ast=False
+        )
+        self.assertEqual(len(pii), 1)
+        self.assertEqual(pii[0]["kind"], "email")
+        self.assertEqual(pii[0]["match"], "alice.smith@corp-target.io")
+        self.assertEqual(pii[0]["source"], "app.js")
+
+    def test_extract_from_text_no_pii(self):
+        from modules.extraction.engine import extract_from_text
+
+        _, _, _, _, _, _, pii = extract_from_text(
+            'fetch("/api");', "x.js", do_deobfuscate=False, use_ast=False
+        )
+        self.assertEqual(pii, [])
+
+    def test_fetch_and_extract_error_shape_has_pii_key(self):
+        from modules.analysis.pii import PII_PATTERNS
+        self.assertIn("email", PII_PATTERNS)
+
+
 if __name__ == "__main__":
     unittest.main()

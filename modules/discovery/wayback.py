@@ -99,12 +99,12 @@ def get_wayback_endpoints(target_domain, limit=50, threads=5, verbose=True):
     js_urls = get_wayback_js_urls(target_domain, limit=limit, verbose=verbose)
 
     if not js_urls:
-        return {"js_files": [], "endpoints": set(), "secrets": [], "sinks": [], "internal_hosts": [], "jwts": [], "errors": []}
+        return {"js_files": [], "endpoints": set(), "secrets": [], "sinks": [], "internal_hosts": [], "jwts": [], "pii": [], "errors": []}
 
     if verbose:
         print(f"[*] Fetching {len(js_urls)} archived JS files...")
 
-    results = {"js_files": [], "endpoints": set(), "secrets": [], "sinks": [], "internal_hosts": [], "jwts": [], "errors": []}
+    results = {"js_files": [], "endpoints": set(), "secrets": [], "sinks": [], "internal_hosts": [], "jwts": [], "pii": [], "errors": []}
 
     from modules.extraction.engine import extract_from_text
 
@@ -116,11 +116,12 @@ def get_wayback_endpoints(target_domain, limit=50, threads=5, verbose=True):
                 continue
 
             results["js_files"].append(data["original_url"])
-            endpoints, secrets, _, sinks, internal, jwts = extract_from_text(data["content"], data["original_url"])
+            endpoints, secrets, _, sinks, internal, jwts, pii = extract_from_text(data["content"], data["original_url"])
             results["endpoints"].update(endpoints)
             results["secrets"].extend(secrets)
             results["sinks"].extend(sinks)
             results["jwts"].extend(jwts)
+            results["pii"].extend(pii)
             for h in internal:
                 h["source"] = data["original_url"]
             results["internal_hosts"].extend(internal)

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional, Sequence
 
-from modules.extraction import deduplicate_secrets, deduplicate_sinks, is_static_asset
+from modules.extraction import deduplicate_secrets, deduplicate_sinks, deduplicate_pii, is_static_asset
 from modules.extraction.scope import is_same_scope, get_registrable_domain
 from modules.jwt import deduplicate_jwts
 
@@ -62,6 +62,21 @@ def merge_jwts(result: dict, new_jwts: Optional[Sequence[dict]]) -> None:
     result["jwts_found"] = deduplicate_jwts(
         list(result.get("jwts_found") or []) + list(new_jwts)
     )
+
+
+def merge_pii(result: dict, new_pii: Optional[Sequence[dict]]) -> None:
+    """Append fragment PII findings and dedupe by (kind, match)."""
+    if not new_pii:
+        return
+    combined = list(result.get("pii_found") or []) + list(new_pii)
+    flat = []
+    for p in combined:
+        if "sources" in p:
+            for src in p["sources"]:
+                flat.append({**p, "source": src})
+        else:
+            flat.append(p)
+    result["pii_found"] = deduplicate_pii(flat)
 
 
 def merge_internal_hosts(result: dict, new_hosts: Optional[Sequence[dict]]) -> None:
@@ -176,6 +191,7 @@ def merge_wayback(result: dict, wb: dict, target: str) -> dict:
     merge_sinks(result, wb.get("sinks"))
     merge_internal_hosts(result, wb.get("internal_hosts"))
     merge_jwts(result, wb.get("jwts"))
+    merge_pii(result, wb.get("pii"))
 
     before_errors = len(result.get("errors") or [])
     merge_errors(result, wb.get("errors"))

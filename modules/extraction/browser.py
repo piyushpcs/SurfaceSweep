@@ -72,6 +72,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
         "deobfuscation_findings": [],
         "sinks_found": [],
         "internal_hosts_found": [],
+        "pii_found": [],
         "errors": []
     }
 
@@ -180,10 +181,11 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
             eps = extract_endpoints_from_text(deobfed_content, js_url)
             endpoint_urls.update(eps)
             from modules.extraction.engine import extract_from_text
-            _, secrets, _, sinks, internal, jwts = extract_from_text(deobfed_content, js_url)
+            _, secrets, _, sinks, internal, jwts, pii = extract_from_text(deobfed_content, js_url)
             result["secrets_found"].extend(secrets)
             result["jwts_found"].extend(jwts)
             result["sinks_found"].extend(sinks)
+            result["pii_found"].extend(pii)
             for h in internal:
                 h["source"] = js_url
             result["internal_hosts_found"].extend(internal)
@@ -196,12 +198,13 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     inline_eps = extract_endpoints_from_text(deobfed_dom, "browser_dom")
     endpoint_urls.update(inline_eps)
 
-    from modules.extraction.engine import extract_from_text, deduplicate_secrets, deduplicate_sinks
+    from modules.extraction.engine import extract_from_text, deduplicate_secrets, deduplicate_sinks, deduplicate_pii
     from modules.jwt import deduplicate_jwts
-    _, dom_secrets, _, dom_sinks, dom_internal, dom_jwts = extract_from_text(deobfed_dom, "browser_dom")
+    _, dom_secrets, _, dom_sinks, dom_internal, dom_jwts, dom_pii = extract_from_text(deobfed_dom, "browser_dom")
     result["secrets_found"].extend(dom_secrets)
     result["jwts_found"].extend(dom_jwts)
     result["sinks_found"].extend(dom_sinks)
+    result["pii_found"].extend(dom_pii)
     for h in dom_internal:
         h["source"] = "browser_dom"
     result["internal_hosts_found"].extend(dom_internal)
@@ -209,6 +212,7 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
     result["secrets_found"] = deduplicate_secrets(result["secrets_found"])
     result["jwts_found"] = deduplicate_jwts(result["jwts_found"])
     result["sinks_found"] = deduplicate_sinks(result["sinks_found"])
+    result["pii_found"] = deduplicate_pii(result["pii_found"])
     seen_host = set()
     unique_hosts = []
     for h in result["internal_hosts_found"]:
@@ -243,6 +247,8 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
             print(f"[!] {len(result['sinks_found'])} dangerous sink pattern(s) found")
         if result["internal_hosts_found"]:
             print(f"[!] {len(result['internal_hosts_found'])} internal/private host reference(s) found")
+        if result.get("pii_found"):
+            print(f"[!] {len(result['pii_found'])} potential PII item(s) found")
 
     from modules.extraction.engine import calculate_risk_summary
     result["risk_summary"] = calculate_risk_summary(result)

@@ -18,6 +18,7 @@ from modules.pipeline import (
     merge_internal_hosts,
     merge_jwts,
     merge_paths,
+    merge_pii,
     merge_secrets,
     merge_sinks,
     merge_wayback,
@@ -149,6 +150,7 @@ def _result(**overrides):
         "sinks_found": [],
         "jwts_found": [],
         "internal_hosts_found": [],
+        "pii_found": [],
         "errors": [],
         "intercepted_endpoints": [],
     }
@@ -217,6 +219,30 @@ class TestMergeJwts(unittest.TestCase):
         self.assertEqual(len(r["jwts_found"]), 2)
         tokens = {j["token"] for j in r["jwts_found"]}
         self.assertEqual(tokens, {"a.b.c", "d.e.f"})
+
+
+class TestMergePii(unittest.TestCase):
+    def test_dedupes_by_kind_and_match(self):
+        r = _result(pii_found=[
+            {"kind": "email", "match": "alice@corp-target.io",
+             "severity": "INFO", "description": "d", "sources": ["live.js"]},
+        ])
+        merge_pii(r, [
+            {"kind": "email", "match": "alice@corp-target.io",
+             "severity": "INFO", "description": "d", "source": "wb.js"},
+            {"kind": "phone_e164", "match": "+14155552671",
+             "severity": "INFO", "description": "d", "source": "wb.js"},
+        ])
+        self.assertEqual(len(r["pii_found"]), 2)
+        email = next(p for p in r["pii_found"] if p["kind"] == "email")
+        self.assertIn("live.js", email["sources"])
+        self.assertIn("wb.js", email["sources"])
+
+    def test_noop_when_empty(self):
+        r = _result(pii_found=[])
+        merge_pii(r, [])
+        merge_pii(r, None)
+        self.assertEqual(r["pii_found"], [])
 
 
 class TestMergeInternalHosts(unittest.TestCase):

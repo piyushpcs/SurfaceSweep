@@ -353,7 +353,7 @@ class TestExtractionWiring(unittest.TestCase):
     def test_extract_from_text_returns_jwts(self):
         from modules.extraction.engine import extract_from_text
         content = f'var t = "{JWT_HS256_SECRET}"; fetch("/api/v1/users");'
-        eps, secrets, _, sinks, internal, jwts = extract_from_text(
+        eps, secrets, _, sinks, internal, jwts, _pii = extract_from_text(
             content, "app.js", do_deobfuscate=False, use_ast=False
         )
         self.assertEqual(len(jwts), 1)
@@ -364,7 +364,7 @@ class TestExtractionWiring(unittest.TestCase):
 
     def test_extract_from_text_no_jwt(self):
         from modules.extraction.engine import extract_from_text
-        eps, _, _, _, _, jwts = extract_from_text(
+        eps, _, _, _, _, jwts, _ = extract_from_text(
             'fetch("/api");', "x.js", do_deobfuscate=False, use_ast=False
         )
         self.assertEqual(jwts, [])
