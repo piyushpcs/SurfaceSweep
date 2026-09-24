@@ -45,6 +45,41 @@ JS_REFERENCE_PATTERN = re.compile(
 
 WEBPACK_CHUNK_PATTERN = re.compile(r'''['"]([^'"]*(?:chunk|vendor|main|app|bundle)[^'"]*\.js)['"]''', re.IGNORECASE)
 
+# Vite/Rollup hashed entry chunks: ./assets/index-B7xK9mQ2.js / assets/about-a1b2c3d4.js
+VITE_CHUNK_PATTERN = re.compile(
+    r'''['"]([^'"]*/assets/[^'"]+-[A-Za-z0-9_-]{6,}\.js(?:\?[^'"]*)?)['"]'''
+)
+
+# import("…") / import.meta.glob(…) dynamic module paths (any extension segment)
+DYNAMIC_IMPORT_PATTERN = re.compile(
+    r'''import\s*\(\s*['"]([^'"]+)['"]\s*\)'''
+)
+
+# Webpack runtime chunk map: {0:"hash",1:"hash"} style next to .u("chunk-…")
+WEBPACK_RUNTIME_URL_PATTERN = re.compile(
+    r'''\.u\s*\(\s*['"]([^'"]+)['"]\s*\)'''
+)
+
+# ---- Service-worker / offline cache route discovery ----
+
+# cache.addAll(['/api/x', …]) / cache.put(new Request('/api/y'))
+SW_CACHE_LIST_PATTERN = re.compile(
+    r'''cache(?:s\.[a-z]+)?\s*\.\s*(?:addAll|match|put|add)\s*\(\s*(?:new\s+Request\s*\()?\s*\[([^\]]{1,2000})\]''',
+    re.IGNORECASE
+)
+
+# String literals inside SW route registrations / workbox registerRoute
+SW_ROUTE_STRING_PATTERN = re.compile(
+    r'''(?:registerRoute|navigateFallback|setCatchHandler|cacheFirst|networkFirst|staleWhileRevalidate)\s*\([^;]{0,400}?['"]([^'"]+)['"]''',
+    re.IGNORECASE
+)
+
+# Any quoted path that looks like an API/route inside SW source (fallback pass)
+SW_API_PATH_PATTERN = re.compile(
+    r'''['"](/(?:api|auth|admin|graphql|rpc|v[0-9]|user|account|token|sw|offline)[a-zA-Z0-9_\-./]*)['"]''',
+    re.IGNORECASE
+)
+
 # ---- Noise / static asset filters ----
 
 NOISE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".svg", ".gif", ".css", ".woff", ".woff2", ".ttf", ".ico")

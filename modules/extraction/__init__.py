@@ -14,6 +14,7 @@ from modules.extraction.engine import (
     get_js_sources,
     check_source_map,
     discover_js_chunks,
+    extract_sw_routes,
 )
 from modules.extraction.sourcemaps import (
     parse_source_mapping_url,
@@ -72,7 +73,7 @@ from modules.reporting.html import save_report, save_html_report
 
 __all__ = [
     "run_extractor", "merge_results", "extract_from_text", "fetch_and_extract",
-    "get_js_sources", "check_source_map", "discover_js_chunks",
+    "get_js_sources", "check_source_map", "discover_js_chunks", "extract_sw_routes",
     "parse_source_mapping_url", "resolve_source_map_url",
     "decode_inline_sourcemap", "load_source_map",
     "collect_source_map_sources",

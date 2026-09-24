@@ -11,7 +11,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from modules.extraction.patterns import (
     ENDPOINT_PATTERN, GENERIC_PATH_PATTERN, FULL_URL_PATTERN, CALL_PATTERN,
-    JS_REFERENCE_PATTERN, WEBPACK_CHUNK_PATTERN,
+    JS_REFERENCE_PATTERN, WEBPACK_CHUNK_PATTERN, VITE_CHUNK_PATTERN,
+    DYNAMIC_IMPORT_PATTERN, WEBPACK_RUNTIME_URL_PATTERN,
+    SW_CACHE_LIST_PATTERN, SW_ROUTE_STRING_PATTERN, SW_API_PATH_PATTERN,
     WS_URL_PATTERN, PROTOCOL_RELATIVE_URL_PATTERN,
     is_noise, is_static_asset, find_internal_hosts
 )
@@ -61,10 +63,18 @@ def check_source_map(js_url, timeout=8, limiter=None):
 def discover_js_chunks(js_content, base_js_url):
     """Find references to other JS files inside a JS file's content."""
     candidates = set()
-    for match in JS_REFERENCE_PATTERN.findall(js_content):
-        candidates.add(match)
-    for match in WEBPACK_CHUNK_PATTERN.findall(js_content):
-        candidates.add(match)
+    for pattern in (
+        JS_REFERENCE_PATTERN,
+        WEBPACK_CHUNK_PATTERN,
+        VITE_CHUNK_PATTERN,
+        DYNAMIC_IMPORT_PATTERN,
+        WEBPACK_RUNTIME_URL_PATTERN,
+    ):
+        for match in pattern.findall(js_content):
+            if isinstance(match, tuple):
+                match = match[0]
+            if match.endswith((".js", ".mjs", ".cjs")) or ".js?" in match:
+                candidates.add(match)
 
     resolved = set()
     for path in candidates:
@@ -78,6 +88,48 @@ def discover_js_chunks(js_content, base_js_url):
         else:
             resolved.add(urljoin(base_js_url, path))
     return resolved
+
+
+def extract_sw_routes(content, source_label):
+    """
+    Pull service-worker / offline-cache route paths out of SW or page JS.
+
+    Returns list of {match, kind, source} suitable for endpoint aggregation.
+    Kinds: sw_cache_list | sw_register_route | sw_api_path
+    """
+    findings = []
+    seen = set()
+
+    def _add(path, kind):
+        if not path or path in seen:
+            return
+        if not isinstance(path, str):
+            return
+        path = path.strip().strip("'\"")
+        if not path or path.startswith("//") or "*" in path:
+            return
+        if len(path) < 2 or len(path) > 300:
+            return
+        if not (path.startswith("/") or path.startswith("http")):
+            return
+        if is_static_asset(path) and not path.endswith(".js"):
+            # keep .js for chunk discovery elsewhere; drop images/css/fonts here
+            if any(path.lower().endswith(ext) for ext in (".png", ".jpg", ".svg", ".css", ".woff", ".woff2")):
+                return
+        seen.add(path)
+        findings.append({"match": path, "kind": kind, "source": source_label})
+
+    for block in SW_CACHE_LIST_PATTERN.findall(content):
+        for lit in re.findall(r"""['"]([^'"]+)['"]""", block):
+            _add(lit, "sw_cache_list")
+
+    for lit in SW_ROUTE_STRING_PATTERN.findall(content):
+        _add(lit, "sw_register_route")
+
+    for lit in SW_API_PATH_PATTERN.findall(content):
+        _add(lit, "sw_api_path")
+
+    return findings
 
 
 def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
@@ -128,6 +180,12 @@ def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
             continue
         if not is_noise(match) and len(match) > 1:
             endpoints.add(match)
+
+    # Service-worker / offline cache routes → endpoint candidates
+    for sw in extract_sw_routes(content, source_label):
+        path = sw["match"]
+        if not is_noise(path):
+            endpoints.add(path)
 
     secrets = extract_secrets(content, source_label)
     sinks = detect_sinks(content, source_label)
