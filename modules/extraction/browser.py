@@ -29,7 +29,10 @@ JS_REFERENCE_PATTERN = re.compile(
 
 def extract_endpoints_from_text(content, source_label):
     """Quick extraction from JS text — reuses patterns from extractor module."""
-    from modules.extraction.engine import ENDPOINT_PATTERN, GENERIC_PATH_PATTERN, FULL_URL_PATTERN, CALL_PATTERN, is_noise
+    from modules.extraction.engine import (
+        ENDPOINT_PATTERN, GENERIC_PATH_PATTERN, FULL_URL_PATTERN, CALL_PATTERN,
+        WS_URL_PATTERN, PROTOCOL_RELATIVE_URL_PATTERN, is_noise,
+    )
 
     endpoints = set()
     for pattern in [ENDPOINT_PATTERN, GENERIC_PATH_PATTERN, FULL_URL_PATTERN, CALL_PATTERN]:
@@ -40,6 +43,14 @@ def extract_endpoints_from_text(content, source_label):
                 continue
             if not is_noise(match):
                 endpoints.add(match)
+
+    for match in WS_URL_PATTERN.findall(content):
+        if not is_noise(match):
+            endpoints.add(match)
+
+    for match in PROTOCOL_RELATIVE_URL_PATTERN.findall(content):
+        if not is_noise(match):
+            endpoints.add("https:" + match)
     return endpoints
 
 

@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from modules.extraction.patterns import (
     ENDPOINT_PATTERN, GENERIC_PATH_PATTERN, FULL_URL_PATTERN, CALL_PATTERN,
     JS_REFERENCE_PATTERN, WEBPACK_CHUNK_PATTERN,
+    WS_URL_PATTERN, PROTOCOL_RELATIVE_URL_PATTERN,
     is_noise, is_static_asset, find_internal_hosts
 )
 from modules.extraction.secrets import extract_secrets, deduplicate_secrets
@@ -110,6 +111,16 @@ def extract_from_text(content, source_label, do_deobfuscate=True, use_ast=True):
     for match in FULL_URL_PATTERN.findall(content):
         if not is_noise(match):
             endpoints.add(match)
+
+    # WebSocket endpoints (ws:// and wss://)
+    for match in WS_URL_PATTERN.findall(content):
+        if not is_noise(match):
+            endpoints.add(match)
+
+    # Protocol-relative URLs in quotes → normalize to https for validation/dedup
+    for match in PROTOCOL_RELATIVE_URL_PATTERN.findall(content):
+        if not is_noise(match):
+            endpoints.add("https:" + match)
 
     # Function-call based extraction — catches fetch()/axios()/$.ajax() etc.
     for match in CALL_PATTERN.findall(content):

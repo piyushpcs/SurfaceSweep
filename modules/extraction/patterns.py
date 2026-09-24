@@ -16,6 +16,18 @@ GENERIC_PATH_PATTERN = re.compile(r'["\'](/[a-zA-Z0-9_\-./]{2,80})["\']')
 
 FULL_URL_PATTERN = re.compile(r'https?://[a-zA-Z0-9.\-]+(?:/[a-zA-Z0-9_\-./%?=&]*)?')
 
+# WebSocket endpoints (ws:// and wss://) — often missed when only https? is scanned.
+# Optional :port after the host (common for local/dev sockets).
+WS_URL_PATTERN = re.compile(
+    r'wss?://[a-zA-Z0-9.\-]+(?::\d{1,5})?(?:/[a-zA-Z0-9_\-./%?=&]*)?'
+)
+
+# Protocol-relative URLs in string literals (//cdn.example.com/api).
+# Quote-bounded so JS line comments are never matched; normalized to https: by callers.
+PROTOCOL_RELATIVE_URL_PATTERN = re.compile(
+    r'["\'](//[a-zA-Z0-9.\-]+(?:/[a-zA-Z0-9_\-./%?=&]*)?)["\']'
+)
+
 # Catches URLs passed as arguments to common HTTP call patterns —
 # fetch("/api/x"), axios.get('/path'), $.ajax({url: "..."}), $.post("/x"), http.request("/x")
 CALL_PATTERN = re.compile(
