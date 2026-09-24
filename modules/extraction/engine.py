@@ -367,7 +367,10 @@ def merge_results(static_result, browser_result):
             seen_maps.add(m)
 
     merged["network_requests"] = browser_result.get("network_requests", [])
-    merged["intercepted_endpoints"] = browser_result.get("intercepted_endpoints", [])
+    from modules.extraction.enrich import enrich_intercepted_endpoints
+    merged["intercepted_endpoints"] = enrich_intercepted_endpoints(
+        list(browser_result.get("intercepted_endpoints") or [])
+    )
 
     all_endpoints = set()
     all_endpoints.update(static_result.get("internal_paths", []))

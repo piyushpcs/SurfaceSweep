@@ -169,6 +169,8 @@ def stage_spa(ctx: ScanContext) -> None:
         for url in spa_result["api_endpoints"]:
             if not any(e.get("url") == url for e in result["intercepted_endpoints"]):
                 result["intercepted_endpoints"].append({"url": url, "method": "GET"})
+        from modules.extraction.enrich import enrich_intercepted_endpoints
+        enrich_intercepted_endpoints(result["intercepted_endpoints"])
 
     # Same static-asset filter as wayback merge (parity)
     before = len(result.get("internal_paths", []))

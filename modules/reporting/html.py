@@ -368,21 +368,28 @@ def render_wayback(wayback_js_files):
 
 
 def render_intercepted(endpoints):
-    """Render browser-intercepted API endpoints (Step 5)."""
+    """Render browser-intercepted API endpoints (Step 5) with enrichment tags."""
     if not endpoints:
         return ""
     rows = []
     for ep in endpoints:
         method = str(ep.get("method", "GET"))
         url = str(ep.get("url", ""))
+        tags = ep.get("tags") or []
+        tag_html = (
+            " ".join(f'<span class="muted">{_esc(t)}</span>' for t in tags)
+            if tags else '<span class="muted">—</span>'
+        )
         rows.append(
-            f'<tr><td><code>{_esc(method)}</code></td><td><code>{_esc(url)}</code></td></tr>'
+            f'<tr><td><code>{_esc(method)}</code></td>'
+            f'<td><code>{_esc(url)}</code></td>'
+            f"<td>{tag_html}</td></tr>"
         )
     if not rows:
         return ""
     return (
         f"<h2>Intercepted API Endpoints ({len(rows)})</h2>"
-        '<table><thead><tr><th>Method</th><th>URL</th></tr></thead>'
+        '<table><thead><tr><th>Method</th><th>URL</th><th>Tags</th></tr></thead>'
         f'<tbody>{"".join(rows)}</tbody></table>'
     )
 

@@ -165,6 +165,9 @@ def run_browser_scan(base_url, timeout=30, verbose=True, scope_filter=None):
                     "method": req["method"]
                 })
 
+    from modules.extraction.enrich import enrich_intercepted_endpoints
+    enrich_intercepted_endpoints(result["intercepted_endpoints"])
+
     result["network_requests"] = intercepted_requests
 
     for js_url in js_files_found:

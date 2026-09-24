@@ -22,6 +22,15 @@ from modules.extraction.sourcemaps import (
     load_source_map,
     collect_source_map_sources,
 )
+from modules.extraction.enrich import (
+    enrich_endpoint,
+    enrich_intercepted_endpoints,
+    endpoint_tags,
+    infer_method,
+    is_likely_authed,
+    is_state_changing,
+    resolve_method,
+)
 from modules.extraction.patterns import (
     ENDPOINT_PATTERN,
     GENERIC_PATH_PATTERN,
@@ -46,6 +55,9 @@ __all__ = [
     "parse_source_mapping_url", "resolve_source_map_url",
     "decode_inline_sourcemap", "load_source_map",
     "collect_source_map_sources",
+    "enrich_endpoint", "enrich_intercepted_endpoints",
+    "endpoint_tags", "infer_method", "resolve_method",
+    "is_likely_authed", "is_state_changing",
     "ENDPOINT_PATTERN", "GENERIC_PATH_PATTERN", "FULL_URL_PATTERN", "CALL_PATTERN",
     "is_noise", "is_static_asset", "find_internal_hosts",
     "extract_secrets", "deduplicate_secrets",
