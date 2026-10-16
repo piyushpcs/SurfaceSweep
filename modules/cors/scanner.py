@@ -261,16 +261,37 @@ def scan_cors(
 
     raw_findings = []
     error_probes = 0
-    session = requests.Session()
-    from modules.extraction.http import RelaxedTLSAdapter, request_kwargs
-    session.mount("https://", RelaxedTLSAdapter())
-    # Apply process-wide insecure/proxy config — this session bypasses
-    # request_tls, so without this every probe fails on bad-cert hosts.
+    from modules.extraction.http import request_kwargs
+    import threading
+
+    # requests.Session is NOT thread-safe (cookie jar / connection pool).
+    # Give each worker its own session, configured once from process config.
+    # This session bypasses request_tls, so without the config every probe
+    # fails on bad-cert or proxied hosts.
     cfg = request_kwargs(headers=None)
-    if cfg.get("verify") is False:
-        session.verify = False
-    if cfg.get("proxies"):
-        session.proxies.update(cfg["proxies"])
+    _sessions: list = []
+    _sessions_lock = threading.Lock()
+    _tls = threading.local()
+
+    def _new_session():
+        sess = requests.Session()
+        # Normal TLS first; probe.py falls back to relaxed ciphers only when a
+        # host actually rejects our cipher policy. Never downgrade by default.
+        if cfg.get("verify") is False:
+            sess.verify = False
+        if cfg.get("proxies"):
+            sess.proxies.update(cfg["proxies"])
+        with _sessions_lock:
+            _sessions.append(sess)
+        return sess
+
+    def _thread_session():
+        sess = getattr(_tls, "session", None)
+        if sess is None:
+            sess = _new_session()
+            _tls.session = sess
+        return sess
+
     baselines = {}
     urls_with_acao = set()
     trusted_seeds = set()
@@ -308,7 +329,7 @@ def scan_cors(
             registrable_domain=registrable_domain,
             request_method=request_method,
             static_acao=static_acao,
-            session=session,
+            session=_thread_session(),
         )
 
     def _has_finding_acao(results):
@@ -320,7 +341,7 @@ def scan_cors(
 
     def _scan_one(url):
         baseline = probe_baseline(
-            url, timeout=timeout, headers=headers, limiter=limiter, session=session
+            url, timeout=timeout, headers=headers, limiter=limiter, session=_thread_session()
         )
         baselines[url] = baseline
         static_acao = bool(baseline.get("static_acao"))
@@ -410,7 +431,11 @@ def scan_cors(
                         continue
                     _ingest(scanned_url, results)
     finally:
-        session.close()
+        for sess in _sessions:
+            try:
+                sess.close()
+            except Exception:
+                pass
 
     if aggregate:
         findings = aggregate_findings(raw_findings)

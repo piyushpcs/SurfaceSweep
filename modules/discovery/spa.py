@@ -350,7 +350,7 @@ def _probe_common_routes(base_url, existing_routes, verbose=True, timeout=5):
 _PROBE_EXISTS_STATUSES = (200, 301, 302, 401, 403, 405)
 
 
-def probe_route(url, timeout=5, session=None):
+def probe_route(url, timeout=5, session=None, headers=None):
     """
     Existence probe for a candidate route: HEAD first, GET fallback.
 
@@ -361,13 +361,13 @@ def probe_route(url, timeout=5, session=None):
     import requests as _requests
     from modules.extraction.http import request_tls
 
-    headers = {"User-Agent": "SurfaceSweep/1.0"}
+    req_headers = dict(headers) if headers else {"User-Agent": "SurfaceSweep/1.0"}
     # HEAD first (some stacks reject it with RST — fall through to GET)
     try:
         if session is not None:
-            r = session.head(url, timeout=timeout, allow_redirects=True, headers=headers)
+            r = session.head(url, timeout=timeout, allow_redirects=True, headers=req_headers)
         else:
-            r = request_tls("HEAD", url, timeout=timeout, allow_redirects=True, headers=headers)
+            r = request_tls("HEAD", url, timeout=timeout, allow_redirects=True, headers=req_headers)
         status = r.status_code
         if status in _PROBE_EXISTS_STATUSES and status not in (405, 501):
             return status
@@ -375,9 +375,9 @@ def probe_route(url, timeout=5, session=None):
         pass
     try:
         if session is not None:
-            r = session.get(url, timeout=timeout, allow_redirects=True, headers=headers)
+            r = session.get(url, timeout=timeout, allow_redirects=True, headers=req_headers)
         else:
-            r = request_tls("GET", url, timeout=timeout, allow_redirects=True, headers=headers)
+            r = request_tls("GET", url, timeout=timeout, allow_redirects=True, headers=req_headers)
         status = r.status_code
         if status in _PROBE_EXISTS_STATUSES:
             return status
@@ -387,9 +387,12 @@ def probe_route(url, timeout=5, session=None):
 
 
 def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
-                     probe_common=True, scope_filter=None):
+                     probe_common=True, scope_filter=None, headers=None):
     """
     Discover SPA routes using static + runtime analysis.
+
+    headers: auth headers (Cookie / -H) applied to bundle fetches, runtime
+             browsing, and route probes so authenticated SPAs are covered.
 
     Returns dict with:
       - routes: list of discovered route paths
@@ -400,6 +403,10 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
     from modules.extraction.engine import get_registrable_domain, is_static_asset, is_same_scope
     from modules.extraction.scope import normalize_scope_filter
     scope = normalize_scope_filter(scope_filter)
+
+    req_headers = {"User-Agent": "SurfaceSweep/1.0"}
+    if headers:
+        req_headers.update(headers)
 
     target_domain = get_registrable_domain(base_url)
     parsed_base = urlparse(base_url)
@@ -432,7 +439,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
     # Get JS files from the page
     try:
         from modules.extraction.http import request_tls as _request_tls
-        resp = _request_tls("GET", base_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})
+        resp = _request_tls("GET", base_url, timeout=10, headers=req_headers)
         # Find script src
         for m in re.finditer(r'<script[^>]+src=["\']([^"\']+)["\']', resp.text, re.IGNORECASE):
             js_url = urljoin(base_url, m.group(1))
@@ -447,7 +454,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
             continue
         try:
             from modules.extraction.http import request_tls as _request_tls
-            js_resp = _request_tls("GET", js_url, timeout=10, headers={"User-Agent": "SurfaceSweep/1.0"})
+            js_resp = _request_tls("GET", js_url, timeout=10, headers=req_headers)
             routes = extract_routes_from_js(js_resp.text)
             for route in routes:
                 if add_route(route, "static"):
@@ -466,11 +473,26 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
+
+        cookie_header = ""
+        extra_headers = {}
+        for key, value in (headers or {}).items():
+            if key.lower() == "cookie":
+                cookie_header = value
+            else:
+                extra_headers[key] = value
+
         context = browser.new_context(
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             ignore_https_errors=True,
-            service_workers="block"
+            service_workers="block",
+            extra_http_headers=extra_headers or None,
         )
+        if cookie_header:
+            from modules.extraction.browser import _parse_cookie_header
+            cookies = _parse_cookie_header(cookie_header, base_url)
+            if cookies:
+                context.add_cookies(cookies)
 
         # Instrument History API before page loads
         context.add_init_script("""
@@ -630,7 +652,7 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
 
         def probe(route):
             url = base_origin + route
-            status = probe_route(url, timeout=5)
+            status = probe_route(url, timeout=5, headers=req_headers)
             if status is not None:
                 return (route, status)
             return None

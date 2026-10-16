@@ -12,12 +12,14 @@ import threading
 import time
 from email.utils import parsedate_to_datetime
 from typing import Optional
+from urllib.parse import urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
 
 from modules.common.constants import DEFAULT_USER_AGENT
+from modules.extraction.scope import is_same_scope
 
 __all__ = [
     "DEFAULT_USER_AGENT",
@@ -26,12 +28,14 @@ __all__ = [
     "RelaxedTLSAdapter",
     "cache_text",
     "clear_text_cache",
+    "configure_auth",
     "configure_http",
     "default_headers",
     "fetch_text",
     "fetch_with_retry",
     "get_cached_text",
     "get_page",
+    "is_blocked_fetch_target",
     "is_cert_error",
     "is_tls_policy_error",
     "parse_retry_after",
@@ -42,6 +46,42 @@ __all__ = [
 ]
 
 _TEXT_CACHE_MAX = 512
+
+# Cloud-instance metadata / link-local hosts that must never be fetched from a
+# scan (SSRF via target-controlled JS or a redirect). Private and loopback
+# ranges stay allowed so local testbeds and authorized internal assessments
+# keep working.
+_METADATA_HOSTS = frozenset({
+    "metadata.google.internal",
+    "metadata.goog",
+    "instance-data",
+    "metadata",
+})
+
+
+def is_blocked_fetch_target(url: str) -> bool:
+    """
+    True for cloud-metadata / link-local targets that must never be fetched.
+
+    Guards against a target's JavaScript (or a redirect) steering the scanner
+    at the instance metadata service (169.254.169.254, fd00:ec2::254, the
+    Alibaba 100.100.100.200 endpoint, GCP metadata hostnames, ...).
+    """
+    try:
+        host = (urlparse(url).hostname or "").lower()
+    except ValueError:
+        return True
+    if not host:
+        return False
+    if host in _METADATA_HOSTS:
+        return True
+    if host.startswith("169.254."):
+        return True
+    if host == "100.100.100.200":  # Alibaba Cloud metadata
+        return True
+    if host == "fd00:ec2::254":  # AWS IPv6 metadata
+        return True
+    return False
 
 
 def is_tls_policy_error(exc: BaseException) -> bool:
@@ -207,6 +247,11 @@ class HttpClient:
         self.user_agent = user_agent or DEFAULT_USER_AGENT
         self.cache_max = cache_max
         self._cache: dict = {}
+        self._cache_lock = threading.Lock()
+        # Credentials (Cookie / Authorization / -H) + the only scope they may
+        # be sent to. Kept separate so they never leak to third-party hosts.
+        self.auth_headers: dict = {}
+        self.auth_scope: Optional[str] = None
 
     def configure(
         self,
@@ -225,7 +270,36 @@ class HttpClient:
         self.proxy = None
         self.insecure = False
         self.user_agent = DEFAULT_USER_AGENT
+        self.auth_headers = {}
+        self.auth_scope = None
         self.clear_cache()
+
+    def set_auth(self, headers: Optional[dict] = None,
+                 scope: Optional[str] = None) -> None:
+        """
+        Store credentials that are only sent to hosts inside `scope`.
+
+        Keeps a target's cookies/Authorization from being sent to unrelated
+        hosts the scan happens to touch (CDNs, vendor APIs, source-map hosts).
+        """
+        self.auth_headers = dict(headers or {})
+        self.auth_scope = scope or None
+
+    def _scope_ok(self, url: str) -> bool:
+        if not self.auth_scope:
+            return True
+        try:
+            return is_same_scope(url, self.auth_scope)
+        except Exception:
+            return False
+
+    def _merge_headers(self, url: str, headers: Optional[dict]) -> dict:
+        """Caller headers win; in-scope auth defaults fill the gaps."""
+        base = dict(headers) if headers is not None else {"User-Agent": self.user_agent}
+        if self.auth_headers and self._scope_ok(url):
+            for key, value in self.auth_headers.items():
+                base.setdefault(key, value)
+        return base
 
     def default_headers(self) -> dict:
         return {"User-Agent": self.user_agent}
@@ -241,22 +315,25 @@ class HttpClient:
 
     def clear_cache(self) -> None:
         """Drop all cached response bodies (tests / new scan)."""
-        self._cache.clear()
+        with self._cache_lock:
+            self._cache.clear()
 
     def get_cached_text(self, url: str) -> Optional[str]:
-        return self._cache.get(url)
+        with self._cache_lock:
+            return self._cache.get(url)
 
     def cache_text(self, url: str, text: str) -> None:
         """Store a response body for later stages (FIFO eviction)."""
         if not url:
             return
-        if url in self._cache:
+        with self._cache_lock:
+            if url in self._cache:
+                self._cache[url] = text
+                return
+            if len(self._cache) >= self.cache_max:
+                oldest = next(iter(self._cache))
+                del self._cache[oldest]
             self._cache[url] = text
-            return
-        if len(self._cache) >= self.cache_max:
-            oldest = next(iter(self._cache))
-            del self._cache[oldest]
-        self._cache[url] = text
 
     def fetch_text(self, url, timeout=10, limiter=None, headers=None) -> Optional[str]:
         """
@@ -285,7 +362,12 @@ class HttpClient:
         Timeout after retries are exhausted. Returns None only if the 429/5xx
         retry budget is fully consumed without a non-retryable response.
         """
-        req_headers = headers if headers is not None else self.default_headers()
+        if is_blocked_fetch_target(url):
+            raise requests.ConnectionError(
+                f"Refused to fetch blocked link-local/metadata target: {url}"
+            )
+
+        req_headers = self._merge_headers(url, headers)
 
         used_relaxed = False
         for attempt in range(max_retries):
@@ -347,6 +429,17 @@ def configure_http(
 ) -> None:
     """Set process-wide HTTP defaults (proxy, TLS verify, User-Agent)."""
     _client.configure(proxy=proxy, insecure=insecure, user_agent=user_agent)
+
+
+def configure_auth(headers: Optional[dict] = None,
+                   scope: Optional[str] = None) -> None:
+    """
+    Register credentials (Cookie / Authorization / -H) for a scan.
+
+    They are attached only to requests whose host is within `scope`, so a
+    target's session is never leaked to third-party hosts.
+    """
+    _client.set_auth(headers, scope)
 
 
 def reset_http_config() -> None:

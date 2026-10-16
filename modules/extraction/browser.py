@@ -54,6 +54,21 @@ def extract_endpoints_from_text(content, source_label):
     return endpoints
 
 
+def _parse_cookie_header(cookie_header, base_url):
+    """Parse a 'Cookie: a=b; c=d' header into Playwright cookie objects."""
+    cookies = []
+    for part in str(cookie_header or "").split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        name, value = part.split("=", 1)
+        name = name.strip()
+        if not name:
+            continue
+        cookies.append({"name": name, "value": value.strip(), "url": base_url})
+    return cookies
+
+
 def run_browser_scan(
     base_url,
     timeout=30,
@@ -63,6 +78,7 @@ def run_browser_scan(
     user_agent=None,
     insecure=True,
     proxy=None,
+    headers=None,
 ):
     """
     Load a page in a headless browser, intercept all network traffic,
@@ -74,6 +90,9 @@ def run_browser_scan(
 
     deobfuscate_content: when False, skip JS deobfuscation (CLI --no-deobf).
     user_agent / insecure / proxy: optional browser context overrides.
+    headers: auth headers (Cookie / -H). Cookie is loaded into the context so
+             login-gated apps render authenticated; other headers are sent on
+             every browser request.
 
     Returns a dict compatible with the extractor's output format.
     """
@@ -98,12 +117,28 @@ def run_browser_scan(
 
     with sync_playwright() as p:
         browser = p.chromium.launch(**launch_kwargs)
+
+        extra_headers = {}
+        cookie_header = ""
+        for key, value in (headers or {}).items():
+            if key.lower() == "cookie":
+                cookie_header = value
+            else:
+                extra_headers[key] = value
+
         context = browser.new_context(
             user_agent=ua,
             # Browser mode historically ignores cert errors; only tighten
             # when verify_tls is explicitly set False→True via CLI --insecure inverse.
             ignore_https_errors=bool(insecure),
+            extra_http_headers=extra_headers or None,
         )
+        if cookie_header:
+            cookies = _parse_cookie_header(cookie_header, base_url)
+            if cookies:
+                context.add_cookies(cookies)
+                if verbose:
+                    ok(f" Loaded {len(cookies)} auth cookie(s) into browser context")
         page = context.new_page()
 
         def handle_request(request):
@@ -135,30 +170,36 @@ def run_browser_scan(
         page.on("request", handle_request)
         page.on("response", handle_response)
 
+        dom_content = ""
         try:
-            # domcontentloaded: networkidle hangs on long-poll/SSE apps
-            page.goto(base_url, wait_until="domcontentloaded", timeout=timeout * 1000)
-            page.wait_for_timeout(2000)
-        except Exception as e:
-            result["errors"].append(f"Browser navigation error: {e}")
-            if verbose:
-                detail(f"[!] Navigation error: {e}")
+            try:
+                # domcontentloaded: networkidle hangs on long-poll/SSE apps
+                page.goto(base_url, wait_until="domcontentloaded", timeout=timeout * 1000)
+                page.wait_for_timeout(2000)
+            except Exception as e:
+                result["errors"].append(f"Browser navigation error: {e}")
+                if verbose:
+                    detail(f"[!] Navigation error: {e}")
 
-        try:
-            dom_content = page.content()
-        except Exception:
-            dom_content = ""
+            try:
+                dom_content = page.content()
+            except Exception:
+                dom_content = ""
 
-        try:
-            for script in page.query_selector_all("script"):
-                inner = script.inner_text()
-                if inner.strip():
-                    result["inline_scripts_scanned"] += 1
-        except Exception:
-            pass
-
-        page.close()
-        browser.close()
+            try:
+                for script in page.query_selector_all("script"):
+                    inner = script.inner_text()
+                    if inner.strip():
+                        result["inline_scripts_scanned"] += 1
+            except Exception:
+                pass
+        finally:
+            # Always release Playwright resources, even on an unexpected error.
+            for closer in (page.close, browser.close):
+                try:
+                    closer()
+                except Exception:
+                    pass
 
     if verbose:
         ok(f" Captured {len(intercepted_requests)} network requests")
@@ -196,7 +237,7 @@ def run_browser_scan(
             continue
         try:
             from modules.extraction.http import fetch_text
-            body = fetch_text(js_url, timeout=10)
+            body = fetch_text(js_url, timeout=10, headers=headers or None)
             if body is None:
                 continue
             if deobfuscate_content:

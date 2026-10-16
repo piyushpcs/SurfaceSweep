@@ -14,6 +14,7 @@ from argparse import Namespace
 from typing import Callable, List, Tuple
 
 from modules.common.result import RESULT_SCHEMA_VERSION, ScanResult
+from modules.common.console import warn
 from modules.pipeline.context import ScanContext
 from modules.pipeline.stages import (
     stage_cors,
@@ -75,12 +76,22 @@ def run_pipeline(args: Namespace, verbose: bool = True,
 
     ctx = ScanContext(args, verbose=verbose, headers=headers)
     for name, fn in build_stages(args):
-        # Stamp before report so saved JSON/HTML include meta + findings
+        # Record the stage before it runs so the report written *during* the
+        # report stage lists itself, then stamp findings/meta before that stage
+        # serializes the result.
+        ctx.stages_run.append(name)
         if name == "report" and ctx.result is not None and "schema_version" not in ctx.result:
             _finalize_result(ctx, datetime.now(timezone.utc))
         started = monotonic()
-        ctx.stages_run.append(name)
-        fn(ctx)
+        try:
+            fn(ctx)
+        except Exception as exc:
+            # One stage failing must not abort the whole scan / lose the report.
+            ctx.stage_errors.append(f"{name}: {exc}")
+            warn(f"[!] Stage '{name}' failed: {exc}")
+            if ctx.result is not None:
+                ctx.result.setdefault("errors", [])
+                ctx.result["errors"].append(f"stage {name} failed: {exc}")
         ctx.stage_timings[name] = round(monotonic() - started, 3)
 
     if ctx.result is not None:

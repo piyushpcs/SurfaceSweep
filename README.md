@@ -8,7 +8,7 @@ Extract API endpoints and secrets from a target's JavaScript, validate what is l
 check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-820%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-883%20passing-brightgreen)](#testing)
 [![CI](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml/badge.svg)](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/piyushpcs/SurfaceSweep)](https://github.com/piyushpcs/SurfaceSweep/commits/main)
@@ -83,7 +83,9 @@ to build a single inventory of endpoints, then layers on checks that matter in a
 - **Multi-target batch** — `--targets hosts.txt` with per-host output files
 - **Burp Suite** / **OWASP ZAP** CSV export
 - **Path/parameter wordlist** — `--wordlist` for ffuf/content discovery (segments + param names)
-- Authenticated scans via cookies and custom headers
+- Authenticated scans via cookies and custom headers (`--cookie` / `-H`) — applied to the initial HTML/JS
+  fetch, browser context, validation, CORS, and GraphQL probes; credentials are sent **only to in-scope
+  hosts** so they never leak to CDNs or vendor APIs
 - Rate limiting and retry with backoff
 
 ## Install
@@ -296,7 +298,7 @@ coverage run -m unittest discover -s tests -q
 coverage report -m
 ```
 
-- **820 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
+- **883 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
 - Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation/PNA,
   JWT decode/crack/JWKS, GraphQL introspection probe, secret live-verification, pipeline stage order,
   report schema (`schema_version: 1`), finding feeds, scan diff (JSON + HTML),
@@ -361,6 +363,10 @@ Issues and pull requests are welcome. By participating you agree to the
 Report vulnerabilities privately via
 [GitHub Security Advisories](https://github.com/piyushpcs/SurfaceSweep/security/advisories/new)
 — see [SECURITY.md](SECURITY.md).
+
+SurfaceSweep's own vulnerabilities (SSRF, credential leakage, destructive
+requests) found and fixed during a self-assessment are documented in
+[SECURITY-FINDINGS.md](SECURITY-FINDINGS.md).
 
 ## License
 

@@ -143,7 +143,7 @@ SECRET_PATTERNS = {
 
     # ---- VCS / package managers ----
     "GitHub Token":         re.compile(r'gh[po]_[a-zA-Z0-9]{36,}'),
-    "GitHub PAT (classic)": re.compile(r'ghp_[a-zA-Z0-9]{36}'),
+    "GitHub PAT (classic)": re.compile(r'ghp_[a-zA-Z0-9]{36,}'),
     "GitHub PAT (fine-grained)": re.compile(r'github_pat_[A-Za-z0-9_]{22,}'),
     "GitHub OAuth Token":   re.compile(r'gho_[a-zA-Z0-9]{36}'),
     "GitHub Upload Token":  re.compile(r'ghu_[a-zA-Z0-9]{36}'),
@@ -163,7 +163,9 @@ SECRET_PATTERNS = {
     "JWT":                  re.compile(r'eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}(?:\.[A-Za-z0-9_\-]*)?'),
     "JWT Secret":           re.compile(r'(?i)["\'](?:jwt[_-]?secret|signing[_-]?key|hmac[_-]?key|jwt[_-]?key)["\']\s*[:=]\s*["\']([a-zA-Z0-9_\-\.\/+=]{10,})["\']'),
     "Session Cookie":       re.compile(r'(?i)(?:sessionid|jsessionid|phpsessid|asp\.net_sessionid)\s*=\s*[a-zA-Z0-9_\-]{16,}'),
-    "Private Key":          re.compile(r'-----BEGIN\s+(RSA|DSA|EC|OPENSSH|PGP|PGP)?\s*PRIVATE KEY-----'),
+    # Non-capturing algorithm group: value falls back to group(0) so bare
+    # PKCS#8 "-----BEGIN PRIVATE KEY-----" is matched too.
+    "Private Key":          re.compile(r'-----BEGIN\s+(?:RSA|DSA|EC|OPENSSH|PGP|ENCRYPTED)?\s*PRIVATE KEY-----'),
     "Encryption Key":       re.compile(r'(?i)["\'](?:encryption[_-]?key|cipher[_-]?key|secret[_-]?key)["\']\s*[:=]\s*["\']([a-zA-Z0-9+/=]{16,})["\']'),
     "Authorization Header": re.compile(
         r'(?i)["\']authorization["\']\s*:\s*["\'](?!bearer\s)(?!basic\s)'
@@ -187,7 +189,8 @@ SECRET_PATTERNS = {
     "Generic API Key":      re.compile(r'(?i)(?:["\']api[_-]?key["\']|api[_-]?key)\s*[:=]\s*["\']([a-zA-Z0-9_\-]{16,45})["\']'),
     "Generic Secret":       re.compile(r'(?i)(?:["\'](?:secret|token|apikey)["\']|(?:secret|token|apikey))\s*[:=]\s*["\']([a-zA-Z0-9_\-]{10,})["\']'),
     "Generic Password":     re.compile(r'(?i)(?:["\'](?:password|passwd|pwd|pass)["\']|(?:password|passwd|pwd|pass))\s*[:=]\s*["\']([^\s"\']{6,})["\']'),
-    "Exposed Env Var":      re.compile(r'(NEXT_PUBLIC_[A-Z0-9_]+|REACT_APP_[A-Z0-9_]+|VITE_[A-Z0-9_]+)\s*[:=]\s*["\']([^"\']{4,100})["\']'),
+    # Env name is non-capturing so group(1) is the exposed value, not the key.
+    "Exposed Env Var":      re.compile(r'(?:NEXT_PUBLIC_[A-Z0-9_]+|REACT_APP_[A-Z0-9_]+|VITE_[A-Z0-9_]+)\s*[:=]\s*["\']([^"\']{4,100})["\']'),
     "Access Token Env":     re.compile(r'(?:ACCESS_TOKEN|API_TOKEN|AUTH_TOKEN|SECRET_TOKEN)\s*[:=]\s*["\']([^\s"\']{8,})["\']'),
     "Process Env Fallback": re.compile(
         r'process\.env\.[A-Z0-9_]+\s*\|\|\s*["\']([^"\']{8,})["\']'

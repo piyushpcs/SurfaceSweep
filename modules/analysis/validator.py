@@ -7,9 +7,9 @@ fail-in-200 bodies, redirects to homepage).
 
 Method-aware validation (Phase C7):
 - Observed browser methods are reused so POST-only APIs are not probed with GET.
-- Path-inferred methods (…/create → POST, …/delete → DELETE) are applied.
-- Inferred DELETE is sent as OPTIONS (existence probe) so validation never
-  mutates state when the verb was only guessed from the path.
+- Path-inferred methods are only ever sent as safe verbs: any inferred
+  mutation verb (POST/PUT/PATCH/DELETE) is downgraded to OPTIONS so a
+  guessed path can never change state on the target.
 
 Status classification:
 - 200: LIVE
@@ -277,20 +277,24 @@ def classify_200_body(response, original_url):
     return "live", None
 
 
+# Verbs that change server state; never send them on a path-inferred guess.
+_MUTATION_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
 def resolve_validation_method(url, observed=None):
     """
     Choose the HTTP method for a validation probe.
 
     Returns (method, source) where source is observed | inferred | default.
     Observed methods (real browser traffic) are always used. Path-inferred
-    methods are used except DELETE, which is downgraded to OPTIONS so a
-    guessed path never issues a destructive request.
+    mutation verbs (POST/PUT/PATCH/DELETE) are downgraded to OPTIONS so a
+    guessed path never issues a state-changing, destructive request.
     """
     from modules.extraction.enrich import resolve_method
 
     method, source = resolve_method(url, observed)
     method = (method or "GET").upper()
-    if method == "DELETE" and source == "inferred":
+    if source == "inferred" and method in _MUTATION_METHODS:
         return "OPTIONS", "inferred"
     return method, source
 

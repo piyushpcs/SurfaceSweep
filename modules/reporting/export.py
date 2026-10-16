@@ -10,6 +10,31 @@ import os
 from urllib.parse import urlparse
 from modules.common.console import ok, warn
 
+# Spreadsheet apps treat cells beginning with these as formulas (CSV injection,
+# OWASP). Prefix with an apostrophe so imported URLs/paths stay inert.
+_CSV_INJECTION_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value) -> str:
+    """Neutralize spreadsheet formula-injection in an exported cell."""
+    text = "" if value is None else str(value)
+    if text[:1] in _CSV_INJECTION_PREFIXES:
+        return "'" + text
+    return text
+
+
+def _write_csv(filename: str, fieldnames: list, rows: list) -> bool:
+    """Write a CSV, creating the parent dir only when the path has one."""
+    parent = os.path.dirname(filename)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    safe_rows = [{k: _csv_safe(v) for k, v in row.items()} for row in rows]
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(safe_rows)
+    return True
+
 
 def export_burp_csv(result, filename="reports/surfacesweep_burp.csv"):
     """
@@ -58,11 +83,7 @@ def export_burp_csv(result, filename="reports/surfacesweep_burp.csv"):
             unique_rows.append(r)
 
     try:
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-        with open(filename, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["Host", "Protocol", "Path", "Query"])
-            writer.writeheader()
-            writer.writerows(unique_rows)
+        _write_csv(filename, ["Host", "Protocol", "Path", "Query"], unique_rows)
         ok(f" Burp CSV exported: {filename} ({len(unique_rows)} endpoints)")
         return True
     except OSError as e:
@@ -122,11 +143,7 @@ def export_zap_csv(result, filename="reports/surfacesweep_zap.csv"):
             })
 
     try:
-        os.makedirs(os.path.dirname(filename), exist_ok=True)
-        with open(filename, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["URL", "Method", "Data", "Payload"])
-            writer.writeheader()
-            writer.writerows(rows)
+        _write_csv(filename, ["URL", "Method", "Data", "Payload"], rows)
         ok(f" ZAP CSV exported: {filename} ({len(rows)} endpoints)")
         return True
     except OSError as e:

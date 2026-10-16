@@ -476,9 +476,8 @@ def query_osv(libraries, timeout=10):
 
     # Build batch query
     queries = []
-    lib_map = {}  # index -> library info
-
-    for i, lib in enumerate(libraries):
+    query_libs = []  # library per query position (querybatch returns in order)
+    for lib in libraries:
         # Map our library names to npm package names
         npm_name = {
             "jQuery": "jquery",
@@ -500,7 +499,9 @@ def query_osv(libraries, timeout=10):
                 "package": {"name": npm_name, "ecosystem": "npm"},
                 "version": lib["version"],
             })
-            lib_map[i] = lib
+            # Track the lib per *query position* — querybatch results are
+            # returned in query order, which skips libs without an npm_name.
+            query_libs.append(lib)
 
     if not queries:
         return {}
@@ -520,10 +521,9 @@ def query_osv(libraries, timeout=10):
         return {}
 
     results = {}
-    for i, result in enumerate(data.get("results", [])):
-        if i not in lib_map:
+    for lib, result in zip(query_libs, data.get("results", [])):
+        if not isinstance(result, dict):
             continue
-        lib = lib_map[i]
         vulns = result.get("vulns", [])
         if vulns:
             findings = []

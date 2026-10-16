@@ -145,7 +145,7 @@ VERIFIERS: Dict[str, tuple] = {
         _bearer("https://api.netlify.com/api/v1/me"),
         (200,), (401, 403), "Netlify",
     ),
-    "npm Token": (
+    "NPM Token": (
         _bearer("https://registry.npmjs.org/-/npm/v1/user"),
         (200,), (401, 403), "npm",
     ),

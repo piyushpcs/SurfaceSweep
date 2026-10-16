@@ -20,7 +20,7 @@ class ScanContext:
 
     __slots__ = ("args", "verbose", "headers", "result", "wayback_result",
                  "waf_info", "waf_adjustments", "stages_run", "_t0",
-                 "stage_timings")
+                 "stage_timings", "stage_errors")
 
     def __init__(self, args: Namespace, verbose: bool = True,
                  headers: Optional[dict] = None):
@@ -33,6 +33,7 @@ class ScanContext:
         self.waf_adjustments: Optional[dict] = None
         self.stages_run: list[str] = []
         self.stage_timings: dict[str, float] = {}
+        self.stage_errors: list[str] = []
         self._t0 = monotonic()
 
     def log(self, msg: str) -> None:

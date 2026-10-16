@@ -8,12 +8,29 @@ import requests
 
 from modules.cors.classifier import classify_cors, parse_acao_list
 from modules.cors.origins import origins_equal
-from modules.extraction.http import request_tls
+from modules.extraction.http import (
+    is_tls_policy_error,
+    relaxed_session,
+    request_tls,
+)
 
 USER_AGENT = "SurfaceSweep/1.0"
 
 # Realistic browser preflight request-header list
 PREFLIGHT_ACRH = "content-type, authorization, x-requested-with"
+
+
+def _do_request(session, method, url, **kwargs):
+    """
+    Send a request through `session`, falling back to the relaxed-TLS session
+    only on a cipher-policy rejection. Avoids downgrading every probe's TLS.
+    """
+    try:
+        return session.request(method, url, **kwargs)
+    except requests.ConnectionError as exc:
+        if is_tls_policy_error(exc):
+            return relaxed_session().request(method, url, **kwargs)
+        raise
 
 
 def build_probe_headers(origin, base_headers=None, preflight=False, request_method="GET"):
@@ -108,8 +125,9 @@ def probe_baseline(url, timeout=8, headers=None, limiter=None, session=None):
         limiter.wait()
     try:
         if session is not None:
-            resp = session.request(
-                "GET", url, timeout=timeout, headers=req_headers, allow_redirects=True
+            resp = _do_request(
+                session, "GET", url, timeout=timeout, headers=req_headers,
+                allow_redirects=True,
             )
         else:
             resp = request_tls(
@@ -185,7 +203,8 @@ def probe_endpoint(
             # Browsers follow redirects for CORS checks; ACAO is read from
             # the final response (e.g. apex → www often carries the headers).
             if session is not None:
-                resp = session.request(
+                resp = _do_request(
+                    session,
                     method,
                     url,
                     timeout=timeout,

@@ -1000,7 +1000,9 @@ class TestJwtSsrfAndForgeStep5(unittest.TestCase):
         from modules.jwt import keys
         src = inspect.getsource(keys._get_with_safe_redirects)
         self.assertIn("allow_redirects=False", src)
-        self.assertIn("is_safe_jwt_fetch_url(current)", src)
+        # Each hop is re-validated and DNS-pinned to the approved IPs.
+        self.assertIn("_resolve_safe_ips(parsed.hostname)", src)
+        self.assertIn("_pin_dns(parsed.hostname, ips)", src)
 
 
 if __name__ == "__main__":

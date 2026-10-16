@@ -53,18 +53,24 @@ def get_wayback_js_urls(target_domain, limit=50, verbose=True):
             detail(f"[!] Wayback API returned invalid JSON")
         return []
 
-    if not data or len(data) <= 1:
+    if not isinstance(data, list) or len(data) <= 1:
         if verbose:
             detail(f"[!] No archived JS files found")
         return []
 
     # First row is header
     header = data[0]
+    if not isinstance(header, list):
+        if verbose:
+            detail("[!] Wayback API returned an unexpected shape")
+        return []
     js_urls = []
     for row in data[1:]:
+        if not isinstance(row, list):
+            continue
         record = dict(zip(header, row))
         url = record.get("original", "")
-        if url.endswith(".js") or ".js?" in url or ".js#" in url:
+        if isinstance(url, str) and (url.endswith(".js") or ".js?" in url or ".js#" in url):
             js_urls.append(url)
 
     js_urls = js_urls[:limit]
@@ -77,28 +83,38 @@ def get_wayback_js_urls(target_domain, limit=50, verbose=True):
 
 def fetch_wayback_js(js_url, timeout=15, verbose=False):
     """Fetch a JS file from Wayback Machine."""
-    # Use the most recent snapshot
-    wayback_url = f"https://archive.org/wayback/available?url={js_url}"
+    # Use the most recent snapshot. url is passed via params so values
+    # containing &, #, + cannot corrupt the query string.
+    wayback_url = "https://archive.org/wayback/available"
     try:
-        resp = requests.get(wayback_url, timeout=timeout, headers={"User-Agent": "SurfaceSweep/1.0"})
+        resp = requests.get(
+            wayback_url, params={"url": js_url}, timeout=timeout,
+            headers={"User-Agent": "SurfaceSweep/1.0"},
+        )
         data = resp.json()
-        snapshot_url = data.get("archived_snapshots", {}).get("closest", {}).get("url", "")
-        if not snapshot_url:
-            return None
+    except (requests.RequestException, ValueError):
+        return None
 
-        # Force HTTPS — archive.org snapshots may return http:// URLs that are refused on port 80
-        if snapshot_url.startswith("http://"):
-            snapshot_url = "https://" + snapshot_url[len("http://"):]
+    if not isinstance(data, dict):
+        return None
+    snapshot_url = data.get("archived_snapshots", {}).get("closest", {}).get("url", "")
+    if not snapshot_url:
+        return None
 
+    # Force HTTPS — archive.org snapshots may return http:// URLs that are refused on port 80
+    if snapshot_url.startswith("http://"):
+        snapshot_url = "https://" + snapshot_url[len("http://"):]
+
+    try:
         js_resp = requests.get(snapshot_url, timeout=timeout, headers={"User-Agent": "SurfaceSweep/1.0"})
         js_resp.raise_for_status()
-        return {
-            "original_url": js_url,
-            "snapshot_url": snapshot_url,
-            "content": js_resp.text
-        }
-    except requests.RequestException:
+    except (requests.RequestException, ValueError):
         return None
+    return {
+        "original_url": js_url,
+        "snapshot_url": snapshot_url,
+        "content": js_resp.text,
+    }
 
 
 def get_wayback_endpoints(target_domain, limit=50, threads=5, verbose=True):

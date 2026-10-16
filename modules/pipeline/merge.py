@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional, Sequence
 
-from modules.extraction import deduplicate_secrets, deduplicate_sinks, deduplicate_pii, is_static_asset
+from modules.extraction import deduplicate_secrets, deduplicate_pii, is_static_asset
 from modules.extraction.params import deduplicate_params
 from modules.extraction.scope import is_same_scope, get_registrable_domain
 from modules.jwt import deduplicate_jwts
@@ -41,19 +41,40 @@ def merge_secrets(result: dict, new_secrets: Optional[Sequence[dict]]) -> None:
 
 
 def merge_sinks(result: dict, new_sinks: Optional[Sequence[dict]]) -> None:
-    """Append fragment sinks and dedupe (sources list + total count)."""
+    """
+    Append fragment sinks and merge by (sink, severity).
+
+    Preserves per-source attribution and the accumulated hit count. Existing
+    entries are already deduped (sources list + total count); re-flattening
+    them one-source-at-a-time with count=1 silently dropped their counts.
+    """
     if not new_sinks:
         return
-    combined = list(result.get("sinks_found") or []) + list(new_sinks)
-    # Flatten sources→source so deduplicate_sinks sees one source per row
-    flat = []
-    for s in combined:
-        if "sources" in s:
-            for src in s["sources"]:
-                flat.append({**s, "source": src, "count": 1})
+
+    def _sources(s: dict) -> list:
+        srcs = s.get("sources")
+        if isinstance(srcs, list) and srcs:
+            return list(srcs)
+        if s.get("source"):
+            return [s["source"]]
+        return []
+
+    merged: dict = {}
+    for s in list(result.get("sinks_found") or []) + list(new_sinks):
+        srcs = _sources(s)
+        key = (s.get("sink"), s.get("severity"))
+        if key not in merged:
+            entry = dict(s)
+            entry["sources"] = srcs
+            entry["count"] = int(s.get("count", 1))
+            entry.pop("source", None)
+            merged[key] = entry
         else:
-            flat.append(s)
-    result["sinks_found"] = deduplicate_sinks(flat)
+            for src in srcs:
+                if src not in merged[key]["sources"]:
+                    merged[key]["sources"].append(src)
+            merged[key]["count"] += int(s.get("count", 1))
+    result["sinks_found"] = list(merged.values())
 
 
 def merge_jwts(result: dict, new_jwts: Optional[Sequence[dict]]) -> None:

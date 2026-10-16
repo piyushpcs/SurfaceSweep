@@ -3,11 +3,77 @@ Key material: SSRF-guarded JWKS fetch, RSA JWK→PEM, embedded jwk extraction.
 """
 
 import base64
+import contextlib
 import ipaddress
 import socket
+import threading
 from urllib.parse import urlparse
 
 from modules.jwt.decode import b64url_decode, decode_jwt
+
+# Cap JWKS payloads so a hostile jku/x5u cannot OOM the scanner.
+MAX_JWKS_BYTES = 1_000_000
+
+# Serializes the getaddrinfo pin below; JWKS fetches are rare and sequential.
+_DNS_PIN_LOCK = threading.Lock()
+
+
+def _resolve_safe_ips(host):
+    """
+    Resolve `host` and return its IP strings only if every address is public.
+
+    Returns None when resolution fails or any address is loopback/private/
+    link-local/reserved/multicast/unspecified.
+    """
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except (socket.gaierror, UnicodeError, OSError):
+        return None
+    ips = []
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return None
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return None
+        ips.append(str(ip))
+    return ips or None
+
+
+@contextlib.contextmanager
+def _pin_dns(host, ips):
+    """
+    Force `host` to connect to the already-validated `ips` for this block.
+
+    Closes the DNS-rebinding TOCTOU window: the guard resolves the host once,
+    and the HTTP stack is prevented from doing a second (attacker-controlled)
+    lookup that could return an internal address.
+    """
+    with _DNS_PIN_LOCK:
+        real = socket.getaddrinfo
+
+        def pinned(h, port, family=0, type=0, proto=0, flags=0):
+            if isinstance(h, str) and h.lower() == host.lower():
+                out = []
+                for ip in ips:
+                    out.extend(real(ip, port, family, type, proto, flags))
+                if out:
+                    return out
+            return real(h, port, family, type, proto, flags)
+
+        socket.getaddrinfo = pinned
+        try:
+            yield
+        finally:
+            socket.getaddrinfo = real
 
 
 def is_safe_jwt_fetch_url(url):
@@ -21,25 +87,7 @@ def is_safe_jwt_fetch_url(url):
         return False
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return False
-    try:
-        infos = socket.getaddrinfo(parsed.hostname, None)
-    except (socket.gaierror, UnicodeError, OSError):
-        return False
-    for info in infos:
-        try:
-            ip = ipaddress.ip_address(info[4][0])
-        except ValueError:
-            return False
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
-            return False
-    return True
+    return _resolve_safe_ips(parsed.hostname) is not None
 
 
 def _der_length(n):
@@ -114,17 +162,25 @@ def _get_with_safe_redirects(url, timeout=5.0, max_redirects=3):
 
     current = url
     for _ in range(max_redirects + 1):
-        if not is_safe_jwt_fetch_url(current):
+        try:
+            parsed = urlparse(current)
+        except Exception:
+            return None
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return None
+        ips = _resolve_safe_ips(parsed.hostname)
+        if ips is None:
             return None
         try:
             from modules.extraction.http import request_tls
-            resp = request_tls(
-                "GET",
-                current,
-                timeout=timeout,
-                allow_redirects=False,
-                headers={"User-Agent": "SurfaceSweep/1.0"},
-            )
+            with _pin_dns(parsed.hostname, ips):
+                resp = request_tls(
+                    "GET",
+                    current,
+                    timeout=timeout,
+                    allow_redirects=False,
+                    headers={"User-Agent": "SurfaceSweep/1.0"},
+                )
         except Exception:
             return None
         if resp.status_code in (301, 302, 303, 307, 308):
@@ -155,6 +211,8 @@ def fetch_jwks_keys(url, timeout=5.0):
         return []
     resp = _get_with_safe_redirects(url, timeout=timeout)
     if resp is None:
+        return []
+    if len(resp.content or b"") > MAX_JWKS_BYTES:
         return []
     try:
         data = resp.json()

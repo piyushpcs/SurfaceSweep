@@ -20,7 +20,7 @@ from modules.extraction.patterns import (
 from modules.extraction.secrets import extract_secrets, deduplicate_secrets
 from modules.extraction.params import extract_params, deduplicate_params
 from modules.extraction.http import RateLimiter, fetch_with_retry, get_page
-from modules.extraction.scope import get_registrable_domain, is_same_scope
+from modules.extraction.scope import get_registrable_domain, is_same_scope, normalize_scope_filter
 from modules.extraction.risk import calculate_risk_summary
 from modules.extraction.deobfuscator import deobfuscate
 from modules.extraction.ast import extract_endpoints_ast, ast_is_available
@@ -259,7 +259,7 @@ def fetch_and_extract(js_url, timeout=10, limiter=None, use_ast=True):
         return {"source": js_url, "error": str(e), "endpoints": set(), "secrets": [], "linked_js": set(), "deobfuscation_findings": [], "sinks": [], "internal_hosts": [], "jwts": [], "pii": [], "params": []}
 
 
-def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=True, use_ast=True):
+def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=True, use_ast=True, scope_filter=None):
     """
     Main entry point. Returns a structured dict — ready for JSON export
     or feeding straight into a dashboard later.
@@ -267,10 +267,24 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
     max_depth: how many hops into referenced JS files to follow (0 = base HTML only,
                1 = JS referenced from HTML, 2 = JS referenced from those JS files, etc.)
     use_ast: enable tree-sitter AST-based extraction (falls back to regex-only if unavailable)
+    scope_filter: raw --scope value. Referenced JS outside scope is NOT fetched
+               (SSRF / scope-safety guard); defaults to the target's registrable domain.
     """
     result = new_scan_result(base_url, scan_depth=max_depth)
 
     target_domain = get_registrable_domain(base_url)
+    scope = normalize_scope_filter(scope_filter) or target_domain
+
+    def _in_scope_js(u):
+        """Referenced JS we are willing to fetch: same scope as the target."""
+        if not isinstance(u, str):
+            return False
+        if u.startswith("//"):
+            u = "https:" + u
+        if u.startswith("http"):
+            return is_same_scope(u, scope)
+        return True  # relative / protocol-less references are always in scope
+
     limiter = RateLimiter(requests_per_second=5)
 
     if verbose:
@@ -328,7 +342,9 @@ def run_extractor(base_url, threads=6, verbose=True, max_depth=1, deobfuscate=Tr
         if not js_urls or depth > max_depth:
             return
 
-        new_urls = [u for u in js_urls if u not in visited_js]
+        new_urls = [
+            u for u in js_urls if u not in visited_js and _in_scope_js(u)
+        ]
         visited_js.update(new_urls)
 
         if verbose and depth > 0:

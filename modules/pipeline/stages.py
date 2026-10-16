@@ -70,12 +70,21 @@ def stage_scan(ctx: ScanContext) -> None:
     verbose = ctx.verbose
     scope = normalize_scope_filter(args.scope)
     deobf = not getattr(args, "no_deobf", False)
+
+    # Attach --cookie / -H credentials to the core scan. They are applied to
+    # same-scope HTTP fetches only (see HttpClient._merge_headers), so the
+    # target's session reaches the static scan but never leaks off-host.
+    from modules.extraction.http import configure_auth
+    from modules.extraction.scope import get_registrable_domain
+    configure_auth(ctx.headers or {}, scope or get_registrable_domain(args.target))
+
     browser_kwargs = dict(
         scope_filter=scope,
         deobfuscate_content=deobf,
         user_agent=getattr(args, "ua", None),
         insecure=not getattr(args, "verify_tls", True),
         proxy=getattr(args, "proxy", None),
+        headers=ctx.headers or None,
     )
 
     if args.full:
@@ -85,7 +94,7 @@ def stage_scan(ctx: ScanContext) -> None:
         static_result = run_extractor(
             args.target, threads=args.threads, verbose=verbose,
             max_depth=args.depth, deobfuscate=deobf,
-            use_ast=not args.regex_only,
+            use_ast=not args.regex_only, scope_filter=scope,
         )
         if verbose:
             emit("\n[*] --- Phase 2: Browser scan ---")
@@ -111,7 +120,7 @@ def stage_scan(ctx: ScanContext) -> None:
         ctx.result = run_extractor(
             args.target, threads=args.threads, verbose=verbose,
             max_depth=args.depth, deobfuscate=deobf,
-            use_ast=not args.regex_only,
+            use_ast=not args.regex_only, scope_filter=scope,
         )
         ctx.result["scan_mode"] = "static"
 
@@ -210,6 +219,7 @@ def stage_spa(ctx: ScanContext) -> None:
         args.target, timeout=args.timeout, verbose=ctx.verbose,
         max_routes=args.max_routes, probe_common=not args.no_probe,
         scope_filter=normalize_scope_filter(args.scope),
+        headers=ctx.headers or None,
     )
     result["spa_routes"] = spa_result["routes"]
     result["spa_routes_from"] = spa_result["routes_from"]
@@ -443,7 +453,9 @@ def stage_verify_secrets(ctx: ScanContext) -> None:
         secrets,
         timeout=getattr(args, "verify_secrets_timeout", 5.0),
         verbose=ctx.verbose,
-        headers=ctx.headers if ctx.headers else None,
+        # Do NOT forward the target's Cookie/auth to vendor APIs — probe the
+        # vendor endpoint bare so credentials never leave the target's scope.
+        headers=None,
     )
     result["secret_verification"] = verification
     result["risk_summary"] = calculate_risk_summary(result)

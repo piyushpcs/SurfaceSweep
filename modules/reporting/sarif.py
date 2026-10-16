@@ -12,6 +12,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from modules.common.console import ok, warn
+from modules.common.constants import secret_severity
 
 __all__ = ["build_sarif", "export_sarif"]
 
@@ -134,7 +135,7 @@ def _collect_results(result: Dict[str, Any]) -> List[Dict[str, Any]]:
         if not isinstance(s, dict):
             continue
         typ = s.get("type") or "secret"
-        sev = s.get("severity") or "HIGH"
+        sev = s.get("severity") or secret_severity(typ)
         findings.append(_result(
             "secret-leak",
             f"Potential secret ({typ})",
@@ -204,7 +205,7 @@ def _collect_results(result: Dict[str, Any]) -> List[Dict[str, Any]]:
             sev = f.get("severity") or "MEDIUM"
             if str(sev).upper() in ("", "INFO", "ERROR"):
                 continue
-            title = f.get("title") or f.get("type") or "JWT issue"
+            title = f.get("title") or f.get("issue") or f.get("type") or "JWT issue"
             findings.append(_result(
                 "jwt-issue",
                 str(title),

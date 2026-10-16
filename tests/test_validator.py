@@ -223,9 +223,10 @@ class TestMethodAwareValidation(unittest.TestCase):
         self.assertEqual(method, "POST")
         self.assertEqual(source, "observed")
 
-    def test_path_inferred_post(self):
+    def test_path_inferred_post_downgraded_to_options(self):
+        # A mutation verb guessed from the path must never be sent as-is.
         method, source = resolve_validation_method("https://x.test/api/users/create")
-        self.assertEqual(method, "POST")
+        self.assertEqual(method, "OPTIONS")
         self.assertEqual(source, "inferred")
 
     def test_inferred_delete_downgraded_to_options(self):
@@ -251,7 +252,7 @@ class TestMethodAwareValidation(unittest.TestCase):
             intercepted=[{"url": "/api/orders", "method": "POST"}],
         )
         self.assertEqual(mm["/api/orders"], "POST")
-        self.assertEqual(mm["/api/users/create"], "POST")
+        self.assertEqual(mm["/api/users/create"], "OPTIONS")  # inferred POST → OPTIONS
         self.assertEqual(mm["/health"], "GET")
         self.assertEqual(mm["/api/items/9/delete"], "OPTIONS")  # inferred DELETE → OPTIONS
 

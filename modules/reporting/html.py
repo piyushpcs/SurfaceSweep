@@ -799,7 +799,7 @@ def render_secret_verification(verification):
     rows = []
     for r in results:
         rows.append(
-            f'<tr>{badge.get(r.get("status"), "")}'
+            f'<tr><td>{badge.get(r.get("status"), "")}</td>'
             f'<td>{_esc(str(r.get("type", "")))}</td>'
             f'<td>{_esc(str(r.get("vendor", "")))}</td>'
             f'<td><code>{_esc(str(r.get("match", "")))}</code></td>'
