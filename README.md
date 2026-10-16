@@ -8,7 +8,7 @@ Extract API endpoints and secrets from a target's JavaScript, validate what is l
 check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-917%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-920%20passing-brightgreen)](#testing)
 [![CI](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml/badge.svg)](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/piyushpcs/SurfaceSweep)](https://github.com/piyushpcs/SurfaceSweep/commits/main)
@@ -301,12 +301,12 @@ coverage run -m unittest discover -s tests -q
 coverage report -m
 ```
 
-- **917 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
+- **920 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
 - Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation/PNA,
   JWT decode/crack/JWKS, GraphQL introspection probe, secret live-verification, pipeline stage order,
   report schema (`schema_version: 1`), finding feeds, scan diff (JSON + HTML),
   scan diff, SARIF export, multi-target batch mode, the composite GitHub Action manifest,
-  and the MCP server protocol/tools
+  the MCP server protocol/tools, and a Python 3.10 compatibility guard
 - **CI**: GitHub Actions runs the suite on Python 3.10 and 3.12 with coverage on every push/PR
 - Local vulnerable API for manual checks: `python testbed/vuln_api.py` (port **5555**)
 
