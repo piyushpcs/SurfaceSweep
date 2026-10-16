@@ -14,57 +14,72 @@ class _Resp:
 
 
 class TestProbeRoute(unittest.TestCase):
-    def test_head_200_no_get_fallback(self):
+    @staticmethod
+    def _session(head=None, get=None, head_exc=None, get_exc=None):
+        """Mock session dispatching session.request() by HTTP method."""
         session = mock.Mock()
-        session.head.return_value = _Resp(200)
+
+        def _request(method, url, **kwargs):
+            if method == "HEAD":
+                if head_exc is not None:
+                    raise head_exc
+                return head
+            if method == "GET":
+                if get_exc is not None:
+                    raise get_exc
+                return get
+            raise AssertionError(f"unexpected method {method}")
+
+        session.request.side_effect = _request
+        return session
+
+    @staticmethod
+    def _methods(session):
+        return [c.args[0] for c in session.request.call_args_list]
+
+    def test_head_200_no_get_fallback(self):
+        session = self._session(head=_Resp(200), get=_Resp(200))
         self.assertEqual(probe_route("https://x.test/admin", session=session), 200)
-        session.get.assert_not_called()
+        self.assertEqual(self._methods(session), ["HEAD"])
 
     def test_head_401_counts_as_exists(self):
-        session = mock.Mock()
-        session.head.return_value = _Resp(401)
+        session = self._session(head=_Resp(401), get=_Resp(200))
         self.assertEqual(probe_route("https://x.test/admin", session=session), 401)
-        session.get.assert_not_called()
+        self.assertEqual(self._methods(session), ["HEAD"])
 
     def test_head_405_falls_back_to_get(self):
-        session = mock.Mock()
-        session.head.return_value = _Resp(405)
-        session.get.return_value = _Resp(200)
+        session = self._session(head=_Resp(405), get=_Resp(200))
         self.assertEqual(probe_route("https://x.test/api", session=session), 200)
-        session.get.assert_called_once()
+        self.assertEqual(self._methods(session), ["HEAD", "GET"])
 
     def test_head_404_get_200(self):
-        session = mock.Mock()
-        session.head.return_value = _Resp(404)
-        session.get.return_value = _Resp(200)
+        session = self._session(head=_Resp(404), get=_Resp(200))
         self.assertEqual(probe_route("https://x.test/hidden", session=session), 200)
 
     def test_both_404_returns_none(self):
-        session = mock.Mock()
-        session.head.return_value = _Resp(404)
-        session.get.return_value = _Resp(404)
+        session = self._session(head=_Resp(404), get=_Resp(404))
         self.assertIsNone(probe_route("https://x.test/nope", session=session))
 
     def test_head_405_get_404_returns_none(self):
-        session = mock.Mock()
-        session.head.return_value = _Resp(405)
-        session.get.return_value = _Resp(404)
+        session = self._session(head=_Resp(405), get=_Resp(404))
         self.assertIsNone(probe_route("https://x.test/nope", session=session))
 
     def test_network_error_returns_none(self):
-        session = mock.Mock()
-        session.head.side_effect = requests.ConnectionError("down")
-        session.get.side_effect = requests.ConnectionError("down")
+        session = self._session(
+            head_exc=requests.ConnectionError("down"),
+            get_exc=requests.ConnectionError("down"),
+        )
         self.assertIsNone(probe_route("https://x.test/x", session=session))
 
     def test_head_reset_falls_back_to_get(self):
-        session = mock.Mock()
-        session.head.side_effect = requests.ConnectionError(
-            "('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))"
+        session = self._session(
+            head_exc=requests.ConnectionError(
+                "('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))"
+            ),
+            get=_Resp(200),
         )
-        session.get.return_value = _Resp(200)
         self.assertEqual(probe_route("https://x.test/admin", session=session), 200)
-        session.get.assert_called_once()
+        self.assertEqual(self._methods(session), ["HEAD", "GET"])
 
 
 class TestCrawlSpaHangHardening(unittest.TestCase):

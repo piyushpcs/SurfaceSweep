@@ -359,13 +359,13 @@ def probe_route(url, timeout=5, session=None, headers=None):
     confirming status code, or None when the path does not look live.
     """
     import requests as _requests
-    from modules.extraction.http import request_tls
+    from modules.extraction.http import request_tls, session_request
 
     req_headers = dict(headers) if headers else {"User-Agent": "SurfaceSweep/1.0"}
     # HEAD first (some stacks reject it with RST — fall through to GET)
     try:
         if session is not None:
-            r = session.head(url, timeout=timeout, allow_redirects=True, headers=req_headers)
+            r = session_request(session, "HEAD", url, timeout=timeout, headers=req_headers)
         else:
             r = request_tls("HEAD", url, timeout=timeout, allow_redirects=True, headers=req_headers)
         status = r.status_code
@@ -375,7 +375,7 @@ def probe_route(url, timeout=5, session=None, headers=None):
         pass
     try:
         if session is not None:
-            r = session.get(url, timeout=timeout, allow_redirects=True, headers=req_headers)
+            r = session_request(session, "GET", url, timeout=timeout, headers=req_headers)
         else:
             r = request_tls("GET", url, timeout=timeout, allow_redirects=True, headers=req_headers)
         status = r.status_code

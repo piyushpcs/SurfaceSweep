@@ -13,9 +13,10 @@ exists and to `SECURITY-FINDINGS.md`.
   endpoints, secrets, JWTs, dangerous sinks, and CORS/JWT misconfigurations from
   a web target, exporting to JSON/HTML/SARIF/Burp/ZAP.
 - **Audited and hardened the tool against its own class of bugs** — fixed an SSRF
-  pivot in the crawler, a cloud-metadata fetch path, target-credential leakage to
-  third-party APIs, and a validator that issued state-changing POST/PUT/DELETE,
-  each with a regression test (920 tests passing).
+  pivot in the crawler, a cloud-metadata fetch path (and the redirect/DNS bypass
+  of its guard), target-credential leakage to third-party APIs, and a validator
+  that issued state-changing POST/PUT/DELETE, each with a regression test (932
+  tests passing).
 - Implemented scope-bound authentication: `--cookie`/`-H` now reach the initial
   HTML/JS fetch and the browser context, while credentials are sent **only** to
   in-scope hosts.
@@ -30,7 +31,7 @@ exists and to `SECURITY-FINDINGS.md`.
   fixed it and added a static compatibility test so it can't regress.
 
 ### One-line variant
-> Built and self-audited a JS attack-surface scanner (Python, 920 tests) — fixed
+> Built and self-audited a JS attack-surface scanner (Python, 932 tests) — fixed
 > SSRF, credential-leakage, and destructive-request bugs in my own tool,
 > documented them in a public write-up, and shipped it as a GitHub Action
 > (Marketplace) plus an MCP server for AI agents.
@@ -79,7 +80,20 @@ exists and to `SECURITY-FINDINGS.md`.
   `ScanResult` is a `TypedDict` with `total=False`, so the qualifier was
   redundant — removed it and added an AST test that fails if any module imports
   a symbol newer than the declared floor.
-- *Result:* 920 tests green on 3.10, 3.12, and 3.14; shipped as `v1.0.1`.
+- *Result:* 932 tests green on 3.10, 3.12, and 3.14; shipped as `v1.0.1`.
+
+**6. "The guard was only half-real."**
+- *Situation:* I'd added a cloud-metadata denylist, but it only checked the
+  first URL — the client still followed redirects, and the check matched
+  *hostnames*, not resolved IPs.
+- *Task:* Make the guard cover what the client actually connects to.
+- *Action:* Centralised redirect handling to re-validate and DNS-pin **every**
+  hop, and switched the guard to resolve + IP-check the host (catching
+  `…nip.io` aliases and `::ffff:` encodings), thread-locally so the parallel
+  crawler kept its throughput.
+- *Result:* A `302 → 169.254.169.254` is refused before any connection. Proved
+  it with a local redirect server: a naive client connects and hangs on the
+  metadata IP; the scanner refuses.
 
 ---
 
@@ -93,9 +107,11 @@ exists and to `SECURITY-FINDINGS.md`.
 3. Bug #2: my validator was deleting data from test targets.
 4. Bug #3: cookies leaking to `api.stripe.com` via `--verify-secrets`.
 5. Bug #4: a DNS-rebinding TOCTOU in the JWKS fetcher.
-6. The fix pattern: **default-safe, scope-bound, fallback-only**.
-7. What I'd test next (rebinding on the main crawler, fuzzing the parsers).
-8. Link `SECURITY-FINDINGS.md` and the regression tests.
+6. Bug #5: the metadata guard that only checked the first URL (redirect SSRF)
+   and only the hostname (DNS alias / IP-encoding bypass).
+7. The fix pattern: **default-safe, scope-bound, fallback-only**.
+8. What I'd test next (fuzzing the parsers, hardening the browser path).
+9. Link `SECURITY-FINDINGS.md` and the regression tests.
 
 ---
 
@@ -110,7 +126,7 @@ exists and to `SECURITY-FINDINGS.md`.
 > headers treated as global defaults leak your session to third-party APIs.
 >
 > I fixed all three — default-safe, scope-bound, fallback-only — and wrote it up
-> with regression tests. 920 tests passing.
+> with regression tests. 932 tests passing.
 >
 > It's now shipped as a GitHub Action on the Marketplace and an MCP server for
 > AI agents.
@@ -121,7 +137,7 @@ exists and to `SECURITY-FINDINGS.md`.
 
 ## Honest claims checklist (don't overclaim)
 
-- ✅ "920 tests passing" (verified locally on 3.10/3.12/3.14; CI green on 3.10 & 3.12).
+- ✅ "932 tests passing" (verified locally on 3.10/3.12/3.14; CI green on 3.10 & 3.12).
 - ✅ "GitHub Action published to the Marketplace" (release `v1.0.1`).
 - ✅ "MCP server with `scan_url`/`check_scope`" (dependency-free, unit-tested).
 - ✅ "Scope-bound authenticated scans" (verified with a cookie-gated app).

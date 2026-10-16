@@ -9,6 +9,7 @@ import requests
 from modules.cors.classifier import classify_cors, parse_acao_list
 from modules.cors.origins import origins_equal
 from modules.extraction.http import (
+    follow_redirects,
     is_tls_policy_error,
     relaxed_session,
     request_tls,
@@ -22,15 +23,23 @@ PREFLIGHT_ACRH = "content-type, authorization, x-requested-with"
 
 def _do_request(session, method, url, **kwargs):
     """
-    Send a request through `session`, falling back to the relaxed-TLS session
-    only on a cipher-policy rejection. Avoids downgrading every probe's TLS.
+    Send a request through ``session`` with per-hop SSRF validation.
+
+    Falls back to the relaxed-TLS session only on a cipher-policy rejection
+    (never downgrading TLS by default) and re-validates every redirect hop so
+    a target cannot steer the scanner at the metadata service via a 302.
     """
-    try:
-        return session.request(method, url, **kwargs)
-    except requests.ConnectionError as exc:
-        if is_tls_policy_error(exc):
-            return relaxed_session().request(method, url, **kwargs)
-        raise
+    allow_redirects = kwargs.pop("allow_redirects", True)
+
+    def send(m, u):
+        try:
+            return session.request(m, u, allow_redirects=False, **kwargs)
+        except requests.ConnectionError as exc:
+            if is_tls_policy_error(exc):
+                return relaxed_session().request(m, u, allow_redirects=False, **kwargs)
+            raise
+
+    return follow_redirects(send, method, url, allow_redirects=allow_redirects)
 
 
 def build_probe_headers(origin, base_headers=None, preflight=False, request_method="GET"):

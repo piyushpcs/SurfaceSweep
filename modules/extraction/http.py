@@ -12,13 +12,19 @@ import threading
 import time
 from email.utils import parsedate_to_datetime
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.ssl_ import create_urllib3_context
 
 from modules.common.constants import DEFAULT_USER_AGENT
+from modules.common.netguard import (
+    BlockedTarget,
+    is_blocked_fetch_target,
+    pin_dns,
+    resolve_fetch_ips,
+)
 from modules.extraction.scope import is_same_scope
 
 __all__ = [
@@ -33,6 +39,7 @@ __all__ = [
     "default_headers",
     "fetch_text",
     "fetch_with_retry",
+    "follow_redirects",
     "get_cached_text",
     "get_page",
     "is_blocked_fetch_target",
@@ -43,45 +50,99 @@ __all__ = [
     "request_tls",
     "reset_http_config",
     "relaxed_session",
+    "session_request",
 ]
 
 _TEXT_CACHE_MAX = 512
 
-# Cloud-instance metadata / link-local hosts that must never be fetched from a
-# scan (SSRF via target-controlled JS or a redirect). Private and loopback
-# ranges stay allowed so local testbeds and authorized internal assessments
-# keep working.
-_METADATA_HOSTS = frozenset({
-    "metadata.google.internal",
-    "metadata.goog",
-    "instance-data",
-    "metadata",
-})
+# HTTP status codes that carry a Location to follow.
+_REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
+
+# Bound on redirect chains (matches the JWKS fetcher's spirit).
+_MAX_REDIRECTS = 5
 
 
-def is_blocked_fetch_target(url: str) -> bool:
+def _assert_fetch_allowed(url: str):
     """
-    True for cloud-metadata / link-local targets that must never be fetched.
+    Validate a single fetch target; returns ``(host, validated_ips)``.
 
-    Guards against a target's JavaScript (or a redirect) steering the scanner
-    at the instance metadata service (169.254.169.254, fd00:ec2::254, the
-    Alibaba 100.100.100.200 endpoint, GCP metadata hostnames, ...).
+    Raises ``requests.ConnectionError`` for a malformed URL, a non-HTTP(S)
+    scheme, a metadata/link-local hostname, or a host whose DNS resolves to a
+    blocked address. ``validated_ips`` may be ``None`` when the host does not
+    resolve (the request then fails on its own; a missing record is not an
+    SSRF signal).
     """
+    if is_blocked_fetch_target(url):
+        raise requests.ConnectionError(
+            f"Refused to fetch blocked link-local/metadata target: {url}"
+        )
     try:
-        host = (urlparse(url).hostname or "").lower()
-    except ValueError:
-        return True
+        parsed = urlparse(url)
+    except ValueError as exc:
+        raise requests.ConnectionError(f"Refused to fetch malformed URL: {url}") from exc
+    if parsed.scheme not in ("http", "https"):
+        raise requests.ConnectionError(f"Refused to fetch non-HTTP(S) URL: {url}")
+    host = parsed.hostname
     if not host:
-        return False
-    if host in _METADATA_HOSTS:
-        return True
-    if host.startswith("169.254."):
-        return True
-    if host == "100.100.100.200":  # Alibaba Cloud metadata
-        return True
-    if host == "fd00:ec2::254":  # AWS IPv6 metadata
-        return True
-    return False
+        raise requests.ConnectionError(f"Refused to fetch URL without a host: {url}")
+    try:
+        ips = resolve_fetch_ips(host)
+    except BlockedTarget as exc:
+        raise requests.ConnectionError(str(exc)) from exc
+    return host, ips
+
+
+def follow_redirects(send, method, url, allow_redirects=True, max_redirects=_MAX_REDIRECTS):
+    """
+    Issue ``send(method, url)`` and follow redirects safely.
+
+    Every hop — the initial URL *and* each ``Location`` — is validated (name
+    check, DNS resolution, IP check) and DNS-pinned, so a target cannot steer
+    the scanner at the metadata service via a 302. ``send`` must be side-effect
+    free beyond the single request and must not follow redirects itself
+    (callers pass ``allow_redirects=False``).
+
+    Returns the final ``requests.Response``; raises
+    ``requests.ConnectionError`` when the initial URL or any hop is blocked.
+    """
+    current = url
+    resp = None
+    for _ in range(max_redirects + 1):
+        host, ips = _assert_fetch_allowed(current)
+        with pin_dns(host, ips):
+            resp = send(method, current)
+
+        code = getattr(resp, "status_code", None)
+        if not allow_redirects or code not in _REDIRECT_CODES:
+            return resp
+        headers = getattr(resp, "headers", None) or {}
+        location = headers.get("Location")
+        if not location:
+            return resp
+        try:
+            nxt = urljoin(current, location)
+        except ValueError:
+            return resp
+        if urlparse(nxt).scheme not in ("http", "https"):
+            return resp
+        if code == 303 and method.upper() not in ("GET", "HEAD"):
+            method = "GET"
+        current = nxt
+    return resp
+
+
+def session_request(session, method, url, allow_redirects=True, **kwargs):
+    """
+    ``session.request`` with per-hop SSRF validation.
+
+    Follows redirects one hop at a time, re-validating and DNS-pinning each
+    target. TLS-policy fallback stays with the caller (CORS probes opt in via
+    their own wrapper) so this stays a thin transport shim.
+    """
+    def send(m, u):
+        return session.request(m, u, allow_redirects=False, **kwargs)
+
+    return follow_redirects(send, method, url, allow_redirects=allow_redirects)
 
 
 def is_tls_policy_error(exc: BaseException) -> bool:
@@ -156,23 +217,29 @@ def relaxed_session() -> requests.Session:
 
 def request_tls(method: str, url: str, **kwargs):
     """
-    HTTP request with automatic TLS-policy fallback.
+    HTTP request with automatic TLS-policy fallback and SSRF-safe redirects.
 
     Applies process-wide proxy/insecure config when the caller did not
     override them, then tries the default stack first; on a connection
     reset/abort that looks like cipher-policy rejection, retries once via
-    relaxed_session().
+    relaxed_session(). Redirects are followed one hop at a time with each
+    target re-validated and DNS-pinned (see :func:`follow_redirects`).
     """
+    allow_redirects = kwargs.pop("allow_redirects", True)
     if "verify" not in kwargs and _client.insecure:
         kwargs["verify"] = False
     if "proxies" not in kwargs and _client.proxy:
         kwargs["proxies"] = {"http": _client.proxy, "https": _client.proxy}
-    try:
-        return requests.request(method, url, **kwargs)
-    except requests.ConnectionError as exc:
-        if not is_tls_policy_error(exc):
-            raise
-        return relaxed_session().request(method, url, **kwargs)
+
+    def send(m, u):
+        try:
+            return requests.request(m, u, allow_redirects=False, **kwargs)
+        except requests.ConnectionError as exc:
+            if not is_tls_policy_error(exc):
+                raise
+            return relaxed_session().request(m, u, allow_redirects=False, **kwargs)
+
+    return follow_redirects(send, method, url, allow_redirects=allow_redirects)
 
 
 def parse_retry_after(value: Optional[str], default: float = 2.0, cap: float = 60.0) -> float:
@@ -358,16 +425,40 @@ class HttpClient:
         """
         Fetch a URL with exponential backoff on 429/5xx and transient network errors.
 
-        Returns the final Response on success. Raises the last ConnectionError/
-        Timeout after retries are exhausted. Returns None only if the 429/5xx
-        retry budget is fully consumed without a non-retryable response.
+        Redirects are followed one hop at a time; each target is re-validated
+        and DNS-pinned, and credentials are re-scoped per hop so a redirect to
+        a third-party host never receives the target's auth headers. Returns
+        the final Response on success. Raises the last ConnectionError/Timeout
+        after retries are exhausted. Returns None only if the 429/5xx retry
+        budget is fully consumed without a non-retryable response.
         """
-        if is_blocked_fetch_target(url):
-            raise requests.ConnectionError(
-                f"Refused to fetch blocked link-local/metadata target: {url}"
+        def send(method, hop_url):
+            return self._fetch_once(
+                hop_url,
+                timeout=timeout,
+                max_retries=max_retries,
+                limiter=limiter,
+                raw_headers=headers,
             )
 
-        req_headers = self._merge_headers(url, headers)
+        resp = follow_redirects(send, "GET", url, allow_redirects=True)
+        if resp is None:
+            return None
+        try:
+            self.cache_text(url, resp.text)
+        except Exception:
+            pass
+        return resp
+
+    def _fetch_once(self, url, timeout=10, max_retries=3, limiter=None,
+                    raw_headers=None):
+        """
+        Fetch one URL (no redirect following) with the retry/backoff budget.
+
+        ``raw_headers`` are the caller's headers before scope merging; they are
+        merged per URL so in-scope auth is attached only to in-scope hops.
+        """
+        req_headers = self._merge_headers(url, raw_headers)
 
         used_relaxed = False
         for attempt in range(max_retries):
@@ -376,9 +467,13 @@ class HttpClient:
             try:
                 kwargs = self.request_kwargs(headers=req_headers)
                 if used_relaxed:
-                    resp = relaxed_session().get(url, timeout=timeout, **kwargs)
+                    resp = relaxed_session().get(
+                        url, timeout=timeout, allow_redirects=False, **kwargs
+                    )
                 else:
-                    resp = requests.get(url, timeout=timeout, **kwargs)
+                    resp = requests.get(
+                        url, timeout=timeout, allow_redirects=False, **kwargs
+                    )
                 if resp.status_code == 429:
                     if attempt >= max_retries - 1:
                         return None
@@ -388,10 +483,6 @@ class HttpClient:
                     time.sleep(2 ** attempt)
                     continue
                 resp.raise_for_status()
-                try:
-                    self.cache_text(url, resp.text)
-                except Exception:
-                    pass
                 return resp
             except requests.Timeout:
                 if attempt < max_retries - 1:

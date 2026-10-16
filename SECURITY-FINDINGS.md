@@ -7,8 +7,9 @@ turned the scanner into an SSRF pivot, a credential-leak, and a source of
 destructive requests against the target.
 
 Status: **all findings below are fixed** and covered by regression tests in
-`tests/test_hardening.py` (plus updated assertions in `tests/test_validator.py`
-and `tests/test_jwt.py`). Test suite: 883 passing.
+`tests/test_hardening.py` and `tests/test_redirect_ssrf.py` (plus updated
+assertions in `tests/test_validator.py`, `tests/test_spa_probe.py`, and
+`tests/test_jwt.py`). Test suite: 932 passing.
 
 Severity uses CVSS-style ratings for the tool's real deployment context
 (authorized penetration testing / bug-bounty recon).
@@ -233,12 +234,58 @@ query-position-based OSV mapping; defensive Wayback parsing.
 
 ---
 
+## SF-11 — Redirect SSRF and DNS-name bypass of the metadata guard (HIGH, 8.1)
+
+**Location:** `modules/extraction/http.py` (`fetch_with_retry`, `request_tls`),
+`modules/cors/probe.py`, `modules/discovery/spa.py`, `modules/recon/waf.py`,
+`modules/analysis/validator.py`
+
+**Impact:** SF-02 added a metadata denylist, but it was enforced on the
+**initial URL only**, while the HTTP client followed redirects by default
+(`allow_redirects` was never set, so `requests` used `True`). A target could
+answer `302 Location: http://169.254.169.254/latest/meta-data/…` and the
+scanner would fetch the metadata body, cache it, and scan it for secrets —
+readable instance credentials landing in the report. The same held for the
+CORS/SPA/WAF/validator probe paths, which passed `allow_redirects=True`
+explicitly. Separately, the guard was a **hostname string** check, so a name
+resolving to a link-local address (`169.254.169.254.nip.io`, any DNS alias, or
+an alternate encoding) bypassed it entirely.
+
+**Root cause:** Redirect hops were never re-validated, and the guard trusted
+the URL text instead of the resolved address.
+
+**Fix:**
+- All HTTP paths follow redirects **one hop at a time** via
+  `follow_redirects(...)` (`allow_redirects=False` internally); every hop —
+  initial URL *and* each `Location` — is re-validated and DNS-pinned.
+- The guard now resolves the host and IP-checks the result
+  (`modules/common/netguard.py`): link-local / metadata / multicast /
+  unspecified addresses are refused, including IPv4-mapped IPv6
+  (`::ffff:169.254.169.254`) and zoned link-local (`fe80::1%en0`).
+- Resolution is pinned per request **thread-locally** (`pin_dns`), closing the
+  rebinding TOCTOU for the whole fetch layer, not just JWKS.
+- Credentials are re-scoped per hop, so a redirect to a third-party host never
+  receives the target's auth headers.
+- Loopback/private ranges stay allowed **on purpose** (local testbeds,
+  authorized internal assessments). A resolution failure is not treated as a
+  block — the request then fails on its own.
+
+**Tests:** `tests/test_redirect_ssrf.py` (redirect to metadata refused at the
+first and final hop; safe redirect still followed; DNS alias to link-local
+refused; private host still allowed), plus updated
+`tests/test_spa_probe.py` / `tests/test_hardening.py` probe-path assertions.
+
+**Verification:** a local HTTP server that answers `302 → 169.254.169.254` is
+followed by a naive client (connects, times out on the metadata IP) but is
+refused by SurfaceSweep before any connection.
+
+---
+
 ## Residual risks / out of scope
 
-- **DNS rebinding for general fetches** is fully pinned only on the JWKS path.
-  The main crawler relies on scope enforcement (SF-01); redirects to a
-  rebinding host outside scope are not fetched, but a same-registrable-domain
-  host that rebinds remains a theoretical vector.
+- **DNS rebinding for general fetches** is now resolved + IP-checked + pinned
+  for every hop across all fetch paths (SF-11); the JWKS fetcher (SF-05) keeps
+  its stricter public-only policy.
 - **Passive-only scanning** is a design goal; SF-04 removes the one active
   behavior (inferred mutation verbs), but authored plugins could still perform
   active probes if added.
