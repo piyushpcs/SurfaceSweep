@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, NotRequired, TypedDict
+from typing import Any, Dict, List, TypedDict
 
 __all__ = [
     "RESULT_SCHEMA_VERSION",
@@ -14,7 +14,13 @@ RESULT_SCHEMA_VERSION = 1
 
 
 class ScanResult(TypedDict, total=False):
-    """Canonical shape of the mutable pipeline result dict."""
+    """Canonical shape of the mutable pipeline result dict.
+
+    ``total=False`` marks every key optional, which matches runtime behaviour:
+    ``new_scan_result`` always creates the core keys below, and pipeline stages
+    add the rest. (This also keeps the module importable on Python 3.10, where
+    ``typing.NotRequired`` does not exist.)
+    """
 
     # Core (always present after construction)
     target: str
@@ -31,40 +37,40 @@ class ScanResult(TypedDict, total=False):
     errors: List[str]
 
     # Scan-mode / depth
-    scan_mode: NotRequired[str]
-    scan_depth: NotRequired[int]
+    scan_mode: str
+    scan_depth: int
 
     # Browser / full mode
-    network_requests: NotRequired[List[Dict[str, Any]]]
-    intercepted_endpoints: NotRequired[List[Dict[str, Any]]]
+    network_requests: List[Dict[str, Any]]
+    intercepted_endpoints: List[Dict[str, Any]]
 
     # Discovery / enrichment (stages add these)
-    internal_paths: NotRequired[List[str]]
-    in_scope_urls: NotRequired[List[str]]
-    out_of_scope_urls: NotRequired[List[str]]
-    wayback_js_files: NotRequired[List[str]]
-    spa_routes: NotRequired[List[str]]
-    spa_routes_from: NotRequired[str]
-    path_status: NotRequired[Dict[str, Any]]
-    internal_paths_discovered: NotRequired[List[str]]
+    internal_paths: List[str]
+    in_scope_urls: List[str]
+    out_of_scope_urls: List[str]
+    wayback_js_files: List[str]
+    spa_routes: List[str]
+    spa_routes_from: str
+    path_status: Dict[str, Any]
+    internal_paths_discovered: List[str]
 
     # Analysis
-    risk_summary: NotRequired[Dict[str, Any]]
-    waf: NotRequired[Dict[str, Any]]
-    libraries: NotRequired[List[Dict[str, Any]]]
-    library_vulnerabilities: NotRequired[List[Dict[str, Any]]]
-    osv_results: NotRequired[List[Dict[str, Any]]]
-    cors: NotRequired[Dict[str, Any]]
-    jwt: NotRequired[Dict[str, Any]]
-    validation: NotRequired[Dict[str, Any]]
-    graphql: NotRequired[Dict[str, Any]]
-    secret_verification: NotRequired[Dict[str, Any]]
+    risk_summary: Dict[str, Any]
+    waf: Dict[str, Any]
+    libraries: List[Dict[str, Any]]
+    library_vulnerabilities: List[Dict[str, Any]]
+    osv_results: List[Dict[str, Any]]
+    cors: Dict[str, Any]
+    jwt: Dict[str, Any]
+    validation: Dict[str, Any]
+    graphql: Dict[str, Any]
+    secret_verification: Dict[str, Any]
 
     # Finalization (runner)
-    schema_version: NotRequired[int]
-    findings: NotRequired[List[Dict[str, Any]]]
-    executive_summary: NotRequired[Dict[str, Any]]
-    meta: NotRequired[Dict[str, Any]]
+    schema_version: int
+    findings: List[Dict[str, Any]]
+    executive_summary: Dict[str, Any]
+    meta: Dict[str, Any]
 
 
 def new_scan_result(
