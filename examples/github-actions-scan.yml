@@ -1,0 +1,34 @@
+# Example: run SurfaceSweep in CI and surface findings in GitHub code scanning.
+#
+# Copy this into your own repository as `.github/workflows/surfacesweep.yml`
+# and point `target` at a host you are authorized to test.
+name: SurfaceSweep
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 5 * * 1" # weekly, Monday 05:00 UTC
+
+permissions:
+  contents: read
+  security-events: write # required to upload SARIF
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Scan target
+        id: sweep
+        uses: piyushpcs/SurfaceSweep@main
+        with:
+          target: https://app.example.com
+          args: "--scope app.example.com --jwt --cors"
+          output: reports/surfacesweep.json
+          sarif: "true"
+          upload-sarif: "true"
+          fail-on: "high" # fail the job only on high/critical findings
+
+      - name: Summary
+        run: echo "SARIF written to ${{ steps.sweep.outputs.sarif }} (exit ${{ steps.sweep.outputs.exit-code }})"

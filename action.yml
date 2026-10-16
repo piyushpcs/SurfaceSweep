@@ -1,0 +1,116 @@
+name: SurfaceSweep
+description: >-
+  JavaScript attack-surface reconnaissance. Scans a URL for endpoints, secrets,
+  dangerous sinks, and CORS/JWT issues, writing a JSON report and optional SARIF
+  for GitHub code scanning.
+author: piyushpcs
+branding:
+  icon: crosshair
+  color: purple
+
+inputs:
+  target:
+    description: Target URL to scan (e.g. https://app.example.com).
+    required: true
+  args:
+    description: Additional SurfaceSweep CLI arguments (e.g. "--scope app.example.com --jwt --cors").
+    required: false
+    default: ""
+  output:
+    description: Path for the JSON report. The SARIF file is written alongside it as <base>.sarif.
+    required: false
+    default: surfacesweep-report.json
+  sarif:
+    description: Generate a SARIF report.
+    required: false
+    default: "true"
+  upload-sarif:
+    description: "Upload the SARIF report to GitHub code scanning (requires security-events: write)."
+    required: false
+    default: "true"
+  fail-on:
+    description: Exit non-zero when a finding is at/above this severity (none|low|medium|high|critical).
+    required: false
+    default: "none"
+  python-version:
+    description: Python version used to run the scanner.
+    required: false
+    default: "3.12"
+  browser:
+    description: Install Playwright Chromium to enable browser/SPA modes.
+    required: false
+    default: "false"
+
+outputs:
+  json:
+    description: Path to the JSON report.
+    value: ${{ steps.scan.outputs.json }}
+  sarif:
+    description: Path to the SARIF report.
+    value: ${{ steps.scan.outputs.sarif }}
+  exit-code:
+    description: Scanner exit code (0 = ok, 1 = findings at/above fail-on).
+    value: ${{ steps.scan.outputs.exit_code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+
+    - name: Install SurfaceSweep
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -r "${{ github.action_path }}/requirements.txt"
+
+    - name: Install Playwright Chromium
+      if: ${{ inputs.browser == 'true' }}
+      shell: bash
+      run: python -m playwright install --with-deps chromium
+
+    - name: Run SurfaceSweep
+      id: scan
+      shell: bash
+      env:
+        SS_TARGET: ${{ inputs.target }}
+        SS_ARGS: ${{ inputs.args }}
+        SS_OUTPUT: ${{ inputs.output }}
+        SS_SARIF: ${{ inputs.sarif }}
+        SS_FAIL_ON: ${{ inputs.fail-on }}
+      run: |
+        set -uo pipefail
+        extra=()
+        if [ "$SS_SARIF" = "true" ]; then extra+=(--sarif); fi
+        if [ "$SS_FAIL_ON" != "none" ]; then extra+=(--fail-on "$SS_FAIL_ON"); fi
+
+        base="${SS_OUTPUT%.json}"
+        echo "json=$SS_OUTPUT" >> "$GITHUB_OUTPUT"
+        echo "sarif=$base.sarif" >> "$GITHUB_OUTPUT"
+
+        # SS_ARGS is intentionally word-split so callers can pass multiple flags.
+        # shellcheck disable=SC2086
+        python "${{ github.action_path }}/main.py" "$SS_TARGET" -o "$SS_OUTPUT" "${extra[@]}" $SS_ARGS
+        code=$?
+        echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+        exit $code
+
+    - name: Upload SARIF to code scanning
+      if: ${{ always() && inputs.sarif == 'true' && inputs.upload-sarif == 'true' }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif }}
+        category: surfacesweep
+
+    - name: Upload report artifact
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: surfacesweep-report
+        path: |
+          ${{ steps.scan.outputs.json }}
+          ${{ steps.scan.outputs.sarif }}
+        if-no-files-found: ignore

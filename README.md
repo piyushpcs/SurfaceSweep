@@ -8,7 +8,7 @@ Extract API endpoints and secrets from a target's JavaScript, validate what is l
 check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-883%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-917%20passing-brightgreen)](#testing)
 [![CI](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml/badge.svg)](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/piyushpcs/SurfaceSweep)](https://github.com/piyushpcs/SurfaceSweep/commits/main)
@@ -83,6 +83,8 @@ to build a single inventory of endpoints, then layers on checks that matter in a
 - **Multi-target batch** — `--targets hosts.txt` with per-host output files
 - **Burp Suite** / **OWASP ZAP** CSV export
 - **Path/parameter wordlist** — `--wordlist` for ffuf/content discovery (segments + param names)
+- **GitHub Action + SARIF** — drop-in composite action for CI that publishes findings to GitHub code scanning
+- **MCP server** — dependency-free stdio wrapper (`scan_url`, `check_scope`) for agent-driven recon
 - Authenticated scans via cookies and custom headers (`--cookie` / `-H`) — applied to the initial HTML/JS
   fetch, browser context, validation, CORS, and GraphQL probes; credentials are sent **only to in-scope
   hosts** so they never leak to CDNs or vendor APIs
@@ -100,11 +102,12 @@ pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
-Optional editable install (exposes a `surfacesweep` console command):
+Optional editable install (exposes `surfacesweep` and `surfacesweep-mcp` console commands):
 
 ```bash
 pip install -e . --no-deps
 surfacesweep --version
+surfacesweep-mcp    # MCP server over stdio
 ```
 
 `tree-sitter` and `tree-sitter-javascript` install from prebuilt wheels (no compiler needed).
@@ -298,11 +301,12 @@ coverage run -m unittest discover -s tests -q
 coverage report -m
 ```
 
-- **883 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
+- **917 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
 - Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation/PNA,
   JWT decode/crack/JWKS, GraphQL introspection probe, secret live-verification, pipeline stage order,
   report schema (`schema_version: 1`), finding feeds, scan diff (JSON + HTML),
-  scan diff, SARIF export, and multi-target batch mode
+  scan diff, SARIF export, multi-target batch mode, the composite GitHub Action manifest,
+  and the MCP server protocol/tools
 - **CI**: GitHub Actions runs the suite on Python 3.10 and 3.12 with coverage on every push/PR
 - Local vulnerable API for manual checks: `python testbed/vuln_api.py` (port **5555**)
 
@@ -341,6 +345,75 @@ Keep a rolling baseline and alert on regressions with cron + `--diff`:
 python -m modules.reporting.diff reports/baseline.json reports/nightly.json -o reports/nightly_diff.json
 # → reports/nightly_diff.json + reports/nightly_diff.html
 ```
+
+## GitHub Action
+
+Run a scan in CI and surface findings in **GitHub code scanning** (SARIF) via the
+composite action at [`action.yml`](action.yml):
+
+```yaml
+permissions:
+  contents: read
+  security-events: write   # required to upload SARIF
+
+jobs:
+  surfacesweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: piyushpcs/SurfaceSweep@main
+        with:
+          target: https://app.example.com
+          args: "--scope app.example.com --jwt --cors"
+          fail-on: "high"     # fail the job on HIGH/CRITICAL findings
+```
+
+| Input | Default | Purpose |
+|-------|---------|---------|
+| `target` | — (required) | URL to scan |
+| `args` | `""` | Extra CLI flags |
+| `output` | `surfacesweep-report.json` | JSON path; SARIF is written beside it as `<base>.sarif` |
+| `sarif` | `true` | Generate a SARIF report |
+| `upload-sarif` | `true` | Upload to GitHub code scanning |
+| `fail-on` | `none` | Severity threshold for a non-zero exit |
+| `python-version` | `3.12` | Runner Python |
+| `browser` | `false` | Install Playwright Chromium for `-b` / `-f` |
+
+Outputs: `json`, `sarif`, `exit-code`. A copy-ready workflow lives in
+[`examples/github-actions-scan.yml`](examples/github-actions-scan.yml). Only scan
+targets you are **authorized** to test.
+
+## MCP server (agent-native recon)
+
+SurfaceSweep ships an MCP server so agent tools (Claude Desktop, Cursor, …) can
+drive it directly. It is dependency-free — JSON-RPC 2.0 over stdio using only the
+standard library:
+
+```bash
+python mcp_server.py        # or, after `pip install .`: surfacesweep-mcp
+```
+
+Tools:
+
+- `scan_url` — static recon (or headless when `browser: true`); returns a compact
+  summary: counts, endpoints, redacted secrets, sinks, and risk.
+- `check_scope` — confirm a URL is within an authorized scope before scanning.
+
+Example client configuration (Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "surfacesweep": {
+      "command": "python",
+      "args": ["/path/to/SurfaceSweep/mcp_server.py"]
+    }
+  }
+}
+```
+
+stdout is reserved for the JSON-RPC stream; progress output is redirected to
+stderr so the transport stays valid.
 
 ## Roadmap
 

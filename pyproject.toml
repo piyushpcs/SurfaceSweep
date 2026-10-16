@@ -37,12 +37,13 @@ Issues = "https://github.com/piyushpcs/SurfaceSweep/issues"
 
 [project.scripts]
 surfacesweep = "main:main"
+surfacesweep-mcp = "mcp_server:main"
 
 [project.optional-dependencies]
 dev = ["coverage>=7.0"]
 
 [tool.setuptools]
-py-modules = ["main"]
+py-modules = ["main", "mcp_server"]
 
 [tool.setuptools.packages.find]
 include = ["modules*"]

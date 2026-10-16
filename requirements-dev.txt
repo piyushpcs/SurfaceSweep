@@ -1,3 +1,4 @@
 # Development / CI extras (not needed for runtime).
 -r requirements.txt
 coverage>=7.6
+pyyaml>=6.0
