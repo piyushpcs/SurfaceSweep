@@ -508,135 +508,143 @@ def crawl_spa_routes(base_url, timeout=30, verbose=True, max_routes=50,
             addEventListener('hashchange', () => window.__ss_nav.add(location.hash));
         """)
 
-        page = context.new_page()
-        spa_api_endpoints = set()
-
-        def handle_request(request):
-            url = request.url
-            if url.startswith("data:"):
-                return
-            if request.resource_type in ("xhr", "fetch"):
-                path = urlparse(url).path
-                if path and not is_static_asset(path):
-                    spa_api_endpoints.add(url)
-
-        page.on("request", handle_request)
-
         try:
-            # domcontentloaded: networkidle never settles on long-poll/SSE
-            # apps and was observed hanging the initial SPA load too.
-            page.goto(base_url, wait_until="domcontentloaded", timeout=timeout * 1000)
-            page.wait_for_timeout(2000)
-        except Exception as e:
-            result["errors"].append(f"Navigation error: {e}")
-            if verbose:
-                detail(f"[!] Navigation error: {e}")
+            page = context.new_page()
+            spa_api_endpoints = set()
 
-        # DOM routes
-        dom_routes = _get_dom_routes(page)
-        dom_count = 0
-        for route in dom_routes:
-            if add_route(route, "dom"):
-                dom_count += 1
-        if verbose and dom_count:
-            detail(f"[+] Found {dom_count} route(s) from DOM anchors")
+            def handle_request(request):
+                url = request.url
+                if url.startswith("data:"):
+                    return
+                if request.resource_type in ("xhr", "fetch"):
+                    path = urlparse(url).path
+                    if path and not is_static_asset(path):
+                        spa_api_endpoints.add(url)
 
-        # Vue routes
-        vue_routes = _get_vue_routes(page)
-        vue_count = 0
-        for route in vue_routes:
-            if add_route(route, "vue"):
-                vue_count += 1
-        if verbose and vue_count:
-            detail(f"[+] Found {vue_count} route(s) from Vue Router")
-
-        # React routes
-        react_routes = _get_react_routes(page)
-        react_count = 0
-        for route in react_routes:
-            if add_route(route, "react"):
-                react_count += 1
-        if verbose and react_count:
-            detail(f"[+] Found {react_count} route(s) from React fiber")
-
-        # Next.js routes
-        next_routes = _get_next_routes(page)
-        next_count = 0
-        for route in next_routes:
-            if add_route(route, "next"):
-                next_count += 1
-        if verbose and next_count:
-            detail(f"[+] Found {next_count} route(s) from Next.js manifest")
-
-        # History API captured navigation
-        hist_nav = page.evaluate("() => [...window.__ss_nav]")
-        hist_count = 0
-        for nav in hist_nav:
-            path = urlparse(nav).path if nav.startswith("http") else nav.split("?")[0]
-            if path and add_route(path, "history"):
-                hist_count += 1
-        if verbose and hist_count:
-            detail(f"[+] Found {hist_count} route(s) from History API")
-
-        # ---- Phase 3: BFS crawl to unfold lazy routes ----
-        if verbose:
-            info(f" Phase 3: BFS crawl ({len(all_routes)} candidate route(s))...")
-
-        # Seed queue with discovered routes
-        queue = list(all_routes.keys())
-        visited = set()
-        crawled = 0
-        # Hard wall-clock budget so a chatty site cannot hang the crawl.
-        # (timeout * max_routes * 0.5 defaulted to 750s with stock flags.)
-        import time as _time
-        crawl_deadline = _time.monotonic() + min(60.0, max(15.0, float(timeout)))
-
-        while queue and crawled < max_routes and _time.monotonic() < crawl_deadline:
-            route = queue.pop(0)
-            if route in visited:
-                continue
-            visited.add(route)
-
-            concrete = instantiate_route_params(route)
-            crawl_url = base_origin + concrete
+            page.on("request", handle_request)
 
             try:
-                # domcontentloaded: networkidle never settles on long-poll/SSE apps
-                # and was observed hanging multi-minute BFS crawls in live tests.
-                page.goto(crawl_url, wait_until="domcontentloaded", timeout=5000)
-                page.wait_for_timeout(300)
-                crawled += 1
+                # domcontentloaded: networkidle never settles on long-poll/SSE
+                # apps and was observed hanging the initial SPA load too.
+                page.goto(base_url, wait_until="domcontentloaded", timeout=timeout * 1000)
+                page.wait_for_timeout(2000)
+            except Exception as e:
+                result["errors"].append(f"Navigation error: {e}")
+                if verbose:
+                    detail(f"[!] Navigation error: {e}")
 
-                # Harvest more routes from this page state
-                new_dom = _get_dom_routes(page)
-                for r in new_dom:
-                    if add_route(r, "crawl") and r not in visited:
-                        queue.append(r)
+            # DOM routes
+            dom_routes = _get_dom_routes(page)
+            dom_count = 0
+            for route in dom_routes:
+                if add_route(route, "dom"):
+                    dom_count += 1
+            if verbose and dom_count:
+                detail(f"[+] Found {dom_count} route(s) from DOM anchors")
 
-                new_vue = _get_vue_routes(page)
-                for r in new_vue:
-                    if add_route(r, "crawl") and r not in visited:
-                        queue.append(r)
+            # Vue routes
+            vue_routes = _get_vue_routes(page)
+            vue_count = 0
+            for route in vue_routes:
+                if add_route(route, "vue"):
+                    vue_count += 1
+            if verbose and vue_count:
+                detail(f"[+] Found {vue_count} route(s) from Vue Router")
 
-                new_react = _get_react_routes(page)
-                for r in new_react:
-                    if add_route(r, "crawl") and r not in visited:
-                        queue.append(r)
+            # React routes
+            react_routes = _get_react_routes(page)
+            react_count = 0
+            for route in react_routes:
+                if add_route(route, "react"):
+                    react_count += 1
+            if verbose and react_count:
+                detail(f"[+] Found {react_count} route(s) from React fiber")
 
-                # Capture API endpoints from this page
-                # (already captured by handle_request)
+            # Next.js routes
+            next_routes = _get_next_routes(page)
+            next_count = 0
+            for route in next_routes:
+                if add_route(route, "next"):
+                    next_count += 1
+            if verbose and next_count:
+                detail(f"[+] Found {next_count} route(s) from Next.js manifest")
 
-            except Exception:
-                pass
+            # History API captured navigation
+            hist_nav = page.evaluate("() => [...window.__ss_nav]")
+            hist_count = 0
+            for nav in hist_nav:
+                path = urlparse(nav).path if nav.startswith("http") else nav.split("?")[0]
+                if path and add_route(path, "history"):
+                    hist_count += 1
+            if verbose and hist_count:
+                detail(f"[+] Found {hist_count} route(s) from History API")
 
-        if verbose and crawled:
-            detail(f"[+] Crawled {crawled} route(s)")
+            # ---- Phase 3: BFS crawl to unfold lazy routes ----
+            if verbose:
+                info(f" Phase 3: BFS crawl ({len(all_routes)} candidate route(s))...")
 
-        # Collect API endpoints
-        api_endpoints.update(spa_api_endpoints)
+            # Seed queue with discovered routes
+            queue = list(all_routes.keys())
+            visited = set()
+            crawled = 0
+            # Hard wall-clock budget so a chatty site cannot hang the crawl.
+            # (timeout * max_routes * 0.5 defaulted to 750s with stock flags.)
+            import time as _time
+            crawl_deadline = _time.monotonic() + min(60.0, max(15.0, float(timeout)))
 
-        page.close()
-        browser.close()
+            while queue and crawled < max_routes and _time.monotonic() < crawl_deadline:
+                route = queue.pop(0)
+                if route in visited:
+                    continue
+                visited.add(route)
+
+                concrete = instantiate_route_params(route)
+                crawl_url = base_origin + concrete
+
+                try:
+                    # domcontentloaded: networkidle never settles on long-poll/SSE apps
+                    # and was observed hanging multi-minute BFS crawls in live tests.
+                    page.goto(crawl_url, wait_until="domcontentloaded", timeout=5000)
+                    page.wait_for_timeout(300)
+                    crawled += 1
+
+                    # Harvest more routes from this page state
+                    new_dom = _get_dom_routes(page)
+                    for r in new_dom:
+                        if add_route(r, "crawl") and r not in visited:
+                            queue.append(r)
+
+                    new_vue = _get_vue_routes(page)
+                    for r in new_vue:
+                        if add_route(r, "crawl") and r not in visited:
+                            queue.append(r)
+
+                    new_react = _get_react_routes(page)
+                    for r in new_react:
+                        if add_route(r, "crawl") and r not in visited:
+                            queue.append(r)
+
+                    # Capture API endpoints from this page
+                    # (already captured by handle_request)
+
+                except Exception:
+                    pass
+
+            if verbose and crawled:
+                detail(f"[+] Crawled {crawled} route(s)")
+
+            # Collect API endpoints
+            api_endpoints.update(spa_api_endpoints)
+
+            page.close()
+            browser.close()
+        finally:
+            # Always release Playwright resources, even on an unexpected error.
+            for _closer in (page.close, browser.close):
+                try:
+                    _closer()
+                except Exception:
+                    pass
 
     # ---- Phase 4: Probe common routes ----
     if probe_common:
