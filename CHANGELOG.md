@@ -5,6 +5,18 @@ All notable changes to SurfaceSweep are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-10-16
+
+### Fixed
+
+- Restored Python 3.10 support. `modules/common/result.py` imported
+  `typing.NotRequired` (added in Python 3.11), so the package failed to import —
+  taking 66 tests with it — on the project's declared 3.10 floor. `ScanResult`
+  is a `TypedDict` with `total=False`, so every key was already optional and the
+  qualifier was redundant; it has been removed.
+- Added a static compatibility test that fails if any module imports a symbol
+  newer than the declared Python 3.10 floor, so this cannot silently regress.
+
 ## [1.0.0] - 2026-10-16
 
 First tagged release. SurfaceSweep extracts, analyses, and reports the
@@ -43,4 +55,5 @@ JavaScript attack surface of a web target for authorized security assessment.
   during validation so scans never mutate target state.
 - See [SECURITY-FINDINGS.md](SECURITY-FINDINGS.md) for the full self-assessment.
 
+[1.0.1]: https://github.com/piyushpcs/SurfaceSweep/releases/tag/v1.0.1
 [1.0.0]: https://github.com/piyushpcs/SurfaceSweep/releases/tag/v1.0.0
