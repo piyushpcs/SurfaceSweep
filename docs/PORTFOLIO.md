@@ -15,18 +15,25 @@ exists and to `SECURITY-FINDINGS.md`.
 - **Audited and hardened the tool against its own class of bugs** — fixed an SSRF
   pivot in the crawler, a cloud-metadata fetch path, target-credential leakage to
   third-party APIs, and a validator that issued state-changing POST/PUT/DELETE,
-  each with a regression test (883 tests passing).
+  each with a regression test (920 tests passing).
 - Implemented scope-bound authentication: `--cookie`/`-H` now reach the initial
   HTML/JS fetch and the browser context, while credentials are sent **only** to
   in-scope hosts.
 - Closed a DNS-rebinding TOCTOU in the JWKS fetcher by pinning the validated IP
   for the request; made legacy-TLS support fallback-only to avoid global
   downgrades.
+- Packaged the tool for consumption: a composite **GitHub Action** that uploads
+  SARIF to GitHub code scanning (published on the Marketplace), and a
+  dependency-free **MCP server** (`scan_url`, `check_scope`) for agent clients.
+- Stood up CI on Python 3.10 & 3.12; the matrix immediately caught a
+  `typing.NotRequired` (3.11+ only) import that broke the declared 3.10 floor —
+  fixed it and added a static compatibility test so it can't regress.
 
 ### One-line variant
-> Built and self-audited a JS attack-surface scanner (Python, 883 tests) — fixed
-> SSRF, credential-leakage, and destructive-request bugs in my own tool and
-> documented them in a public security write-up.
+> Built and self-audited a JS attack-surface scanner (Python, 920 tests) — fixed
+> SSRF, credential-leakage, and destructive-request bugs in my own tool,
+> documented them in a public write-up, and shipped it as a GitHub Action
+> (Marketplace) plus an MCP server for AI agents.
 
 ---
 
@@ -63,6 +70,17 @@ exists and to `SECURITY-FINDINGS.md`.
 - *Action:* Resolved once, validated, and pinned the IP for the request.
 - *Result:* TOCTOU window closed; also added a response-size cap.
 
+**5. "CI caught a bug my laptop never could."**
+- *Situation:* The project declared `requires-python >= 3.10` and tested 3.10 in
+  CI, but local development was on 3.14 — so the floor had never actually run.
+- *Task:* Make the declared support real.
+- *Action:* Enabled CI; the very first run failed on 3.10 with
+  `ImportError: cannot import name 'NotRequired' from 'typing'` (a 3.11+ symbol).
+  `ScanResult` is a `TypedDict` with `total=False`, so the qualifier was
+  redundant — removed it and added an AST test that fails if any module imports
+  a symbol newer than the declared floor.
+- *Result:* 920 tests green on 3.10, 3.12, and 3.14; shipped as `v1.0.1`.
+
 ---
 
 ## Blog / write-up outline
@@ -92,7 +110,10 @@ exists and to `SECURITY-FINDINGS.md`.
 > headers treated as global defaults leak your session to third-party APIs.
 >
 > I fixed all three — default-safe, scope-bound, fallback-only — and wrote it up
-> with regression tests. 883 tests passing.
+> with regression tests. 920 tests passing.
+>
+> It's now shipped as a GitHub Action on the Marketplace and an MCP server for
+> AI agents.
 >
 > The lesson: "passive" tools still need a threat model. 🧵 #appsec #pentesting
 
@@ -100,10 +121,16 @@ exists and to `SECURITY-FINDINGS.md`.
 
 ## Honest claims checklist (don't overclaim)
 
-- ✅ "883 tests passing" (verified).
+- ✅ "920 tests passing" (verified locally on 3.10/3.12/3.14; CI green on 3.10 & 3.12).
+- ✅ "GitHub Action published to the Marketplace" (release `v1.0.1`).
+- ✅ "MCP server with `scan_url`/`check_scope`" (dependency-free, unit-tested).
 - ✅ "Scope-bound authenticated scans" (verified with a cookie-gated app).
 - ✅ "SSRF, credential-leak, and destructive-request fixes" (in `SECURITY-FINDINGS.md`).
 - ⚠️ Say "self-assessed," not "penetration-tested by a third party."
 - ⚠️ Browser-mode auth is implemented and unit-tested; state that it requires
   `playwright install chromium` to exercise.
+- ⚠️ MCP `scan_url` runs the static extractor only — don't present its score as a
+  full assessment.
 - ❌ Do **not** claim CVSS-scored findings as if externally validated.
+
+Reproducible end-to-end walkthrough with real output: [`DEMO.md`](DEMO.md).

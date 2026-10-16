@@ -18,6 +18,7 @@ check CORS and JWT issues, and export results for Burp Suite / ZAP.
 [Install](#install) ·
 [Usage](#usage) ·
 [Options](#options) ·
+[Demo](docs/DEMO.md) ·
 [Architecture](#architecture) ·
 [Testing](#testing) ·
 [Roadmap](#roadmap) ·
@@ -43,6 +44,10 @@ to build a single inventory of endpoints, then layers on checks that matter in a
 | Risk | Weighted score (CVE + CORS + JWT) with evidence in JSON and HTML reports |
 | GraphQL | Opt-in introspection probe — flags publicly readable schemas |
 | Secret verification | Opt-in live checks against vendor APIs (OpenAI, GitHub, Stripe, …) |
+
+**See it in action:** [`docs/DEMO.md`](docs/DEMO.md) — a reproducible end-to-end
+walkthrough (real CLI, GitHub Action, and MCP-server output) against the bundled
+vulnerable testbed.
 
 ## Features
 
