@@ -2,10 +2,11 @@
 
 # SurfaceSweep
 
-**JavaScript attack-surface recon for security assessment**
+**JavaScript attack-surface reconnaissance for security assessments**
 
-Extract API endpoints and secrets from a target's JavaScript, validate what is live,
-check CORS and JWT issues, and export results for Burp Suite / ZAP.
+Extract endpoints and secrets from a target's JavaScript, validate what is live,
+probe CORS / JWT / GraphQL issues, and export findings to Burp, ZAP, HTML, JSON,
+and SARIF.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Tests](https://img.shields.io/badge/tests-974%20passing-brightgreen)](#testing)
@@ -30,72 +31,55 @@ check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 ## Why SurfaceSweep?
 
-Modern SPAs hide real API traffic in obfuscated bundles, source maps, lazy chunks, and runtime XHR.
-SurfaceSweep combines **static analysis (regex + AST)**, **headless browser capture**, and **historical JS (Wayback Machine)**
-to build a single inventory of endpoints, then layers on checks that matter in a security assessment:
-
-| Capability | What you get |
-|------------|--------------|
-| Endpoint discovery | `fetch` / `axios` / jQuery, SPA routers, nested chunks, historical JS |
-| Secret hunting | 120+ patterns with entropy, placeholder, and proximity false-positive gates |
-| Validation | Live / restricted / dead / soft-404 / SPA-shell classification |
-| CORS | Spoofed Origin matrix, preflight + GET/POST, redirect-aware, PoC HTML |
-| JWT | Offline decode, weak-HMAC crack, `alg=none`, JWKS key-confusion (optional network) |
-| Risk | Weighted score (CVE + CORS + JWT) with evidence in JSON and HTML reports |
-| GraphQL | Opt-in introspection probe — flags publicly readable schemas |
-| Secret verification | Opt-in live checks against vendor APIs (OpenAI, GitHub, Stripe, …) |
+Modern SPAs hide real API traffic in obfuscated bundles, source maps, lazy chunks,
+and runtime XHR. SurfaceSweep fuses **static analysis (regex + AST)**, **headless
+browser capture**, and **historical JS** into a single endpoint inventory, then
+layers the checks that matter in an assessment. Every active stage is bounded and
+rate-aware, so scans stay polite on authorized targets.
 
 **See it in action:** [`docs/DEMO.md`](docs/DEMO.md) — a reproducible end-to-end
-walkthrough (real CLI, GitHub Action, and MCP-server output) against the bundled
-vulnerable testbed.
+walkthrough (CLI, GitHub Action, and MCP server) against the bundled testbed.
 
 ## Features
 
 ### Extraction
 
-- **Static mode** — regex extraction from HTML and JS (fast, no browser)
-- **AST mode** — tree-sitter parses JavaScript for precise call-site endpoints (falls back to regex if unavailable)
-- **Browser mode** — Playwright/Chromium captures runtime XHR/fetch, lazy-loaded chunks, and dynamic endpoints
-- **Full scan** — runs static + browser and merges results
-- Recursive chunk discovery (webpack chunks, dynamic imports)
-- **JS deobfuscation** — Base64, hex, unicode, `eval()`, `String.fromCharCode()`
-- **Source maps** — `sourceMappingURL` comments, inline base64 maps, `sourcesContent` re-scan for endpoints/secrets/sinks/JWTs
-- **Wayback Machine** — historical JS no longer linked from the live site
-- **SPA route discovery** — React/Vue/Angular routers via static analysis, DOM, router introspection, and BFS crawl
-- **robots.txt / sitemap.xml** — crawler manifests parsed for hidden paths
-- **Traffic import** — extend discovery with a Burp XML/CSV, OWASP ZAP CSV, or browser HAR export (`--import`); imported URLs are scope-filtered
+- **Static (regex)** and **AST (tree-sitter)** extraction from HTML and JS; AST
+  falls back to regex automatically.
+- **Headless browser** capture of runtime XHR/fetch and lazy chunks (`--browser`);
+  `--full` merges static + browser.
+- **Recursive discovery** — webpack chunks, dynamic imports, **source maps** (inline
+  and `sourcesContent` re-scan), and **JS deobfuscation** (Base64, hex, unicode,
+  `eval`, `String.fromCharCode`).
+- **Passive expansion** — Wayback historical JS, `robots.txt` / `sitemap.xml`, SPA
+  router routes (React/Vue/Angular), and Burp / ZAP / HAR import (`--import`).
 
 ### Detection
 
-- Likely API endpoints and full URLs
-- **Request parameters** — query-string keys, `URLSearchParams`, axios `params: {}`, `FormData.append`, `searchParams.get`, path templates (`:id` / `${id}` / `{id}`)
-- Leaked secrets / API keys (AWS, OpenAI, Anthropic, Twilio, SendGrid, Stripe, GitHub, Firebase, private keys, SMTP, OAuth, Bearer/JWT, …) with type-aware dedup
-- Dangerous sinks (`innerHTML`, `eval`, `dangerouslySetInnerHTML`, open-redirect patterns) with severity
-- Internal / private hosts (localhost, RFC1918, `*.internal` / `*.corp`, dev & staging subdomains)
-- Potential **PII** (email, E.164 phone, Luhn payment cards, dashed SSNs) — recon signal only, not scored as a finding
-- Library versions (jQuery, Vue, Bootstrap, Lodash, …) and **CVEs** (local DB + optional OSV.dev)
-- **WAF detection** (Cloudflare, Akamai, AWS WAF, Imperva, …) with automatic pacing
-- Prototype-pollution gadgets (`__proto__`, `constructor.prototype`, recursive merges)
+- API endpoints and full URLs; **request parameters** (query keys, `URLSearchParams`,
+  axios `params`, `FormData`, path templates).
+- **120+ secret patterns** (AWS, OpenAI, Anthropic, Stripe, GitHub, Firebase, private
+  keys, SMTP, OAuth, JWT, …) with entropy, placeholder, and proximity false-positive gates.
+- **Dangerous sinks** — `innerHTML`, `eval`, `dangerouslySetInnerHTML`, open redirects.
+- **Internal hosts**, **PII** (recon-only), **library versions + CVEs** (local DB +
+  optional OSV.dev), and **WAF detection** (Cloudflare, Akamai, AWS, Imperva, …) with
+  automatic pacing.
+- Prototype-pollution gadgets (`__proto__`, `constructor.prototype`, recursive merges).
 
-### Analysis & export
+### Analysis & reporting
 
-- **Endpoint validation** — filters 404s, soft-404s, SPA shells, JSON fail-in-200; **capped** (`--max-validate`, API-like first) and **rate-limited** (`--validate-rps`, auto-throttled under a WAF) so active probing stays polite
-- **CORS scanner** — origin matrix, non-singleton ACAO, Private Network Access (PNA) notes, redirect FP filter, rate limits, standalone PoC HTML; a credential-less `ACAO: *` on public content is downgraded to informational (LOW)
-- **JWT analyzer** — offline HS* cracking, wordlist/hashcat export, SSRF-guarded JWKS fetch for RS256→HS256 checks
-- Scope split: internal paths, in-scope URLs, out-of-scope URLs
-- Risk scoring summary per scan
-- **Scan footprint** — every report records `meta.requests_sent` (total HTTP requests sent), surfaced in the executive summary and CLI
-- **JSON**, **HTML**, and **SARIF 2.1.0** reports (`schema_version: 1`, executive summary, findings feed)
-- **Scan diff** — compare two reports of the same target (`--diff` or `python -m modules.reporting.diff`); writes JSON + HTML
-- **Multi-target batch** — `--targets hosts.txt` with per-host output files
-- **Burp Suite** / **OWASP ZAP** CSV export
-- **Path/parameter wordlist** — `--wordlist` for ffuf/content discovery (segments + param names)
-- **GitHub Action + SARIF** — drop-in composite action for CI that publishes findings to GitHub code scanning
-- **MCP server** — dependency-free stdio wrapper (`scan_url`, `check_scope`) for agent-driven recon
-- Authenticated scans via cookies and custom headers (`--cookie` / `-H`) — applied to the initial HTML/JS
-  fetch, browser context, validation, CORS, and GraphQL probes; credentials are sent **only to in-scope
-  hosts** so they never leak to CDNs or vendor APIs
-- Rate limiting and retry with backoff
+- **Validation** — live / restricted / dead / soft-404 / SPA-shell classification;
+  method-aware, capped (`--max-validate`) and rate-limited (`--validate-rps`).
+- **CORS** — spoofed-origin matrix, preflight + GET/POST, non-singleton ACAO, Private
+  Network Access notes, redirect FP filter, standalone PoC HTML. A credential-less
+  `ACAO: *` on public content is reported as informational.
+- **JWT** — offline decode, weak-HMAC cracking, `alg=none`, hashcat/NDJSON export, and
+  SSRF-guarded JWKS key-confusion checks.
+- **GraphQL** introspection probe; opt-in **secret verification** against vendor APIs.
+- **Reports** — JSON, HTML, and SARIF 2.1.0 (`schema_version: 1`) with executive
+  summary, findings feed, risk score, and `meta.requests_sent` scan footprint.
+- **Exports & diff** — Burp / ZAP CSV, path+parameter wordlist, and report comparison.
+- **Authenticated scans** (`--cookie` / `-H`), applied only to **in-scope hosts**.
 
 ## Install
 
@@ -106,92 +90,62 @@ git clone https://github.com/piyushpcs/SurfaceSweep.git
 cd SurfaceSweep
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-python -m playwright install chromium
+python -m playwright install chromium        # only needed for -b / -f
 ```
 
-Optional editable install (exposes `surfacesweep` and `surfacesweep-mcp` console commands):
+Optional editable install (exposes `surfacesweep` and `surfacesweep-mcp`):
 
 ```bash
 pip install -e . --no-deps
 surfacesweep --version
-surfacesweep-mcp    # MCP server over stdio
 ```
 
-`tree-sitter` and `tree-sitter-javascript` install from prebuilt wheels (no compiler needed).
-If the AST stack is unavailable, SurfaceSweep automatically falls back to regex-only extraction.
+`tree-sitter` and `tree-sitter-javascript` ship prebuilt wheels (no compiler); if the
+AST stack is unavailable, SurfaceSweep falls back to regex-only extraction.
 
 ## Usage
 
 ```bash
-# Static mode (fast, no browser)
+# Static (fast, no browser)
 python main.py https://target.com
 
 # Browser mode — captures runtime API calls
 python main.py https://target.com --browser
 
-# Full scan with validation + reports (best coverage)
+# Full scan with validation + HTML report (best coverage)
 python main.py https://target.com --full --validate --html
-
-# Everything on
-python main.py https://target.com -f --validate --burp --zap --waf --wayback --cve --spa --cors --jwt --graphql --verify-secrets --html
 ```
-
-### More examples
 
 ```bash
-# Authenticated scan
+# Authenticated scan; credentials go only to in-scope hosts
 python main.py https://target.com --cookie "session=abc123" -H "X-Api-Key: value"
 
-# GraphQL introspection probe
-python main.py https://target.com --graphql --html
-
-# Compare two offline reports (JSON + HTML diff)
-python -m modules.reporting.diff old.json new.json -o reports/diff.json
-
-# Live-verify secrets (read-only vendor API GETs)
-python main.py https://target.com --verify-secrets --html
-
-# Export for Burp Suite / ZAP
-python main.py https://target.com -f --burp --zap
-
-# CVE check only (fast, no browser)
-python main.py https://target.com --cve --osv --html
-
-# SPA route discovery only
-python main.py https://target.com --spa --validate --html
-
-# CORS misconfiguration scan with custom Origin
+# CORS misconfiguration scan with a custom Origin
 python main.py https://target.com --cors --cors-origin https://evil.com --html
 
-# JWT analysis + wordlist crack + hashcat/NDJSON exports + optional JWKS fetch
-python main.py https://target.com --jwt --jwt-wordlist secrets.txt \
-  --jwt-hashcat hs_tokens.txt --jwt-export findings.ndjson --jwt-network --html
+# JWT analysis, offline crack, and optional SSRF-guarded JWKS fetch
+python main.py https://target.com --jwt --jwt-wordlist secrets.txt --jwt-network --html
 
-# Diff this scan against a previous baseline
-python main.py https://target.com -f --validate --diff reports/baseline.json
-
-# SARIF for GitHub code scanning
-python main.py https://target.com --cve --cors --sarif
-
-# Path/parameter wordlist for content discovery (ffuf -w …)
-python main.py https://target.com -f --wordlist
-python main.py https://target.com -f --wordlist reports/paths.txt
-
-# Batch scan a list of targets (one URL per line, # comments ok)
-python main.py --targets hosts.txt -o reports/batch.json --html --sarif
-
-# Seed discovery from proxy history (Burp XML/CSV, ZAP CSV, or HAR; repeatable)
+# Seed discovery from proxy history (repeatable; format auto-detected)
 python main.py https://target.com --full --import burp_items.xml --import capture.har
 
-# Bound and pace active validation (default: 200 endpoints @ 5 rps)
+# Bound and pace active validation (defaults: 200 endpoints @ 5 req/s)
 python main.py https://target.com --validate --max-validate 50 --validate-rps 2
+
+# Burp / ZAP export, path+parameter wordlist, SARIF for code scanning
+python main.py https://target.com -f --burp --zap --wordlist --sarif
+
+# Batch scan (one URL per line, # comments ok)
+python main.py --targets hosts.txt -o reports/batch.json --html --sarif
 ```
 
-Reports default to `reports/surfacesweep_report.json` (JSON) and, with `--html`, a sibling HTML file.
-Batch mode writes one JSON per host next to `-o` (e.g. `reports/batch_app.example.com.json`).
-`reports/` is gitignored.
+JSON reports default to `reports/surfacesweep_report.json` (`--html` adds a sibling
+HTML file; batch mode writes one JSON per host). `reports/` is gitignored.
 
-### Options
+## Options
+
+<details>
+<summary><b>Full CLI reference</b></summary>
 
 | Flag | Description |
 |------|-------------|
@@ -203,27 +157,27 @@ Batch mode writes one JSON per host next to `-o` (e.g. `reports/batch_app.exampl
 | `-b, --browser` | Headless browser mode (captures runtime API calls) |
 | `-f, --full` | Static + browser, merged (best coverage) |
 | `--validate` | Validate discovered endpoints to filter false positives |
-| `--vt` | Validation threads (default: 10) |
+| `--vt, --validate-threads` | Validation threads (default: 10) |
 | `--vtimeout` | Validation timeout in seconds (default: 5) |
 | `--max-validate` | Max endpoints to actively validate, API-like first (default: 200, 0=unlimited) |
-| `--validate-rps` | Validation request rate limit req/s (default: 5, 0=unlimited; auto-throttled under a WAF) |
-| `--burp` | Export endpoints as Burp Suite CSV |
-| `--zap` | Export endpoints as OWASP ZAP CSV |
-| `--wayback` | Include historical JS files from Wayback Machine |
+| `--validate-rps` | Validation rate limit req/s (default: 5, 0=unlimited; auto-throttled under a WAF) |
+| `--import FILE` | Import endpoints from a Burp XML/CSV, ZAP CSV, or HAR file (repeatable; auto-detected) |
+| `--burp` | Export endpoints as a Burp Suite CSV |
+| `--zap` | Export endpoints as an OWASP ZAP CSV |
+| `--wayback` | Include historical JS files from the Wayback Machine |
 | `--waf` | Detect WAF and adjust scan speed |
-| `--cve` | Detect JS library versions and check local CVE database |
+| `--cve` | Detect JS library versions and check the local CVE database |
 | `--osv` | Query OSV.dev for additional CVEs (requires network) |
 | `--spa` | Discover SPA routes (React/Vue/Angular routers, BFS crawl) |
 | `--max-routes` | Max routes to crawl in SPA mode (default: 50) |
 | `--no-probe` | Skip probing common admin/debug routes in SPA mode |
-| `--import FILE` | Import endpoints from a Burp XML/CSV, ZAP CSV, or HAR file (repeatable; format auto-detected) |
 | `--cors` | Scan discovered endpoints for CORS misconfigurations |
 | `--cors-origin` | Custom Origin header to test (default: built-in test set) |
 | `--cors-max` | Max endpoints to CORS-test (default: 50) |
 | `--cors-rps` | CORS probe rate limit req/s (default: 5, 0=unlimited) |
 | `--cors-threads` | CORS probe threads (default: 6) |
 | `--cors-timeout` | CORS per-request timeout seconds (default: 5) |
-| `--cors-poc` | Write standalone CORS PoC HTML next to the report |
+| `--cors-poc` | Write a standalone CORS PoC HTML next to the report |
 | `--jwt` | Analyze JWTs (alg/none, weak HMAC, exp, claims) |
 | `--jwt-wordlist` | Extra newline-delimited secrets for offline HS* cracking |
 | `--jwt-hashcat` | Export HS* JWTs to FILE (hashcat mode 16500) |
@@ -242,7 +196,7 @@ Batch mode writes one JSON per host next to `-o` (e.g. `reports/batch_app.exampl
 | `--html-only` | HTML report only (skip JSON) |
 | `--diff BASELINE` | Compare this scan to a baseline JSON; writes `*_diff.json` + `*_diff.html` |
 | `--sarif` | Export findings as SARIF 2.1.0 (GitHub code scanning) |
-| `--wordlist [FILE]` | Export path/parameter wordlist (omit FILE → sibling of `-o`) |
+| `--wordlist [FILE]` | Export a path/parameter wordlist (omit FILE → sibling of `-o`) |
 | `--no-deobf` | Skip JS deobfuscation |
 | `--regex-only` | Disable AST extraction, use regex only |
 | `--proxy` | HTTP(S) proxy for all scan requests (e.g. `http://127.0.0.1:8080`) |
@@ -253,6 +207,8 @@ Batch mode writes one JSON per host next to `-o` (e.g. `reports/batch_app.exampl
 | `-q, --quiet` | Suppress progress output |
 
 Exit codes: `0` success · `1` findings at/above `--fail-on` · `2` usage error · `3` runtime error
+
+</details>
 
 ## Architecture
 
@@ -266,44 +222,24 @@ waf_detect → wayback_fetch → scan → import → wayback_merge → waf_injec
 SurfaceSweep/
 ├── main.py                 # CLI entry (args + headers only)
 ├── modules/
-│   ├── extraction/         # Regex/AST/browser extraction, params, secrets, source maps, risk
-│   ├── discovery/          # SPA routes, Wayback Machine, robots/sitemap
+│   ├── extraction/         # Regex / AST / browser extraction, params, secrets, source maps, risk
+│   ├── discovery/          # SPA routes, Wayback Machine, robots/sitemap, importers
 │   ├── analysis/           # Validation, CVE/library, sinks, PII
 │   ├── recon/              # WAF detection
 │   ├── cors/               # Origin matrix, probes, classification, scanner
 │   ├── jwt/                # Decode, crack, JWKS, checks, scanner
 │   ├── pipeline/           # ScanContext, stages, merge helpers, runner
-│   └── reporting/          # HTML/JSON/SARIF, findings feed, Burp/ZAP, CORS PoC, diff
+│   └── reporting/          # HTML / JSON / SARIF, findings feed, Burp/ZAP, CORS PoC, diff
 ├── tests/                  # Unit + offline integration (unittest)
 ├── testbed/vuln_api.py     # Local vulnerable Flask app (:5555)
 └── reports/                # Generated output (gitignored)
 ```
 
-<details>
-<summary>Module map (collapsed)</summary>
+Risk weights (CORS / JWT / CVE contribute; PII is recon-only):
 
-```text
-modules/extraction/   engine · patterns · secrets · params · http · scope · risk · ast · browser · sourcemaps · enrich · deobfuscator
-modules/discovery/    spa · wayback · robots
-modules/analysis/     validator · libraries · sinks · pii
-modules/recon/        waf
-modules/cors/         origins · classifier · probe · scanner
-modules/jwt/          decode · crack · keys · checks · scanner
-modules/pipeline/     context · stages · merge · runner
-modules/reporting/    html · export · findings · builder · cors_poc · diff · sarif
-tests/                test_cors · test_jwt · test_pipeline · test_integration · test_secrets · test_params_wordlist · test_sourcemaps · test_enrich · test_validator · test_pii · test_wayback · test_robots · test_sinks · test_patterns · test_spa_probe · test_diff · test_sarif · test_batch
-```
-
-</details>
-
-Risk weights (CORS/JWT/CVE contribute; PII is recon-only):
-
-| Severity | Weight |
-|----------|--------|
-| CRITICAL | 25 |
-| HIGH | 15 |
-| MEDIUM | 8 |
-| LOW | 3 |
+| Severity | CRITICAL | HIGH | MEDIUM | LOW |
+|----------|----------|------|--------|-----|
+| Weight | 25 | 15 | 8 | 3 |
 
 ## Testing
 
@@ -311,20 +247,18 @@ Risk weights (CORS/JWT/CVE contribute; PII is recon-only):
 source venv/bin/activate
 python -m unittest discover -s tests -q
 
-# With coverage (optional)
+# Coverage (optional)
 pip install -r requirements-dev.txt
-coverage run -m unittest discover -s tests -q
-coverage report -m
+coverage run -m unittest discover -s tests -q && coverage report -m
 ```
 
-- **974 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
-- Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation/PNA,
-  JWT decode/crack/JWKS, GraphQL introspection probe, secret live-verification, pipeline stage order,
-  report schema (`schema_version: 1`), finding feeds, scan diff (JSON + HTML),
-  scan diff, SARIF export, multi-target batch mode, the composite GitHub Action manifest,
-  the MCP server protocol/tools, and a Python 3.10 compatibility guard
-- **CI**: GitHub Actions runs the suite on Python 3.10 and 3.12 with coverage on every push/PR
-- Local vulnerable API for manual checks: `python testbed/vuln_api.py` (port **5555**)
+- **974 tests** — unit + offline end-to-end integration, stdlib `unittest`, no network required.
+- Covers extraction FP gates, source maps, enrichment, validation, PII, CORS
+  probes/escalation/PNA, JWT decode/crack/JWKS, GraphQL, secret verification, pipeline
+  order, report schema and findings feed, scan diff, SARIF, batch mode, the GitHub
+  Action manifest, the MCP server, and a Python 3.10 compatibility guard.
+- **CI**: GitHub Actions runs the suite on Python 3.10 and 3.12 with coverage on every push/PR.
+- Local vulnerable API for manual checks: `python testbed/vuln_api.py` (port **5555**).
 
 ### Sample results
 
@@ -337,35 +271,37 @@ coverage report -m
 | CVE (example) | jQuery 1.11.0 / Vue 2.1.5 → 4 CVEs; risk INFO → HIGH |
 | SPA (example) | 20 routes (9 DOM, 7 BFS, 2 probe, 2 static) |
 
-Full phase notes, bug-fix history, and per-feature validation logs live in the
+Full phase notes and per-feature validation logs live in the
 [repository history](https://github.com/piyushpcs/SurfaceSweep/commits/main).
 
-## Scheduled scans
+## Automation
+
+### Scheduled scans
 
 Keep a rolling baseline and alert on regressions with cron + `--diff`:
 
 ```bash
-# Nightly scan of a target; rotate baseline weekly
-# crontab -e
-0 3 * * *  cd /opt/SurfaceSweep && ./venv/bin/python main.py https://target.example -f --validate --html -o reports/nightly.json --diff reports/baseline.json --fail-on high >> logs/nightly.log 2>&1
+# Nightly scan; rotate baseline weekly
+0 3 * * *  cd /opt/SurfaceSweep && ./venv/bin/python main.py https://target.example \
+  -f --validate --html -o reports/nightly.json --diff reports/baseline.json \
+  --fail-on high >> logs/nightly.log 2>&1
 
-# Monday: promote last good report to baseline (only when no regression)
-0 4 * * 1  cd /opt/SurfaceSweep && test -f reports/nightly.json && cp reports/nightly.json reports/baseline.json
+# Monday: promote the last good report to baseline (only when no regression)
+0 4 * * 1  cd /opt/SurfaceSweep && test -f reports/nightly.json && \
+  cp reports/nightly.json reports/baseline.json
 ```
 
-- `--diff BASELINE.json` writes `*_diff.json` **and** a readable `*_diff.html` next to the scan report.
-- `--fail-on high` exits `1` when HIGH/CRITICAL findings appear — wire that into mail/webhook wrappers.
-- Offline baseline comparison (no network):
+`--diff BASELINE.json` writes `*_diff.json` **and** a readable `*_diff.html`;
+`--fail-on high` exits `1` on HIGH/CRITICAL findings. Offline comparison:
 
 ```bash
 python -m modules.reporting.diff reports/baseline.json reports/nightly.json -o reports/nightly_diff.json
-# → reports/nightly_diff.json + reports/nightly_diff.html
 ```
 
-## GitHub Action
+### GitHub Action
 
-Run a scan in CI and surface findings in **GitHub code scanning** (SARIF) via the
-composite action at [`action.yml`](action.yml):
+The composite action [`action.yml`](action.yml) scans in CI and uploads SARIF to
+GitHub code scanning:
 
 ```yaml
 permissions:
@@ -381,7 +317,7 @@ jobs:
         with:
           target: https://app.example.com
           args: "--scope app.example.com --jwt --cors"
-          fail-on: "high"     # fail the job on HIGH/CRITICAL findings
+          fail-on: "high"
 ```
 
 | Input | Default | Purpose |
@@ -396,47 +332,39 @@ jobs:
 | `browser` | `false` | Install Playwright Chromium for `-b` / `-f` |
 
 Outputs: `json`, `sarif`, `exit-code`. A copy-ready workflow lives in
-[`examples/github-actions-scan.yml`](examples/github-actions-scan.yml). Only scan
-targets you are **authorized** to test.
+[`examples/github-actions-scan.yml`](examples/github-actions-scan.yml). Pin to the
+released major tag (`@v1`) rather than `@main`. Only scan targets you are
+**authorized** to test.
 
-Pin the action to a released major version (`@v1`) rather than `@main` so your
-workflows are not affected by in-progress changes. See
-[Releasing](#releasing-the-action) for the tag/version scheme.
+<details>
+<summary><b>Releasing the Action</b></summary>
 
-### Releasing the Action
-
-The action is consumed by a moving major-version tag (`@v1`) plus immutable
-release tags (`v1.0.0`). To cut a release:
+The action is consumed by a moving major tag (`@v1`) plus immutable release tags:
 
 ```bash
-# Annotated release tag + moving major tag
-git tag -a v1.0.0 -m "SurfaceSweep v1.0.0"
+git tag -a v1.0.3 -m "SurfaceSweep v1.0.3"
 git tag -a v1     -m "SurfaceSweep v1 (latest 1.x)"
-git push origin v1.0.0 v1
+git push origin v1.0.3 v1
 ```
 
-Then on GitHub open **Releases → Draft a release**, select the `v1.0.0` tag,
-paste the [CHANGELOG.md](CHANGELOG.md) entry, and optionally tick **Publish this
-Action to the GitHub Marketplace**. Keep the `version` field in
-[`pyproject.toml`](pyproject.toml) in step with the tag.
+Then on GitHub open **Releases → Draft a release**, select the tag, paste the
+[CHANGELOG.md](CHANGELOG.md) entry, and optionally publish to the Marketplace. Keep
+the `version` in [`pyproject.toml`](pyproject.toml) in step with the tag.
 
-## MCP server (agent-native recon)
+</details>
 
-SurfaceSweep ships an MCP server so agent tools (Claude Desktop, Cursor, …) can
-drive it directly. It is dependency-free — JSON-RPC 2.0 over stdio using only the
-standard library:
+### MCP server
+
+SurfaceSweep ships a dependency-free MCP server (JSON-RPC 2.0 over stdio) so agent
+tools such as Claude Desktop and Cursor can drive it:
 
 ```bash
 python mcp_server.py        # or, after `pip install .`: surfacesweep-mcp
 ```
 
-Tools:
-
-- `scan_url` — static recon (or headless when `browser: true`); returns a compact
-  summary: counts, endpoints, redacted secrets, sinks, and risk.
+- `scan_url` — static recon (or headless with `browser: true`); returns a compact
+  summary of counts, endpoints, redacted secrets, sinks, and risk.
 - `check_scope` — confirm a URL is within an authorized scope before scanning.
-
-Example client configuration (Claude Desktop):
 
 ```json
 {
@@ -449,33 +377,30 @@ Example client configuration (Claude Desktop):
 }
 ```
 
-stdout is reserved for the JSON-RPC stream; progress output is redirected to
-stderr so the transport stays valid.
+stdout is reserved for the JSON-RPC stream; progress output goes to stderr.
 
 ## Roadmap
 
-- Ongoing secret-pattern tuning as new false-positive reports arrive
-- Additional import formats beyond Burp / ZAP / HAR (e.g. mitmproxy flows, Caido)
+- Ongoing secret-pattern tuning as new false-positive reports arrive.
+- Additional import formats beyond Burp / ZAP / HAR (e.g. mitmproxy, Caido).
 
 ## Contributing
 
-Issues and pull requests are welcome. By participating you agree to the
+Issues and PRs are welcome — by participating you agree to the
 [Code of Conduct](CODE_OF_CONDUCT.md).
 
-1. Fork and create a feature branch
-2. Keep changes focused; match existing code style
-3. Add or update tests — `python -m unittest discover -s tests -q` must stay green
-4. Use conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`)
-5. Open a PR describing the problem and the approach
+1. Fork and create a feature branch.
+2. Keep changes focused; match existing code style.
+3. Add or update tests — `python -m unittest discover -s tests -q` must stay green.
+4. Use conventional commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`).
+5. Open a PR describing the problem and the approach.
 
 ## Security
 
 Report vulnerabilities privately via
 [GitHub Security Advisories](https://github.com/piyushpcs/SurfaceSweep/security/advisories/new)
-— see [SECURITY.md](SECURITY.md).
-
-SurfaceSweep's own vulnerabilities (SSRF, credential leakage, destructive
-requests) found and fixed during a self-assessment are documented in
+— see [SECURITY.md](SECURITY.md). SurfaceSweep's own issues found and fixed during a
+self-assessment (SSRF, credential leakage, destructive requests) are documented in
 [SECURITY-FINDINGS.md](SECURITY-FINDINGS.md).
 
 ## License
