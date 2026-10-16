@@ -1,8 +1,7 @@
 name: SurfaceSweep
 description: >-
-  JavaScript attack-surface reconnaissance. Scans a URL for endpoints, secrets,
-  dangerous sinks, and CORS/JWT issues, writing a JSON report and optional SARIF
-  for GitHub code scanning.
+  JavaScript attack-surface recon: endpoints, secrets, dangerous sinks;
+  JSON + SARIF for GitHub code scanning.
 author: piyushpcs
 branding:
   icon: crosshair

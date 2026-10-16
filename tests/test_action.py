@@ -38,6 +38,16 @@ class TestActionManifest(unittest.TestCase):
         self.assertTrue(self.action.get("name"))
         self.assertTrue(self.action.get("description"))
 
+    def test_description_within_marketplace_limit(self):
+        # GitHub Marketplace rejects action descriptions of 125+ characters.
+        desc = self.action["description"]
+        self.assertLess(len(desc), 125, f"description is {len(desc)} chars: {desc!r}")
+
+    def test_has_branding(self):
+        branding = self.action.get("branding") or {}
+        self.assertIn("icon", branding)
+        self.assertIn("color", branding)
+
     def test_target_input_required(self):
         target = self.action["inputs"]["target"]
         self.assertTrue(target["required"])
