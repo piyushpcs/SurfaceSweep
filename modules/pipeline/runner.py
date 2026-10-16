@@ -4,7 +4,7 @@ Pipeline runner — builds the ordered stage list from CLI flags and executes it
 Stage order (Phase 2.2: CORS runs after validate so probes hit live endpoints;
 Phase F3: graphql runs after validate, before cors;
 Phase F4: verify_secrets after graphql, before cors):
-  waf_detect → wayback_fetch → scan → wayback_merge → waf_inject →
+  waf_detect → wayback_fetch → scan → import → wayback_merge → waf_inject →
   cve → spa → jwt → validate → graphql → verify_secrets → cors → export → report
 """
 
@@ -21,6 +21,7 @@ from modules.pipeline.stages import (
     stage_cve,
     stage_export,
     stage_graphql,
+    stage_import,
     stage_jwt,
     stage_report,
     stage_scan,
@@ -40,6 +41,7 @@ _STAGE_SPECS: List[Tuple[str, StageFn, Callable[[Namespace], bool]]] = [
     ("waf_detect", stage_waf_detect, lambda a: bool(a.waf)),
     ("wayback_fetch", stage_wayback_fetch, lambda a: bool(a.wayback)),
     ("scan", stage_scan, lambda a: True),
+    ("import", stage_import, lambda a: bool(getattr(a, "import_files", None))),
     ("wayback_merge", stage_wayback_merge, lambda a: bool(a.wayback)),
     ("waf_inject", stage_waf_inject, lambda a: bool(a.waf)),
     ("cve", stage_cve, lambda a: bool(a.cve or a.osv)),
@@ -73,7 +75,9 @@ def run_pipeline(args: Namespace, verbose: bool = True,
     """
     from datetime import datetime, timezone
     from time import monotonic
+    from modules.extraction.http import request_count, reset_request_count
 
+    reset_request_count()
     ctx = ScanContext(args, verbose=verbose, headers=headers)
     for name, fn in build_stages(args):
         # Record the stage before it runs so the report written *during* the
@@ -100,6 +104,8 @@ def run_pipeline(args: Namespace, verbose: bool = True,
         else:
             # Refresh meta so stages_run/stage_timings include report
             _stamp_meta(ctx, datetime.now(timezone.utc))
+        # Scan footprint — evidence of a bounded, paced scan for VDP notes.
+        ctx.log(f"[*] Total HTTP requests sent: {request_count()}")
     return ctx.require_result()
 
 
@@ -108,12 +114,13 @@ def _finalize_result(ctx: ScanContext, finished_at) -> None:
     if ctx.result is None:
         return
 
-    # Stage timings known so far (report stage still pending when called early)
+    # Stamp meta first so the executive summary can report the request
+    # footprint (it reads meta.requests_sent).
+    _stamp_meta(ctx, finished_at)
     from modules.reporting.findings import build_executive_summary, build_findings_feed
     feed = build_findings_feed(ctx.result)
     ctx.result["findings"] = feed
     ctx.result["executive_summary"] = build_executive_summary(ctx.result, feed)
-    _stamp_meta(ctx, finished_at)
 
 
 def _stamp_meta(ctx: ScanContext, finished_at) -> None:
@@ -137,8 +144,12 @@ def _stamp_meta(ctx: ScanContext, finished_at) -> None:
         )
         if getattr(args, name, False)
     )
+    if getattr(args, "import_files", None):
+        flags.append("import")
+        flags.sort()
 
     ctx.result["schema_version"] = RESULT_SCHEMA_VERSION
+    from modules.extraction.http import request_count
     ctx.result["meta"] = {
         "tool": "SurfaceSweep",
         "finished_at": finished_at.isoformat(),
@@ -147,4 +158,5 @@ def _stamp_meta(ctx: ScanContext, finished_at) -> None:
         "stages_run": list(ctx.stages_run),
         "stage_timings": dict(ctx.stage_timings),
         "flags": flags,
+        "requests_sent": request_count(),
     }

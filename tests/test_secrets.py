@@ -333,6 +333,26 @@ class TestFpGateHardening(unittest.TestCase):
         found = extract_secrets('{ password: "smtp_secret_pass_123" }', "unit.js")
         self.assertTrue(any(s["type"] == "Generic Password" for s in found))
 
+    def test_html_markup_fragment_rejected(self):
+        # Real-target FP: a docs anchor is scraped as "rediss://</a>".
+        # Angle brackets never appear in real credentials.
+        self.assertFalse(is_likely_real_secret("rediss://</a>"))
+        self.assertFalse(is_likely_real_secret("rediss://user:pass@host</a>"))
+        self.assertFalse(is_likely_real_secret("<Token abc123456789012345/>"))
+
+
+class TestHtmlBodyFalsePositives(unittest.TestCase):
+    """SF-12: page HTML must not yield markup fragments as secrets."""
+
+    def test_anchor_fragment_not_a_secret(self):
+        html = "See rediss://</a> for details"
+        self.assertEqual(extract_secrets(html, "html_body"), [])
+
+    def test_real_redis_url_in_js_still_detected(self):
+        content = 'const url = "redis://user:pass@cache.internal:6379/0";'
+        found = extract_secrets(content, "app.js")
+        self.assertTrue(any(s["type"] in ("Redis URL", "Database URL") for s in found))
+
     def test_uuid_as_password_value_rejected(self):
         found = extract_secrets(
             '{ password: "550e8400-e29b-41d4-a716-446655440000" }', "unit.js"

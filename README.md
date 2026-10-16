@@ -8,7 +8,7 @@ Extract API endpoints and secrets from a target's JavaScript, validate what is l
 check CORS and JWT issues, and export results for Burp Suite / ZAP.
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-932%20passing-brightgreen)](#testing)
+[![Tests](https://img.shields.io/badge/tests-974%20passing-brightgreen)](#testing)
 [![CI](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml/badge.svg)](https://github.com/piyushpcs/SurfaceSweep/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Last commit](https://img.shields.io/github/last-commit/piyushpcs/SurfaceSweep)](https://github.com/piyushpcs/SurfaceSweep/commits/main)
@@ -63,6 +63,7 @@ vulnerable testbed.
 - **Wayback Machine** — historical JS no longer linked from the live site
 - **SPA route discovery** — React/Vue/Angular routers via static analysis, DOM, router introspection, and BFS crawl
 - **robots.txt / sitemap.xml** — crawler manifests parsed for hidden paths
+- **Traffic import** — extend discovery with a Burp XML/CSV, OWASP ZAP CSV, or browser HAR export (`--import`); imported URLs are scope-filtered
 
 ### Detection
 
@@ -78,11 +79,12 @@ vulnerable testbed.
 
 ### Analysis & export
 
-- **Endpoint validation** — filters 404s, soft-404s, SPA shells, JSON fail-in-200
-- **CORS scanner** — origin matrix, non-singleton ACAO, Private Network Access (PNA) notes, redirect FP filter, rate limits, standalone PoC HTML
+- **Endpoint validation** — filters 404s, soft-404s, SPA shells, JSON fail-in-200; **capped** (`--max-validate`, API-like first) and **rate-limited** (`--validate-rps`, auto-throttled under a WAF) so active probing stays polite
+- **CORS scanner** — origin matrix, non-singleton ACAO, Private Network Access (PNA) notes, redirect FP filter, rate limits, standalone PoC HTML; a credential-less `ACAO: *` on public content is downgraded to informational (LOW)
 - **JWT analyzer** — offline HS* cracking, wordlist/hashcat export, SSRF-guarded JWKS fetch for RS256→HS256 checks
 - Scope split: internal paths, in-scope URLs, out-of-scope URLs
 - Risk scoring summary per scan
+- **Scan footprint** — every report records `meta.requests_sent` (total HTTP requests sent), surfaced in the executive summary and CLI
 - **JSON**, **HTML**, and **SARIF 2.1.0** reports (`schema_version: 1`, executive summary, findings feed)
 - **Scan diff** — compare two reports of the same target (`--diff` or `python -m modules.reporting.diff`); writes JSON + HTML
 - **Multi-target batch** — `--targets hosts.txt` with per-host output files
@@ -177,6 +179,12 @@ python main.py https://target.com -f --wordlist reports/paths.txt
 
 # Batch scan a list of targets (one URL per line, # comments ok)
 python main.py --targets hosts.txt -o reports/batch.json --html --sarif
+
+# Seed discovery from proxy history (Burp XML/CSV, ZAP CSV, or HAR; repeatable)
+python main.py https://target.com --full --import burp_items.xml --import capture.har
+
+# Bound and pace active validation (default: 200 endpoints @ 5 rps)
+python main.py https://target.com --validate --max-validate 50 --validate-rps 2
 ```
 
 Reports default to `reports/surfacesweep_report.json` (JSON) and, with `--html`, a sibling HTML file.
@@ -197,6 +205,8 @@ Batch mode writes one JSON per host next to `-o` (e.g. `reports/batch_app.exampl
 | `--validate` | Validate discovered endpoints to filter false positives |
 | `--vt` | Validation threads (default: 10) |
 | `--vtimeout` | Validation timeout in seconds (default: 5) |
+| `--max-validate` | Max endpoints to actively validate, API-like first (default: 200, 0=unlimited) |
+| `--validate-rps` | Validation request rate limit req/s (default: 5, 0=unlimited; auto-throttled under a WAF) |
 | `--burp` | Export endpoints as Burp Suite CSV |
 | `--zap` | Export endpoints as OWASP ZAP CSV |
 | `--wayback` | Include historical JS files from Wayback Machine |
@@ -206,6 +216,7 @@ Batch mode writes one JSON per host next to `-o` (e.g. `reports/batch_app.exampl
 | `--spa` | Discover SPA routes (React/Vue/Angular routers, BFS crawl) |
 | `--max-routes` | Max routes to crawl in SPA mode (default: 50) |
 | `--no-probe` | Skip probing common admin/debug routes in SPA mode |
+| `--import FILE` | Import endpoints from a Burp XML/CSV, ZAP CSV, or HAR file (repeatable; format auto-detected) |
 | `--cors` | Scan discovered endpoints for CORS misconfigurations |
 | `--cors-origin` | Custom Origin header to test (default: built-in test set) |
 | `--cors-max` | Max endpoints to CORS-test (default: 50) |
@@ -248,7 +259,7 @@ Exit codes: `0` success · `1` findings at/above `--fail-on` · `2` usage error 
 Pipeline stage order:
 
 ```text
-waf_detect → wayback_fetch → scan → wayback_merge → waf_inject → cve → spa → jwt → validate → graphql → verify_secrets → cors → export → report
+waf_detect → wayback_fetch → scan → import → wayback_merge → waf_inject → cve → spa → jwt → validate → graphql → verify_secrets → cors → export → report
 ```
 
 ```text
@@ -306,7 +317,7 @@ coverage run -m unittest discover -s tests -q
 coverage report -m
 ```
 
-- **932 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
+- **974 tests** (unit + offline end-to-end integration), stdlib `unittest`, no network required
 - Coverage includes extraction FP gates, source maps, enrichment, validation, PII, CORS probes/escalation/PNA,
   JWT decode/crack/JWKS, GraphQL introspection probe, secret live-verification, pipeline stage order,
   report schema (`schema_version: 1`), finding feeds, scan diff (JSON + HTML),
@@ -443,8 +454,8 @@ stderr so the transport stays valid.
 
 ## Roadmap
 
-- Additional secret-pattern tuning as new FP reports arrive
-- Burp / ZAP / HAR import as alternate discovery sources
+- Ongoing secret-pattern tuning as new false-positive reports arrive
+- Additional import formats beyond Burp / ZAP / HAR (e.g. mitmproxy flows, Caido)
 
 ## Contributing
 

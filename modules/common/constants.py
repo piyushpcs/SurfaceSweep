@@ -17,7 +17,7 @@ __all__ = [
     "secret_severity",
 ]
 
-__version__ = "1.0.0"
+__version__ = "1.0.3"
 
 DEFAULT_USER_AGENT = "SurfaceSweep/1.0"
 

@@ -330,6 +330,37 @@ class TestStep2OriginsAndProbe(unittest.TestCase):
         self.assertFalse(out["static_acao"])
         self.assertEqual(out["acao"], "")
         self.assertEqual(out["error"], "cross-domain redirect")
+        self.assertFalse(out["public"])
+
+    @mock.patch("modules.cors.probe.request_tls")
+    def test_probe_baseline_marks_public(self, request_mock):
+        request_mock.return_value = self._mock_resp(
+            {"Access-Control-Allow-Origin": "*"}
+        )
+        out = probe_baseline("https://example.com/about")
+        self.assertTrue(out["public"])
+        self.assertFalse(out["set_cookie"])
+        self.assertFalse(out["www_authenticate"])
+
+    @mock.patch("modules.cors.probe.request_tls")
+    def test_probe_baseline_not_public_with_cookie(self, request_mock):
+        request_mock.return_value = self._mock_resp({
+            "Access-Control-Allow-Origin": "*",
+            "Set-Cookie": "sid=abc; HttpOnly",
+        })
+        out = probe_baseline("https://example.com/api")
+        self.assertFalse(out["public"])
+        self.assertTrue(out["set_cookie"])
+
+    @mock.patch("modules.cors.probe.request_tls")
+    def test_probe_baseline_not_public_with_auth_challenge(self, request_mock):
+        request_mock.return_value = self._mock_resp({
+            "Access-Control-Allow-Origin": "*",
+            "WWW-Authenticate": "Bearer",
+        })
+        out = probe_baseline("https://example.com/api")
+        self.assertFalse(out["public"])
+        self.assertTrue(out["www_authenticate"])
 
     @mock.patch("modules.cors.probe.request_tls")
     def test_probe_endpoint_uses_shared_session(self, request_mock):
@@ -645,6 +676,25 @@ class TestScannerEscalationAndErrors(unittest.TestCase):
         self.assertEqual(methods, ["OPTIONS", "GET", "POST"])
         self.assertEqual(out["severity_counts"]["CRITICAL"], 1)
 
+    def test_public_wildcard_downgraded_and_summarized(self):
+        wild = dict(self._row(EVIL, "LOW", "*", method="OPTIONS"))
+        wild.update({"public_endpoint": True, "detail": "wildcard public"})
+
+        with mock.patch("modules.cors.scanner.probe_baseline") as baseline_mock, \
+                mock.patch("modules.cors.scanner.probe_endpoint") as probe_mock:
+            baseline_mock.return_value = {
+                "static_acao": True, "acao": "*", "public": True,
+            }
+            probe_mock.return_value = [wild]
+            out = scan_cors(
+                ["/about"], TARGET, verbose=False, threads=1, rate_limit=0
+            )
+
+        self.assertEqual(out["severity_counts"].get("LOW"), 1)
+        self.assertEqual(out["summary"].get("public_wildcard"), 1)
+        # baseline public-ness is forwarded to the probe
+        self.assertTrue(probe_mock.call_args.kwargs["public"])
+
 
 class TestClassifyCors(unittest.TestCase):
     def test_no_header_info(self):
@@ -734,6 +784,24 @@ class TestClassifyCors(unittest.TestCase):
             "https://evilevil.com", "https://evil.com", "", target_origin=TARGET
         )
         self.assertEqual(sev, "INFO")
+
+    def test_wildcard_no_creds_public_downgraded_to_low(self):
+        sev, detail = classify(EVIL, "*", "", target_origin=TARGET, public=True)
+        self.assertEqual(sev, "LOW")
+        self.assertIn("public unauthenticated", detail)
+
+    def test_wildcard_no_creds_nonpublic_stays_medium(self):
+        sev, _ = classify(EVIL, "*", "", target_origin=TARGET, public=False)
+        self.assertEqual(sev, "MEDIUM")
+
+    def test_wildcard_with_creds_public_still_high(self):
+        # Credentials make it a real misconfig regardless of public-ness.
+        sev, _ = classify(EVIL, "*", "true", target_origin=TARGET, public=True)
+        self.assertEqual(sev, "HIGH")
+
+    def test_reflected_public_still_high(self):
+        sev, _ = classify(EVIL, EVIL, "", target_origin=TARGET, public=True)
+        self.assertEqual(sev, "HIGH")
 
 
 class TestScannerHelpers(unittest.TestCase):

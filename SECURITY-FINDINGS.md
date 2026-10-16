@@ -7,9 +7,10 @@ turned the scanner into an SSRF pivot, a credential-leak, and a source of
 destructive requests against the target.
 
 Status: **all findings below are fixed** and covered by regression tests in
-`tests/test_hardening.py` and `tests/test_redirect_ssrf.py` (plus updated
-assertions in `tests/test_validator.py`, `tests/test_spa_probe.py`, and
-`tests/test_jwt.py`). Test suite: 932 passing.
+`tests/test_hardening.py`, `tests/test_redirect_ssrf.py`, `tests/test_validator.py`,
+`tests/test_secrets.py`, `tests/test_cors.py`, and `tests/test_import.py` (plus
+updated assertions in `tests/test_spa_probe.py`, `tests/test_http.py`, and
+`tests/test_jwt.py`). Test suite: 974 passing.
 
 Severity uses CVSS-style ratings for the tool's real deployment context
 (authorized penetration testing / bug-bounty recon).
@@ -278,6 +279,54 @@ refused; private host still allowed), plus updated
 **Verification:** a local HTTP server that answers `302 → 169.254.169.254` is
 followed by a naive client (connects, times out on the metadata IP) but is
 refused by SurfaceSweep before any connection.
+
+---
+
+## SF-12 — Secret-scanner markup false positives (LOW, correctness)
+
+**Location:** `modules/extraction/patterns.py` — `is_likely_real_secret`
+
+**Impact:** A real authorized scan surfaced a "secret" that was the HTML
+fragment `rediss://</a>` — a Redis URL pattern greedily matched across a docs
+anchor tag in the page body (`html_body` source). Markup fragments produce
+noisy, non-actionable findings and erode trust in the secret feed.
+
+**Root cause:** The false-positive gate rejected placeholders, low entropy, and
+known dummy values, but never rejected candidates containing HTML/XML tag
+delimiters. Because page HTML is scanned as a discovery source, a URL pattern
+that runs to whitespace can swallow a trailing `</a>`.
+
+**Fix:** Reject any candidate containing `<` or `>` for every label (including
+high-confidence labels). Angle brackets cannot appear in real credentials, so
+this is safe and general (also covers JSX/template markup such as `<Token …/>`).
+
+**Tests:** `tests/test_secrets.py::TestFpGateHardening::test_html_markup_fragment_rejected`
+and `tests/test_secrets.py::TestHtmlBodyFalsePositives`.
+
+---
+
+## SF-13 — Unbounded active endpoint validation (MEDIUM, safety/availability)
+
+**Location:** `modules/analysis/validator.py` — `validate_endpoints`
+
+**Impact:** Validation is the one stage that sends a request per discovered
+endpoint. It ran every endpoint through a `ThreadPoolExecutor` (default 10
+workers) with **no cap and no rate limiter**. On a content-heavy site this is
+hundreds of unpaced requests — exactly the kind of traffic that violates a
+program's "no DoS / stay polite" rule and can get a researcher banned, even
+though each individual request is non-mutating.
+
+**Root cause:** The crawler has a `RateLimiter` (5 rps) and CORS has
+`--cors-rps`, but the validation stage was added without pacing and without a
+bound on volume.
+
+**Fix:** `validate_endpoints` gained `max_endpoints` and `rate_limit`. The
+stage passes `--max-validate` (default 200; API-like paths prioritized before
+truncation) and `--validate-rps` (default 5), the latter auto-throttled when a
+WAF is detected. Both accept `0` for unlimited. Defaults keep full coverage for
+normal targets while bounding pathological cases.
+
+**Tests:** `tests/test_validator.py::TestValidationCapAndPacing`.
 
 ---
 

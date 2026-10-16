@@ -5,6 +5,54 @@ All notable changes to SurfaceSweep are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-10-16
+
+Hardening pass driven by a real authorized scan (Stalwart Labs VDP scope): the
+tool ran end-to-end and the run exposed precision, pacing, and transparency
+gaps, all now closed.
+
+### Security
+
+- **Bounded active validation (SF-13).** Endpoint validation was the one stage
+  that fired a request per discovered endpoint with no cap and no rate limit —
+  a large site could receive hundreds of unpaced requests. Validation now runs
+  under a global rate limiter (`--validate-rps`, default 5; auto-throttled when
+  a WAF is detected) and an endpoint cap (`--max-validate`, default 200, with
+  API-like paths prioritized before truncation). Set either to `0` for
+  unlimited.
+
+### Fixed
+
+- **Secret-scanner markup false positives (SF-12).** HTML/markup fragments
+  scraped from page bodies (e.g. `rediss://</a>` from a docs anchor) were
+  reported as secrets. Candidates containing angle brackets are now rejected
+  for every label.
+
+### Changed
+
+- **CORS precision.** `Access-Control-Allow-Origin: *` with no credentials on a
+  demonstrably public endpoint (2xx, no `Set-Cookie`, no `WWW-Authenticate`) is
+  now reported as LOW (informational) instead of MEDIUM, and rolled up as
+  `summary.public_wildcard`. Credentialed, reflected, and `null` findings are
+  unchanged.
+- **Scan footprint.** Reports now record `meta.requests_sent`; the executive
+  summary shows total HTTP requests sent and the CLI prints it — useful
+  politeness/authorization evidence for a VDP write-up.
+
+### Added
+
+- **Alternate discovery sources.** `--import FILE` (repeatable) ingests
+  endpoints from a Burp XML/CSV, OWASP ZAP CSV, or browser HAR export. Format is
+  auto-detected; imported URLs are scope-filtered by the same merge helper as
+  native discovery, so captured third-party traffic never widens the scan. New
+  module `modules/discovery/importers.py`.
+- `__version__`, `pyproject.toml`, and the MCP server version bumped to 1.0.3
+  (the in-code version had drifted behind the `v1.0.2` tag).
+
+### Tests
+
+- Test suite: 974 passing (was 932 at v1.0.2).
+
 ## [1.0.2] - 2026-10-16
 
 ### Security

@@ -29,7 +29,7 @@ import sys
 from typing import Any, Callable, Dict, List, Optional
 
 SERVER_NAME = "surfacesweep"
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "1.0.3"
 DEFAULT_PROTOCOL = "2024-11-05"
 SUPPORTED_PROTOCOLS = ("2024-11-05", "2025-03-26", "2025-06-18")
 

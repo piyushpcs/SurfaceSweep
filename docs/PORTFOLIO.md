@@ -15,7 +15,7 @@ exists and to `SECURITY-FINDINGS.md`.
 - **Audited and hardened the tool against its own class of bugs** — fixed an SSRF
   pivot in the crawler, a cloud-metadata fetch path (and the redirect/DNS bypass
   of its guard), target-credential leakage to third-party APIs, and a validator
-  that issued state-changing POST/PUT/DELETE, each with a regression test (932
+  that issued state-changing POST/PUT/DELETE, each with a regression test (974
   tests passing).
 - Implemented scope-bound authentication: `--cookie`/`-H` now reach the initial
   HTML/JS fetch and the browser context, while credentials are sent **only** to
@@ -31,7 +31,7 @@ exists and to `SECURITY-FINDINGS.md`.
   fixed it and added a static compatibility test so it can't regress.
 
 ### One-line variant
-> Built and self-audited a JS attack-surface scanner (Python, 932 tests) — fixed
+> Built and self-audited a JS attack-surface scanner (Python, 974 tests) — fixed
 > SSRF, credential-leakage, and destructive-request bugs in my own tool,
 > documented them in a public write-up, and shipped it as a GitHub Action
 > (Marketplace) plus an MCP server for AI agents.
@@ -80,7 +80,7 @@ exists and to `SECURITY-FINDINGS.md`.
   `ScanResult` is a `TypedDict` with `total=False`, so the qualifier was
   redundant — removed it and added an AST test that fails if any module imports
   a symbol newer than the declared floor.
-- *Result:* 932 tests green on 3.10, 3.12, and 3.14; shipped as `v1.0.1`.
+- *Result:* 974 tests green on 3.10, 3.12, and 3.14; shipped as `v1.0.1`.
 
 **6. "The guard was only half-real."**
 - *Situation:* I'd added a cloud-metadata denylist, but it only checked the
@@ -126,7 +126,7 @@ exists and to `SECURITY-FINDINGS.md`.
 > headers treated as global defaults leak your session to third-party APIs.
 >
 > I fixed all three — default-safe, scope-bound, fallback-only — and wrote it up
-> with regression tests. 932 tests passing.
+> with regression tests. 974 tests passing.
 >
 > It's now shipped as a GitHub Action on the Marketplace and an MCP server for
 > AI agents.
@@ -137,7 +137,7 @@ exists and to `SECURITY-FINDINGS.md`.
 
 ## Honest claims checklist (don't overclaim)
 
-- ✅ "932 tests passing" (verified locally on 3.10/3.12/3.14; CI green on 3.10 & 3.12).
+- ✅ "974 tests passing" (verified locally on 3.10/3.12/3.14; CI green on 3.10 & 3.12).
 - ✅ "GitHub Action published to the Marketplace" (release `v1.0.1`).
 - ✅ "MCP server with `scan_url`/`check_scope`" (dependency-free, unit-tested).
 - ✅ "Scope-bound authenticated scans" (verified with a cookie-gated app).

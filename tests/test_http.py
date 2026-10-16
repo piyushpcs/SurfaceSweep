@@ -18,11 +18,46 @@ from modules.extraction.http import (
     get_cached_text,
     is_cert_error,
     is_tls_policy_error,
+    note_request,
     parse_retry_after,
+    request_count,
     request_tls,
     relaxed_session,
     reset_http_config,
+    reset_request_count,
 )
+
+
+class TestRequestFootprint(unittest.TestCase):
+    """Process-wide HTTP request counter (scan footprint)."""
+
+    def setUp(self):
+        reset_request_count()
+
+    def tearDown(self):
+        reset_request_count()
+
+    def test_starts_at_zero(self):
+        self.assertEqual(request_count(), 0)
+
+    def test_notes_and_counts(self):
+        note_request()
+        note_request(3)
+        self.assertEqual(request_count(), 4)
+
+    def test_reset(self):
+        note_request(5)
+        reset_request_count()
+        self.assertEqual(request_count(), 0)
+
+    @mock.patch("modules.extraction.http.requests.request")
+    def test_request_tls_counts_a_send(self, req_mock):
+        reset_request_count()
+        resp = mock.Mock(status_code=200, headers={})
+        req_mock.return_value = resp
+        request_tls("GET", "https://example.com/", allow_redirects=False)
+        self.assertEqual(request_count(), 1)
+
 
 
 class TestParseRetryAfter(unittest.TestCase):

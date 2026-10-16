@@ -45,15 +45,46 @@ __all__ = [
     "is_blocked_fetch_target",
     "is_cert_error",
     "is_tls_policy_error",
+    "note_request",
     "parse_retry_after",
+    "request_count",
     "request_kwargs",
     "request_tls",
     "reset_http_config",
+    "reset_request_count",
     "relaxed_session",
     "session_request",
 ]
 
 _TEXT_CACHE_MAX = 512
+
+# --- Scan request accounting ---------------------------------------------
+# One process-wide counter of HTTP requests actually put on the wire, so a
+# report can state its footprint (politeness / authorization evidence for a
+# VDP: "N requests sent, paced at X rps").
+_request_lock = threading.Lock()
+_request_count = 0
+
+
+def note_request(n: int = 1) -> None:
+    """Record that ``n`` HTTP request(s) were sent to a target."""
+    global _request_count
+    with _request_lock:
+        _request_count += n
+
+
+def request_count() -> int:
+    """Total HTTP requests sent since the last reset."""
+    with _request_lock:
+        return _request_count
+
+
+def reset_request_count() -> None:
+    """Zero the request counter (start of a scan / tests)."""
+    global _request_count
+    with _request_lock:
+        _request_count = 0
+
 
 # HTTP status codes that carry a Location to follow.
 _REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
@@ -232,11 +263,13 @@ def request_tls(method: str, url: str, **kwargs):
         kwargs["proxies"] = {"http": _client.proxy, "https": _client.proxy}
 
     def send(m, u):
+        note_request()
         try:
             return requests.request(m, u, allow_redirects=False, **kwargs)
         except requests.ConnectionError as exc:
             if not is_tls_policy_error(exc):
                 raise
+            note_request()
             return relaxed_session().request(m, u, allow_redirects=False, **kwargs)
 
     return follow_redirects(send, method, url, allow_redirects=allow_redirects)
@@ -466,6 +499,7 @@ class HttpClient:
                 limiter.wait()
             try:
                 kwargs = self.request_kwargs(headers=req_headers)
+                note_request()
                 if used_relaxed:
                     resp = relaxed_session().get(
                         url, timeout=timeout, allow_redirects=False, **kwargs

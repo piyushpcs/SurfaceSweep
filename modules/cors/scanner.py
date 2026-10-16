@@ -317,7 +317,8 @@ def scan_cors(
             if norm and norm not in ("", "null", "*"):
                 trusted_seeds.add(norm)
 
-    def _probe(url, method, request_method="GET", static_acao=False, origin_list=None):
+    def _probe(url, method, request_method="GET", static_acao=False, origin_list=None,
+               public=False):
         return probe_endpoint(
             url,
             origin_list if origin_list is not None else origins,
@@ -330,6 +331,7 @@ def scan_cors(
             request_method=request_method,
             static_acao=static_acao,
             session=_thread_session(),
+            public=public,
         )
 
     def _has_finding_acao(results):
@@ -345,21 +347,23 @@ def scan_cors(
         )
         baselines[url] = baseline
         static_acao = bool(baseline.get("static_acao"))
+        public = bool(baseline.get("public"))
 
         # Escalate only when no *finding-worthy* ACAO on preflight.
         # A legitimate target-origin ACAO on OPTIONS must not suppress GET.
-        opt_results = _probe(url, "OPTIONS", static_acao=static_acao)
+        opt_results = _probe(url, "OPTIONS", static_acao=static_acao, public=public)
         if _has_finding_acao(opt_results):
             return url, opt_results, baseline
 
-        get_results = _probe(url, "GET", static_acao=static_acao)
+        get_results = _probe(url, "GET", static_acao=static_acao, public=public)
         if _has_finding_acao(get_results):
             return url, get_results, baseline
 
         # API-like paths often only expose CORS on non-simple requests
         if is_api_like_path(url):
             post_results = _probe(
-                url, "POST", request_method="POST", static_acao=static_acao
+                url, "POST", request_method="POST", static_acao=static_acao,
+                public=public,
             )
             if _has_finding_acao(post_results):
                 return url, post_results, baseline
@@ -409,14 +413,18 @@ def scan_cors(
                 )
 
             def _scan_seeds(url):
-                static_acao = bool((baselines.get(url) or {}).get("static_acao"))
+                base = baselines.get(url) or {}
+                static_acao = bool(base.get("static_acao"))
+                public = bool(base.get("public"))
                 opt_results = _probe(
-                    url, "OPTIONS", static_acao=static_acao, origin_list=seed_origins
+                    url, "OPTIONS", static_acao=static_acao,
+                    origin_list=seed_origins, public=public,
                 )
                 if _has_finding_acao(opt_results):
                     return url, opt_results
                 get_results = _probe(
-                    url, "GET", static_acao=static_acao, origin_list=seed_origins
+                    url, "GET", static_acao=static_acao,
+                    origin_list=seed_origins, public=public,
                 )
                 return url, get_results
 
@@ -479,6 +487,16 @@ def scan_cors(
         if crit:
             warn("CRITICAL: reflected origin + credentials — data theft possible")
 
+    public_wildcard = sum(
+        1 for f in findings
+        if f.get("severity") == "LOW" and f.get("public_endpoint")
+    )
+    if verbose and public_wildcard:
+        detail(
+            f"[*] {public_wildcard} wildcard ACAO finding(s) on public "
+            f"unauthenticated content downgraded to LOW (informational)"
+        )
+
     summary = {
         "urls_flagged": len(findings),
         "endpoints_tested": len(resolved),
@@ -486,6 +504,7 @@ def scan_cors(
         "probe_hits": len(raw_findings),
         "severity_counts": dict(severity_counts),
         "aggregated": bool(aggregate),
+        "public_wildcard": public_wildcard,
     }
     if error_probes:
         summary["error_probes"] = error_probes

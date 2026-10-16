@@ -50,7 +50,8 @@ def is_pna_allowed(acpn):
     return (acpn or "").strip().lower() in ("true", "1", "yes")
 
 
-def classify_cors(origin, acao, acac, target_origin=None, registrable_domain=None, acpn=None):
+def classify_cors(origin, acao, acac, target_origin=None, registrable_domain=None, acpn=None,
+                  public=False):
     """
     Classify a single CORS probe result.
 
@@ -61,12 +62,18 @@ def classify_cors(origin, acao, acac, target_origin=None, registrable_domain=Non
                 permissive ACAO with Access-Control-Allow-Private-Network
       MEDIUM:   wildcard origin (no credentials), null origin allowed,
                 non-singleton ACAO (comma-separated list)
-      LOW:      host suffix / partial trust match
+      LOW:      wildcard on demonstrably public content, host suffix / partial
+                trust match
       INFO:     origin not reflected, or legitimate target origin (expected)
 
     ``acpn`` is the Access-Control-Allow-Private-Network response header.
     When PNA is allowed with a permissive ACAO (wildcard / reflected /
     null), severity is elevated and the detail notes private-network reach.
+
+    ``public`` marks an endpoint that answered a bare GET with no
+    Set-Cookie and no auth challenge — i.e. static/public content where
+    ``Access-Control-Allow-Origin: *`` is expected and not exploitable.
+    A no-credentials wildcard there is downgraded to LOW.
     """
     if not acao:
         return "INFO", "No Access-Control-Allow-Origin header"
@@ -171,6 +178,14 @@ def classify_cors(origin, acao, acac, target_origin=None, registrable_domain=Non
         )
 
     if is_wildcard:
+        if public:
+            return _apply_pna(
+                "LOW",
+                "Wildcard ACAO (*) on public unauthenticated content "
+                "(no Set-Cookie / auth challenge) — typically informational",
+                pna,
+                acao_grants=True,
+            )
         return _apply_pna(
             "MEDIUM",
             "Wildcard ACAO (*) — acceptable for public unauthenticated "

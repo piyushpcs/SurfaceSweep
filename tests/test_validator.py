@@ -306,5 +306,47 @@ class TestValidationSummaryBuckets(unittest.TestCase):
         self.assertIn("Other errors: 1", printed)
 
 
+class TestValidationCapAndPacing(unittest.TestCase):
+    """SF-13: bound and pace the one request-per-endpoint active stage."""
+
+    def test_priority_api_outranks_marketing(self):
+        from modules.analysis.validator import _validation_priority
+
+        self.assertGreater(
+            _validation_priority("https://x.test/api/v1/users"),
+            _validation_priority("https://x.test/about"),
+        )
+
+    @mock.patch("modules.analysis.validator.request_tls")
+    def test_cap_truncates_and_keeps_api_first(self, request_mock):
+        request_mock.return_value = _resp('{"ok":true}', "application/json")
+        validate_endpoints(
+            ["/blog/1", "/blog/2", "/api/v1/users", "/about"],
+            "https://x.test",
+            verbose=False,
+            max_endpoints=2,
+        )
+        called = [c.args[1] for c in request_mock.call_args_list]
+        self.assertEqual(len(called), 2)
+        self.assertIn("https://x.test/api/v1/users", called)
+
+    @mock.patch("modules.analysis.validator.request_tls")
+    def test_cap_zero_means_unlimited(self, request_mock):
+        request_mock.return_value = _resp('{"ok":true}', "application/json")
+        validate_endpoints(
+            ["/a", "/b", "/c"], "https://x.test", verbose=False, max_endpoints=0
+        )
+        self.assertEqual(request_mock.call_count, 3)
+
+    @mock.patch("modules.analysis.validator.validate_endpoint")
+    def test_rate_limit_still_validates_all(self, ve_mock):
+        ve_mock.return_value = {"url": "x", "status": "live", "status_code": 200}
+        validate_endpoints(
+            ["/a", "/b", "/c"], "https://x.test",
+            verbose=False, threads=1, rate_limit=100,
+        )
+        self.assertEqual(ve_mock.call_count, 3)
+
+
 if __name__ == "__main__":
     unittest.main()

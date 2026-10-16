@@ -213,6 +213,7 @@ def build_executive_summary(result: Dict[str, Any],
             "params": len(result.get("params_found") or []),
             "graphql_findings": len((result.get("graphql") or {}).get("findings") or []),
             "secrets_confirmed": (result.get("secret_verification") or {}).get("confirmed", 0),
+            "requests_sent": (result.get("meta") or {}).get("requests_sent", 0),
         },
     }
 
@@ -268,11 +269,16 @@ def render_executive_summary(summary: Dict[str, Any]) -> str:
 
     modules = ", ".join(_esc(str(m)) for m in summary.get("modules_covered") or []) or "—"
     sev_line = " ".join(sev_bits) or '<span class="muted">No flagged findings</span>'
+    requests_sent = (summary.get("counts") or {}).get("requests_sent", 0)
+    footprint = (
+        f' · {requests_sent} HTTP request(s) sent'
+        if requests_sent else ""
+    )
 
     return (
         f'<h2>Executive Summary</h2>'
         f'<p>Risk: <span class="risk" style="background:{risk_color}">{risk_level}</span> '
-        f'(score {risk_score}) · {total} finding(s) · modules: {modules}</p>'
+        f'(score {risk_score}) · {total} finding(s) · modules: {modules}{footprint}</p>'
         f'<p>{sev_line}</p>'
         f'{top_html}'
     )

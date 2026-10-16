@@ -567,10 +567,11 @@ class TestSchemaMeta(unittest.TestCase):
         meta = r["meta"]
         for key in (
             "tool", "finished_at", "duration_seconds", "scan_mode",
-            "stages_run", "stage_timings", "flags",
+            "stages_run", "stage_timings", "flags", "requests_sent",
         ):
             self.assertIn(key, meta)
         self.assertEqual(meta["tool"], "SurfaceSweep")
+        self.assertIsInstance(meta["requests_sent"], int)
         self.assertEqual(meta["scan_mode"], "static")
         self.assertEqual(meta["stages_run"], ["scan", "report"])
         self.assertEqual(meta["stage_timings"], {"scan": 0.1, "report": 0.0})

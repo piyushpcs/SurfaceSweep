@@ -59,6 +59,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--validate", action="store_true", help="Validate discovered endpoints to filter false positives")
     parser.add_argument("--vt", "--validate-threads", type=int, default=10, help="Concurrent validation threads (default: 10)")
     parser.add_argument("--vtimeout", type=int, default=5, help="Validation request timeout in seconds (default: 5)")
+    parser.add_argument(
+        "--max-validate",
+        type=int,
+        default=200,
+        metavar="N",
+        help="Max endpoints to actively validate, API-like first (default: 200, 0=unlimited)",
+    )
+    parser.add_argument(
+        "--validate-rps",
+        type=float,
+        default=5.0,
+        metavar="RPS",
+        help="Validation request rate limit, requests/sec (default: 5, 0=unlimited)",
+    )
     parser.add_argument("--timeout", type=int, default=30, help="Browser page load timeout in seconds (default: 30)")
     parser.add_argument("--scope", default=None, help="Limit results to this domain (e.g. '*.target.com')")
     parser.add_argument("--cookie", default=None, help="Cookie header for authenticated scans (e.g. 'session=abc123')")
@@ -70,6 +84,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cve", action="store_true", help="Detect JS library versions and check local CVE database")
     parser.add_argument("--osv", action="store_true", help="Query OSV.dev for additional CVEs (requires network)")
     parser.add_argument("--spa", action="store_true", help="Discover SPA routes (React/Vue/Angular routers)")
+    parser.add_argument(
+        "--import",
+        dest="import_files",
+        action="append",
+        default=None,
+        metavar="FILE",
+        help="Import endpoints from a Burp XML/CSV, ZAP CSV, or HAR export "
+             "(repeatable; format auto-detected)",
+    )
     parser.add_argument("--max-routes", type=int, default=50, help="Max routes to crawl in SPA mode (default: 50)")
     parser.add_argument("--no-probe", action="store_true", help="Skip probing common admin/debug routes in SPA mode")
     parser.add_argument("--html", action="store_true", help="Also generate an HTML report")

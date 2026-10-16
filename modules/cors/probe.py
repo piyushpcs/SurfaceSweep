@@ -11,6 +11,7 @@ from modules.cors.origins import origins_equal
 from modules.extraction.http import (
     follow_redirects,
     is_tls_policy_error,
+    note_request,
     relaxed_session,
     request_tls,
 )
@@ -32,10 +33,12 @@ def _do_request(session, method, url, **kwargs):
     allow_redirects = kwargs.pop("allow_redirects", True)
 
     def send(m, u):
+        note_request()
         try:
             return session.request(m, u, allow_redirects=False, **kwargs)
         except requests.ConnectionError as exc:
             if is_tls_policy_error(exc):
+                note_request()
                 return relaxed_session().request(m, u, allow_redirects=False, **kwargs)
             raise
 
@@ -153,14 +156,28 @@ def probe_baseline(url, timeout=8, headers=None, limiter=None, session=None):
                 "acpn": "",
                 "error": "cross-domain redirect",
                 "static_acao": False,
+                "set_cookie": False,
+                "www_authenticate": False,
+                "public": False,
             }
         cors = extract_cors_headers(resp)
+        resp_headers = resp.headers or {}
+        has_cookie = bool(resp_headers.get("Set-Cookie"))
+        has_auth_challenge = bool(resp_headers.get("WWW-Authenticate"))
+        public = (
+            200 <= int(resp.status_code or 0) < 300
+            and not has_cookie
+            and not has_auth_challenge
+        )
         return {
             "status": resp.status_code,
             "final_url": final_url,
             **cors,
             "error": None,
             "static_acao": bool(cors["acao"]),
+            "set_cookie": has_cookie,
+            "www_authenticate": has_auth_challenge,
+            "public": public,
         }
     except requests.RequestException as e:
         return {
@@ -172,6 +189,9 @@ def probe_baseline(url, timeout=8, headers=None, limiter=None, session=None):
             "acpn": "",
             "error": str(e),
             "static_acao": False,
+            "set_cookie": False,
+            "www_authenticate": False,
+            "public": False,
         }
 
 
@@ -187,6 +207,7 @@ def probe_endpoint(
     request_method="GET",
     static_acao=False,
     session=None,
+    public=False,
 ):
     """
     Send one request per Origin and collect CORS headers.
@@ -194,6 +215,8 @@ def probe_endpoint(
     OPTIONS probes include Access-Control-Request-Method/Headers (real preflight).
     Cross-domain redirects are skipped (CORScanner-style FP filter).
     Pass a shared ``session`` for connection pooling across probes.
+    ``public`` marks a public/unauthenticated endpoint so a no-credentials
+    wildcard is reported as LOW rather than MEDIUM.
     Returns list of finding dicts.
     """
     results = []
@@ -241,6 +264,7 @@ def probe_endpoint(
                 target_origin=target_origin,
                 registrable_domain=registrable_domain,
                 acpn=cors.get("acpn", ""),
+                public=public,
             )
 
             # Dynamic ACAO (reflected) without Vary: Origin → cache-poisoning signal
@@ -261,6 +285,7 @@ def probe_endpoint(
                     "detail": detail,
                     "evidence": build_evidence(cors),
                     "static_acao": bool(static_acao),
+                    "public_endpoint": bool(public),
                     **cors,
                 }
             )

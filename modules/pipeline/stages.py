@@ -19,6 +19,7 @@ from modules.discovery import (
     crawl_spa_routes,
     discover_robots_and_sitemap,
     get_wayback_endpoints,
+    load_import,
     probe_graphql_endpoints,
     collect_graphql_candidates,
 )
@@ -150,6 +151,45 @@ def _merge_robots_sitemap(ctx: ScanContext) -> None:
         if ctx.verbose:
             net = len(result.get("internal_paths", [])) - before
             ctx.log(f"[+] robots/sitemap: +{added} endpoint(s) (+{net} path(s))")
+
+
+def stage_import(ctx: ScanContext) -> None:
+    """
+    Merge endpoints imported from Burp / ZAP / HAR exports (alternate source).
+
+    Each imported URL is scope-filtered by the shared merge helper, so traffic
+    captured for other hosts never widens the scan beyond the target.
+    """
+    args = ctx.args
+    files = getattr(args, "import_files", None) or []
+    if not files:
+        return
+    result = ctx.require_result()
+    ctx.log("\n[*] --- Imported Traffic (Burp / ZAP / HAR) ---")
+
+    formats: list = []
+    before_paths = len(result.get("internal_paths") or [])
+    before_urls = len(result.get("in_scope_urls") or [])
+    for path in files:
+        try:
+            imported = load_import(path)
+        except (OSError, ValueError) as exc:
+            ctx.log(f"[!] Import failed for {path}: {exc}")
+            result.setdefault("errors", [])
+            result["errors"].append(f"import {path} failed: {exc}")
+            continue
+        formats.append(imported["format"])
+        added = merge_endpoints(result, imported["endpoints"], args.target)
+        ctx.log(
+            f"[+] {imported['format']}: {imported['count']} endpoint(s) "
+            f"({added} merged) from {path}"
+        )
+
+    result["imported_sources"] = formats
+    result["risk_summary"] = calculate_risk_summary(result)
+    net_paths = len(result.get("internal_paths") or []) - before_paths
+    net_urls = len(result.get("in_scope_urls") or []) - before_urls
+    ctx.log(f"[+] Import merge: +{net_paths} path(s), +{net_urls} in-scope URL(s)")
 
 
 def stage_wayback_merge(ctx: ScanContext) -> None:
@@ -326,11 +366,21 @@ def stage_validate(ctx: ScanContext) -> None:
     method_map = build_method_map(
         all_endpoints, result.get("intercepted_endpoints") or []
     )
+    # Active validation is the one stage that fires a request per endpoint.
+    # Bound it: cap the count (API-like paths first) and pace the requests,
+    # throttling further when a WAF asks us to slow down.
+    validate_rate = getattr(args, "validate_rps", 5.0)
+    if ctx.waf_adjustments:
+        delay = float(ctx.waf_adjustments.get("delay_multiplier") or 1.0)
+        if delay > 1.0 and validate_rate and validate_rate > 0:
+            validate_rate = max(0.2, validate_rate / delay)
     validation = validate_endpoints(
         all_endpoints, args.target,
         threads=args.vt, timeout=args.vtimeout, verbose=ctx.verbose,
         headers=ctx.headers if ctx.headers else None,
         method_map=method_map,
+        max_endpoints=getattr(args, "max_validate", 200),
+        rate_limit=validate_rate,
     )
     result["validation"] = validation
 

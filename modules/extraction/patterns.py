@@ -387,6 +387,12 @@ def is_likely_real_secret(value, label=None):
         return False
     if candidate.lower() in COMMON_FALSE_POSITIVES:
         return False
+    # HTML/XML/markup fragments are never credential material. A greedy URL
+    # pattern scraping a docs anchor yields "rediss://</a>", and JSX/template
+    # markup (e.g. "<Token .../>") lands here too. Angle brackets cannot
+    # appear in real secrets, so reject them for every label.
+    if "<" in candidate or ">" in candidate:
+        return False
     if _is_repeated_char(candidate) or _is_sequential(candidate):
         return False
     high_confidence = label is not None and label in HIGH_CONFIDENCE_SECRET_LABELS

@@ -27,7 +27,7 @@ import requests
 from urllib.parse import urljoin, urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from modules.common.console import detail, emit, info
-from modules.extraction.http import request_tls
+from modules.extraction.http import RateLimiter, request_tls
 
 USER_AGENT = "SurfaceSweep/1.0"
 
@@ -373,8 +373,34 @@ def validate_endpoint(url, method="GET", timeout=10, allow_redirects=False, head
         return {"url": url, "status_code": None, "status": "error", "error": str(e), "method": method}
 
 
+def _validation_priority(url):
+    """
+    Sort key for endpoint validation when a cap is in force (higher = first).
+
+    A bounded active scan must spend its budget on the endpoints that matter
+    (APIs/auth/GraphQL) rather than hundreds of static marketing/blog paths.
+    Only applied when truncating, so full coverage is unchanged under the cap.
+    """
+    try:
+        path = urlparse(url).path.lower()
+    except ValueError:
+        path = str(url).lower()
+    score = 0
+    if looks_like_api_path(url):
+        score += 50
+    for hint in (
+        "/api", "/graphql", "/oauth", "/auth", "/admin", "/webhook",
+        "/v1/", "/v2/", "/v3/", "/rest/", "/rpc/",
+    ):
+        if hint in path:
+            score += 20
+    score += max(0, 10 - len([s for s in path.split("/") if s]))
+    return score
+
+
 def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True,
-                       headers=None, method_map=None):
+                       headers=None, method_map=None, max_endpoints=None,
+                       rate_limit=None):
     """
     Validate multiple endpoints concurrently.
 
@@ -387,6 +413,11 @@ def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True,
         headers: custom headers to include
         method_map: optional {url: method} — probe with the right verb.
             Built by build_method_map() when omitted at the stage level.
+        max_endpoints: optional cap on how many endpoints to probe (0/None =
+            unlimited). API-like paths are prioritized before truncation so a
+            bounded scan still hits the interesting surface first.
+        rate_limit: optional max requests/sec across all workers (0/None =
+            unlimited). Keeps active validation from bursting a target.
 
     Returns:
         dict with validated endpoints categorized by status
@@ -403,10 +434,21 @@ def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True,
             full = urljoin(base_url + "/", url)
         resolved.append((url, full))
 
+    requested = len(resolved)
+    if max_endpoints and max_endpoints > 0 and len(resolved) > max_endpoints:
+        resolved.sort(key=lambda pair: (-_validation_priority(pair[1]), pair[1]))
+        resolved = resolved[:max_endpoints]
+
     method_map = method_map or {}
+    limiter = RateLimiter(rate_limit) if rate_limit and rate_limit > 0 else None
 
     if verbose:
         info(f" Validating {len(resolved)} endpoints...")
+        if len(resolved) < requested:
+            info(
+                f" [*] Capped validation at {len(resolved)} of {requested} "
+                f"endpoint(s) (--max-validate; API-like paths prioritized)"
+            )
 
     results = {
         "live": [],
@@ -422,14 +464,18 @@ def validate_endpoints(urls, base_url, threads=10, timeout=10, verbose=True,
 
     all_results = []
 
+    def _run(original, full_url):
+        method = method_map.get(original) or method_map.get(full_url) or "GET"
+        if limiter is not None:
+            limiter.wait()
+        return validate_endpoint(
+            full_url, method=method, timeout=timeout, headers=headers
+        )
+
     with ThreadPoolExecutor(max_workers=threads) as pool:
         futures = {}
         for original, full_url in resolved:
-            method = method_map.get(original) or method_map.get(full_url) or "GET"
-            futures[
-                pool.submit(validate_endpoint, full_url, method=method,
-                            timeout=timeout, headers=headers)
-            ] = full_url
+            futures[pool.submit(_run, original, full_url)] = full_url
         for future in as_completed(futures):
             url = futures[future]
             try:
