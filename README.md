@@ -361,7 +361,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: piyushpcs/SurfaceSweep@main
+      - uses: piyushpcs/SurfaceSweep@v1
         with:
           target: https://app.example.com
           args: "--scope app.example.com --jwt --cors"
@@ -382,6 +382,27 @@ jobs:
 Outputs: `json`, `sarif`, `exit-code`. A copy-ready workflow lives in
 [`examples/github-actions-scan.yml`](examples/github-actions-scan.yml). Only scan
 targets you are **authorized** to test.
+
+Pin the action to a released major version (`@v1`) rather than `@main` so your
+workflows are not affected by in-progress changes. See
+[Releasing](#releasing-the-action) for the tag/version scheme.
+
+### Releasing the Action
+
+The action is consumed by a moving major-version tag (`@v1`) plus immutable
+release tags (`v1.0.0`). To cut a release:
+
+```bash
+# Annotated release tag + moving major tag
+git tag -a v1.0.0 -m "SurfaceSweep v1.0.0"
+git tag -a v1     -m "SurfaceSweep v1 (latest 1.x)"
+git push origin v1.0.0 v1
+```
+
+Then on GitHub open **Releases → Draft a release**, select the `v1.0.0` tag,
+paste the [CHANGELOG.md](CHANGELOG.md) entry, and optionally tick **Publish this
+Action to the GitHub Marketplace**. Keep the `version` field in
+[`pyproject.toml`](pyproject.toml) in step with the tag.
 
 ## MCP server (agent-native recon)
 

@@ -21,7 +21,7 @@ jobs:
 
       - name: Scan target
         id: sweep
-        uses: piyushpcs/SurfaceSweep@main
+        uses: piyushpcs/SurfaceSweep@v1
         with:
           target: https://app.example.com
           args: "--scope app.example.com --jwt --cors"
